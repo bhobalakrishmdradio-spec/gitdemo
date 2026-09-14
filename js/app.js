@@ -529,6 +529,7 @@ function openTransactionModal(txn) {
 }
 
 function closeTransactionModal() {
+  if (dictationRecognition) dictationRecognition.stop();
   document.getElementById('modalOverlay').hidden = true;
 }
 
@@ -576,6 +577,81 @@ function refreshCurrentView() {
   const activeBtn = document.querySelector('.nav-btn.active');
   const view = activeBtn ? activeBtn.dataset.view : 'dashboard';
   switchView(view);
+}
+
+/* ---------- Voice dictation (Description field) ---------- */
+let dictationRecognition = null;
+
+function getSpeechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function resetDictationButton() {
+  const btn = document.getElementById('voiceDictateBtn');
+  if (btn) {
+    btn.classList.remove('recording');
+    btn.textContent = '🎤';
+    btn.title = 'Dictate description';
+  }
+  dictationRecognition = null;
+}
+
+function toggleDictation() {
+  if (dictationRecognition) {
+    dictationRecognition.stop(); // onend fires -> resetDictationButton
+    return;
+  }
+
+  const SR = getSpeechRecognitionCtor();
+  if (!SR) {
+    showToast('Voice input is not supported in this browser');
+    return;
+  }
+
+  const input = document.getElementById('txnDescription');
+  const baseText = input.value.trim();
+  const btn = document.getElementById('voiceDictateBtn');
+  let finalTranscript = '';
+
+  dictationRecognition = new SR();
+  dictationRecognition.lang = navigator.language || 'en-US';
+  dictationRecognition.interimResults = true;
+  dictationRecognition.continuous = true;
+
+  btn.classList.add('recording');
+  btn.textContent = '⏹️';
+  btn.title = 'Stop dictation';
+
+  dictationRecognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      if (res.isFinal) finalTranscript += res[0].transcript + ' ';
+      else interim += res[0].transcript;
+    }
+    const spoken = (finalTranscript + interim).trim();
+    input.value = baseText ? (baseText + ' ' + spoken).trim() : spoken;
+  };
+
+  dictationRecognition.onerror = (event) => {
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      showToast('Microphone access was blocked - check your browser\'s site settings');
+    } else if (event.error === 'no-speech') {
+      showToast('Didn\'t catch that - try again');
+    } else if (event.error !== 'aborted') {
+      showToast('Voice input error: ' + event.error);
+    }
+    resetDictationButton();
+  };
+
+  dictationRecognition.onend = resetDictationButton;
+
+  try {
+    dictationRecognition.start();
+  } catch (e) {
+    showToast('Could not start the microphone');
+    resetDictationButton();
+  }
 }
 
 /* ---------- Import / Export / Reset / Sample data ---------- */
@@ -690,6 +766,7 @@ function init() {
   document.getElementById('txnForm').addEventListener('submit', handleTransactionSubmit);
   document.getElementById('typeExpenseBtn').addEventListener('click', () => setTypeButtons('expense'));
   document.getElementById('typeIncomeBtn').addEventListener('click', () => setTypeButtons('income'));
+  document.getElementById('voiceDictateBtn').addEventListener('click', toggleDictation);
 
   ['searchInput', 'filterType', 'filterCategory', 'filterMonth'].forEach((id) => {
     document.getElementById(id).addEventListener('input', renderTransactionsView);

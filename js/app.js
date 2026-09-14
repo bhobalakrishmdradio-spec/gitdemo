@@ -445,10 +445,19 @@ function wireRowActions(container) {
 }
 
 /* ---------- Budgets view ---------- */
+function populateBudgetMonthSelect() {
+  const select = document.getElementById('budgetMonthSelect');
+  const months = Array.from(new Set(state.transactions.map((t) => monthKey(t.date)))).sort().reverse();
+  if (!months.includes(currentMonthKey())) months.unshift(currentMonthKey());
+  const prevValue = select.value;
+  select.innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+  select.value = months.includes(prevValue) ? prevValue : currentMonthKey();
+}
+
 function renderBudgetsView() {
-  document.getElementById('budgetMonthLabel').textContent = monthLabel(currentMonthKey());
+  populateBudgetMonthSelect();
   const container = document.getElementById('budgetList');
-  const mKey = currentMonthKey();
+  const mKey = document.getElementById('budgetMonthSelect').value || currentMonthKey();
   const spentByCategory = {};
   state.transactions
     .filter((t) => t.type === 'expense' && monthKey(t.date) === mKey)
@@ -696,6 +705,8 @@ function init() {
   document.getElementById('chartMonthSelect').addEventListener('change', () => {
     renderCategoryChart(document.getElementById('chartMonthSelect').value);
   });
+
+  document.getElementById('budgetMonthSelect').addEventListener('change', renderBudgetsView);
 
   document.getElementById('currencySelect').addEventListener('change', (e) => {
     state.settings.currency = e.target.value;

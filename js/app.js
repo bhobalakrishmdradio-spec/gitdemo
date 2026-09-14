@@ -39,7 +39,13 @@ function defaultState() {
   return {
     transactions: [],
     budgets: {},           // { categoryKey: monthlyLimit }
-    settings: { currency: 'USD', theme: 'light' },
+    settings: {
+      currency: 'USD',
+      theme: 'light',
+      lastExportAt: null,        // timestamp (ms) of the last successful export
+      reminderDays: 7,           // 0 = reminders off
+      reminderSnoozedUntil: null, // timestamp (ms); banner hidden until then
+    },
   };
 }
 
@@ -124,9 +130,48 @@ function switchView(view) {
     btn.classList.toggle('active', btn.dataset.view === view);
   });
   document.getElementById('viewTitle').textContent = viewTitles[view];
+  renderBackupReminder();
   if (view === 'dashboard') renderDashboard();
   if (view === 'transactions') renderTransactionsView();
   if (view === 'budgets') renderBudgetsView();
+}
+
+/* ---------- Backup reminder ---------- */
+function daysSince(timestamp) {
+  return (Date.now() - timestamp) / 86400000;
+}
+
+function renderBackupReminder() {
+  const banner = document.getElementById('backupReminder');
+  const { reminderDays, reminderSnoozedUntil, lastExportAt } = state.settings;
+
+  const dueForReminder =
+    reminderDays > 0 &&
+    state.transactions.length > 0 &&
+    !(reminderSnoozedUntil && Date.now() < reminderSnoozedUntil) &&
+    (!lastExportAt || daysSince(lastExportAt) >= reminderDays);
+
+  banner.hidden = !dueForReminder;
+  if (dueForReminder) {
+    const text = lastExportAt
+      ? `It's been ${Math.floor(daysSince(lastExportAt))} days since your last backup. Export your data to keep it safe.`
+      : "You haven't backed up your data yet. Export a copy to keep it safe.";
+    document.getElementById('backupReminderText').textContent = text;
+  }
+
+  const label = document.getElementById('lastBackupLabel');
+  if (label) {
+    label.textContent = lastExportAt
+      ? `Last backup: ${formatDate(new Date(lastExportAt).toISOString().slice(0, 10))}`
+      : "You haven't exported a backup yet.";
+  }
+}
+
+function snoozeBackupReminder() {
+  state.settings.reminderSnoozedUntil = Date.now() + 2 * 86400000; // 2 days
+  saveState();
+  renderBackupReminder();
+  showToast("We'll remind you again in a couple of days");
 }
 
 /* ---------- Dashboard rendering ---------- */
@@ -535,6 +580,11 @@ function exportData() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+
+  state.settings.lastExportAt = Date.now();
+  state.settings.reminderSnoozedUntil = null;
+  saveState();
+  renderBackupReminder();
   showToast('Data exported');
 }
 
@@ -610,6 +660,7 @@ function toggleTheme() {
 function init() {
   applyTheme(state.settings.theme);
   document.getElementById('currencySelect').value = state.settings.currency;
+  document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
   populateCategoryFilter();
   document.getElementById('txnDate').value = todayStr();
 
@@ -659,6 +710,16 @@ function init() {
   });
   document.getElementById('resetBtn').addEventListener('click', resetAllData);
   document.getElementById('loadSampleBtn').addEventListener('click', loadSampleData);
+
+  document.getElementById('backupExportNowBtn').addEventListener('click', exportData);
+  document.getElementById('backupRemindLaterBtn').addEventListener('click', snoozeBackupReminder);
+  document.getElementById('reminderFrequencySelect').addEventListener('change', (e) => {
+    state.settings.reminderDays = parseInt(e.target.value, 10) || 0;
+    state.settings.reminderSnoozedUntil = null;
+    saveState();
+    renderBackupReminder();
+    showToast('Backup reminder updated');
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.getElementById('modalOverlay').hidden) closeTransactionModal();

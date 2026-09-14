@@ -1,4 +1,14 @@
-# MyFinances — Personal Finance Tracker
+# Personal Apps
+
+This repo hosts small, private, fully client-side personal tools — no
+backend, no account, nothing leaves your browser.
+
+- **[MyFinances](#myfinances--personal-finance-tracker)** (root of this
+  repo) — a personal finance tracker.
+- **[CT Console](dicom-viewer/README.md)** (`dicom-viewer/`) — a personal
+  DICOM viewer for reviewing your own CT scans.
+
+## MyFinances — Personal Finance Tracker
 
 A simple, private, fully client-side personal finance app. Track income and
 expenses, set monthly budgets per category, and see spending trends — all

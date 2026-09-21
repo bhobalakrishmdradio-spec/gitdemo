@@ -417,6 +417,16 @@
     return group.slices[idx];
   }
 
+  // A Window Center of 0 is a legitimate value, so these can't use `||`.
+  function wwOf(instance) {
+    var v = instance.fileWW;
+    return v != null && isFinite(v) && v > 0 ? v : 400;
+  }
+  function wcOf(instance) {
+    var v = instance.fileWC;
+    return v != null && isFinite(v) ? v : 40;
+  }
+
   /* ---------------------------------------------------------------------
    * Loading files
    * ------------------------------------------------------------------- */
@@ -482,35 +492,58 @@
   /* ---------------------------------------------------------------------
    * Series list / thumbnails UI
    * ------------------------------------------------------------------- */
+  // uid -> { wrapper, sliceCount }, so loading more files doesn't force every
+  // already-rendered series to regenerate its thumbnails from scratch.
+  var seriesNodes = {};
+
   function renderSeriesList() {
-    dom.seriesList.innerHTML = "";
     dom.dropHint.style.display = state.seriesOrder.length ? "none" : "block";
+
+    Object.keys(seriesNodes).forEach(function (uid) {
+      if (state.seriesMap[uid]) return;
+      var stale = seriesNodes[uid].wrapper;
+      if (stale.parentNode) stale.parentNode.removeChild(stale);
+      delete seriesNodes[uid];
+    });
 
     state.seriesOrder.forEach(function (uid) {
       var group = state.seriesMap[uid];
-      var wrapper = document.createElement("div");
-      wrapper.className = "series-group";
+      var cached = seriesNodes[uid];
+      if (cached && cached.sliceCount === group.slices.length) return;
 
-      var header = document.createElement("div");
-      header.className = "series-header";
-      header.innerHTML =
-        '<span>' + escapeHtml(group.modality ? group.modality + " — " : "") +
-        escapeHtml(group.description) + '</span>' +
-        '<span class="series-count">' + group.slices.length + '</span>';
-      header.addEventListener("click", function () {
-        selectSeries(uid);
-      });
-      wrapper.appendChild(header);
-
-      if (group.slices.length <= MAX_SERIES_FOR_THUMBNAILS) {
-        var grid = document.createElement("div");
-        grid.className = "thumb-grid";
-        wrapper.appendChild(grid);
-        buildThumbnailsAsync(group, grid, uid);
+      var wrapper = buildSeriesNode(group, uid);
+      if (cached && cached.wrapper.parentNode) {
+        dom.seriesList.replaceChild(wrapper, cached.wrapper);
+      } else {
+        dom.seriesList.appendChild(wrapper);
       }
-
-      dom.seriesList.appendChild(wrapper);
+      seriesNodes[uid] = { wrapper: wrapper, sliceCount: group.slices.length };
     });
+  }
+
+  function buildSeriesNode(group, uid) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "series-group";
+
+    var header = document.createElement("div");
+    header.className = "series-header";
+    header.innerHTML =
+      '<span>' + escapeHtml(group.modality ? group.modality + " — " : "") +
+      escapeHtml(group.description) + '</span>' +
+      '<span class="series-count">' + group.slices.length + '</span>';
+    header.addEventListener("click", function () {
+      selectSeries(uid);
+    });
+    wrapper.appendChild(header);
+
+    if (group.slices.length <= MAX_SERIES_FOR_THUMBNAILS) {
+      var grid = document.createElement("div");
+      grid.className = "thumb-grid";
+      wrapper.appendChild(grid);
+      buildThumbnailsAsync(group, grid, uid);
+    }
+
+    return wrapper;
   }
 
   function buildThumbnailsAsync(group, grid, uid) {
@@ -523,12 +556,14 @@
           var thumb = document.createElement("div");
           thumb.className = "thumb";
           thumb.title = "Slice " + (index + 1);
+          thumb.dataset.uid = uid;
+          thumb.dataset.index = String(index);
           if (uid === state.currentSeriesUID && index === state.currentIndex) {
             thumb.classList.add("active");
           }
           try {
-            var ww = slice.instance.fileWW || 400;
-            var wc = slice.instance.fileWC || 40;
+            var ww = wwOf(slice.instance);
+            var wc = wcOf(slice.instance);
             var small = buildWindowedCanvas(slice.instance, slice.frameIndex, ww, wc, false);
             thumb.appendChild(small);
           } catch (err) {
@@ -552,11 +587,23 @@
   }
 
   function highlightActiveThumb() {
-    var thumbs = dom.seriesList.querySelectorAll(".thumb");
-    thumbs.forEach(function (t) { t.classList.remove("active"); });
-    // Cheap approach: re-render list highlighting via data attributes would
-    // be nicer, but a full re-render on every slice change is wasteful for
-    // large series, so we just leave thumbnail highlighting best-effort.
+    var previous = dom.seriesList.querySelector(".thumb.active");
+    if (previous) previous.classList.remove("active");
+    if (!state.currentSeriesUID) return;
+    var selector = '.thumb[data-uid="' + cssEscape(state.currentSeriesUID) +
+      '"][data-index="' + state.currentIndex + '"]';
+    var current = dom.seriesList.querySelector(selector);
+    if (current) {
+      current.classList.add("active");
+      if (current.scrollIntoView) {
+        current.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(value);
+    return String(value).replace(/["\\]/g, "\\$&");
   }
 
   /* ---------------------------------------------------------------------
@@ -569,14 +616,15 @@
     var group = getCurrentGroup();
     if (group && group.slices.length) {
       var first = group.slices[0].instance;
-      state.windowWidth = first.fileWW || 400;
-      state.windowCenter = first.fileWC || 40;
+      state.windowWidth = wwOf(first);
+      state.windowCenter = wcOf(first);
     }
     resetView(true);
     dom.sliceSlider.max = group ? Math.max(0, group.slices.length - 1) : 0;
     dom.sliceSlider.value = state.currentIndex;
     dom.sliceSlider.disabled = !group || group.slices.length <= 1;
     render();
+    highlightActiveThumb();
   }
 
   function setSliceIndex(index) {
@@ -587,6 +635,7 @@
     state.currentIndex = clamped;
     dom.sliceSlider.value = clamped;
     render();
+    highlightActiveThumb();
   }
 
   /* ---------------------------------------------------------------------
@@ -608,6 +657,8 @@
       var ctx0 = dom.ctx;
       ctx0.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
       clearOverlays();
+      dom.sliceCounter.textContent = "0 / 0";
+      dom.zoomLabel.textContent = Math.round(state.zoom * 100) + "%";
       updateWLInputs();
       renderMetadata(null);
       return;
@@ -785,8 +836,8 @@
     if (!keepWL) {
       var slice = getCurrentSlice();
       if (slice) {
-        state.windowWidth = slice.instance.fileWW || 400;
-        state.windowCenter = slice.instance.fileWC || 40;
+        state.windowWidth = wwOf(slice.instance);
+        state.windowCenter = wcOf(slice.instance);
       }
     }
   }
@@ -845,6 +896,7 @@
       state.seriesMap = {};
       state.currentSeriesUID = null;
       state.currentIndex = 0;
+      resetView(true);
       dom.sliceSlider.disabled = true;
       dom.sliceSlider.value = 0;
       renderSeriesList();
@@ -935,8 +987,11 @@
         dom.presetSelect.value = "";
         render();
       } else if (state.dragMode === "pan") {
-        state.panX = state.dragStart.panX + dx;
-        state.panY = state.dragStart.panY + dy;
+        // panX/panY live in the canvas's device-pixel space, but mouse deltas
+        // are CSS pixels — scale so the image tracks the cursor 1:1 on HiDPI.
+        var dpr = window.devicePixelRatio || 1;
+        state.panX = state.dragStart.panX + dx * dpr;
+        state.panY = state.dragStart.panY + dy * dpr;
         render();
       }
     });

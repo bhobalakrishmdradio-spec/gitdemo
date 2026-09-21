@@ -227,19 +227,6 @@
           <button type="button" class="type-btn" data-type="income" id="typeIncomeBtn">💵 Income</button>
         </div>
         <div class="form-row">
-          <label>Receipt photo (optional)</label>
-          <div class="receipt-field">
-            <button type="button" class="ghost-btn" id="receiptAttachBtn">📷 Add photo</button>
-            <input type="file" id="receiptFileInput" accept="image/*" hidden />
-            <div class="receipt-preview" id="receiptPreview" hidden>
-              <a id="receiptThumbLink" target="_blank" rel="noopener">
-                <img id="receiptThumb" alt="Receipt preview" />
-              </a>
-              <button type="button" class="receipt-remove-btn" id="receiptRemoveBtn" aria-label="Remove photo">✕</button>
-            </div>
-          </div>
-        </div>
-        <div class="form-row">
           <label for="txnDescription">Description</label>
           <div class="input-with-btn">
             <input type="text" id="txnDescription" required placeholder="e.g. Grocery shopping" />
@@ -263,6 +250,18 @@
         <div class="form-row">
           <label for="txnNotes">Notes (optional)</label>
           <textarea id="txnNotes" rows="2" placeholder="Any extra details..."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="receipt-field">
+            <button type="button" class="ghost-btn" id="receiptAttachBtn">📷 Add receipt photo</button>
+            <input type="file" id="receiptFileInput" accept="image/*" hidden />
+            <div class="receipt-preview" id="receiptPreview" hidden>
+              <a id="receiptThumbLink" target="_blank" rel="noopener">
+                <img id="receiptThumb" alt="Receipt preview" />
+              </a>
+              <button type="button" class="receipt-remove-btn" id="receiptRemoveBtn" aria-label="Remove photo">✕</button>
+            </div>
+          </div>
         </div>
         <div class="form-actions">
           <button type="button" class="ghost-btn" id="modalCancel">Cancel</button>

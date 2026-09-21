@@ -761,10 +761,10 @@ function renderReceiptPreview() {
     thumb.src = pendingReceiptImage;
     thumbLink.href = pendingReceiptImage;
     preview.hidden = false;
-    attachBtn.textContent = '📷 Replace photo';
+    attachBtn.textContent = '📷 Replace receipt photo';
   } else {
     preview.hidden = true;
-    attachBtn.textContent = '📷 Add photo';
+    attachBtn.textContent = '📷 Add receipt photo';
   }
 }
 

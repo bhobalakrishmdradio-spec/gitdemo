@@ -10,7 +10,8 @@ without a backend or account. Your data stays in your browser
 - **Dashboard** — total balance, monthly income/expenses, savings rate,
   a category spending donut chart, and a 6-month income/expense trend chart.
 - **Transactions** — add, edit, delete income and expense entries; search
-  and filter by type, category, or month.
+  and filter by type, category, or month. Attach a receipt photo to any
+  transaction and view it later from the edit screen.
 - **Budgets** — set a monthly spending limit per expense category and track
   progress with a visual bar (warns when you're close to or over budget).
 - **Settings** — choose your currency, export your data as a JSON backup,

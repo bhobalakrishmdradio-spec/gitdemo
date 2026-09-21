@@ -487,7 +487,7 @@ function txnRowHTML(t) {
   const sign = t.type === 'income' ? '+' : '−';
   return `<div class="txn-row" data-id="${t.id}">
     <div class="txn-info">
-      <span class="txn-desc">${info.icon} ${escapeHTML(t.description)}</span>
+      <span class="txn-desc">${info.icon} ${escapeHTML(t.description)}${t.receiptImage ? '<span class="receipt-marker" title="Has a receipt photo">📎</span>' : ''}</span>
       <span class="txn-meta">${info.label} · ${formatDate(t.date)}</span>
     </div>
     <div class="txn-amount ${t.type}">${sign} ${formatCurrency(t.amount)}</div>
@@ -537,7 +537,7 @@ function renderTransactionsView() {
     const sign = t.type === 'income' ? '+' : '−';
     return `<tr data-id="${t.id}">
       <td>${formatDate(t.date)}</td>
-      <td>${escapeHTML(t.description)}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
+      <td>${escapeHTML(t.description)}${t.receiptImage ? '<span class="receipt-marker" title="Has a receipt photo">📎</span>' : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
       <td><span class="cat-badge">${info.icon} ${info.label}</span></td>
       <td>${t.type === 'income' ? 'Income' : 'Expense'}</td>
       <td class="right ${t.type === 'income' ? 'txn-amount income' : 'txn-amount expense'}">${sign} ${formatCurrency(t.amount)}</td>
@@ -661,6 +661,9 @@ function openTransactionModal(txn) {
   document.getElementById('txnNotes').value = txn ? (txn.notes || '') : '';
   if (txn) document.getElementById('txnCategory').value = txn.category;
 
+  pendingReceiptImage = txn && txn.receiptImage ? txn.receiptImage : null;
+  renderReceiptPreview();
+
   overlay.hidden = false;
   document.getElementById('txnDescription').focus();
 }
@@ -694,14 +697,18 @@ function handleTransactionSubmit(e) {
   if (id) {
     const txn = state.transactions.find((t) => t.id === id);
     Object.assign(txn, { description, amount, date, category, notes, type: currentTxnType });
+    if (pendingReceiptImage) txn.receiptImage = pendingReceiptImage;
+    else delete txn.receiptImage;
     showToast('Transaction updated');
   } else {
-    state.transactions.push({
+    const newTxn = {
       id: uid(),
       type: currentTxnType,
       description, amount, date, category, notes,
       createdAt: Date.now(),
-    });
+    };
+    if (pendingReceiptImage) newTxn.receiptImage = pendingReceiptImage;
+    state.transactions.push(newTxn);
     showToast('Transaction added');
   }
 
@@ -714,6 +721,73 @@ function refreshCurrentView() {
   const activeBtn = document.querySelector('.nav-btn.active');
   const view = activeBtn ? activeBtn.dataset.view : 'dashboard';
   switchView(view);
+}
+
+/* ---------- Receipt photo: attach a photo to a transaction ---------- */
+let pendingReceiptImage = null; // compressed dataURL, stored on the transaction when saved
+
+function compressImageFile(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('Could not decode image'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderReceiptPreview() {
+  const preview = document.getElementById('receiptPreview');
+  const thumb = document.getElementById('receiptThumb');
+  const thumbLink = document.getElementById('receiptThumbLink');
+  const attachBtn = document.getElementById('receiptAttachBtn');
+  if (pendingReceiptImage) {
+    thumb.src = pendingReceiptImage;
+    thumbLink.href = pendingReceiptImage;
+    preview.hidden = false;
+    attachBtn.textContent = '📷 Replace photo';
+  } else {
+    preview.hidden = true;
+    attachBtn.textContent = '📷 Add photo';
+  }
+}
+
+async function handleReceiptFileSelected(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    showToast('Please choose an image file');
+    return;
+  }
+  try {
+    pendingReceiptImage = await compressImageFile(file, 900, 0.72);
+    renderReceiptPreview();
+  } catch (err) {
+    console.error('Receipt compress failed', err);
+    showToast("Couldn't read that photo");
+  }
+}
+
+function removeReceiptPhoto() {
+  pendingReceiptImage = null;
+  renderReceiptPreview();
 }
 
 /* ---------- App Lock: UI flow ---------- */
@@ -1149,6 +1223,9 @@ function init() {
   document.getElementById('typeExpenseBtn').addEventListener('click', () => setTypeButtons('expense'));
   document.getElementById('typeIncomeBtn').addEventListener('click', () => setTypeButtons('income'));
   document.getElementById('voiceDictateBtn').addEventListener('click', toggleDictation);
+  document.getElementById('receiptAttachBtn').addEventListener('click', () => document.getElementById('receiptFileInput').click());
+  document.getElementById('receiptFileInput').addEventListener('change', handleReceiptFileSelected);
+  document.getElementById('receiptRemoveBtn').addEventListener('click', removeReceiptPhoto);
 
   ['searchInput', 'filterType', 'filterCategory', 'filterMonth'].forEach((id) => {
     document.getElementById(id).addEventListener('input', renderTransactionsView);

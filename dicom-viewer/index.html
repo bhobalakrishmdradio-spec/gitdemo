@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CT Console — DICOM Viewer</title>
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="viewer">
+    <!-- Top toolbar -->
+    <header class="toolbar">
+      <div class="toolbar-brand">
+        <span class="brand-icon">🩻</span>
+        <span class="brand-name">CT Console</span>
+      </div>
+
+      <div class="toolbar-group">
+        <label class="file-btn primary-btn">
+          📂 Open Files
+          <input type="file" id="fileInput" accept=".dcm,application/dicom" multiple hidden />
+        </label>
+        <label class="file-btn ghost-btn">
+          📁 Open Folder
+          <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+        </label>
+        <button class="ghost-btn" id="clearBtn" title="Clear loaded series">🗑️ Clear</button>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="tool-label">Preset</span>
+        <select id="presetSelect">
+          <option value="">Custom</option>
+          <option value="lung">Lung (W:1500 L:-600)</option>
+          <option value="bone">Bone (W:2000 L:480)</option>
+          <option value="brain">Brain (W:80 L:40)</option>
+          <option value="soft">Soft Tissue (W:400 L:40)</option>
+          <option value="abdomen">Abdomen (W:400 L:50)</option>
+          <option value="mediastinum">Mediastinum (W:350 L:50)</option>
+          <option value="angio">Angio (W:600 L:150)</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗 Invert</button>
+        <button class="icon-btn" id="flipHBtn" title="Flip horizontal">↔️</button>
+        <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
+        <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
+        <button class="icon-btn" id="resetBtn" title="Reset view (R)">⤾ Reset</button>
+      </div>
+
+      <div class="toolbar-group toolbar-group-right">
+        <button class="icon-btn" id="metaToggleBtn" title="Toggle DICOM metadata panel">ℹ️ Info</button>
+        <button class="icon-btn" id="thumbToggleBtn" title="Toggle series thumbnails">🧱 Thumbnails</button>
+      </div>
+    </header>
+
+    <div class="viewer-body">
+      <!-- Series / thumbnail panel -->
+      <aside class="panel panel-left" id="thumbPanel">
+        <div class="panel-title">Series &amp; Slices</div>
+        <div class="drop-hint" id="dropHint">
+          Drag &amp; drop DICOM files here,<br />or use <strong>Open Files</strong> / <strong>Open Folder</strong> above.
+        </div>
+        <div class="series-list" id="seriesList"></div>
+      </aside>
+
+      <!-- Main image viewport -->
+      <main class="viewport" id="viewport">
+        <div class="viewport-overlay overlay-tl" id="overlayTL"></div>
+        <div class="viewport-overlay overlay-tr" id="overlayTR"></div>
+        <div class="viewport-overlay overlay-bl" id="overlayBL"></div>
+        <div class="viewport-overlay overlay-br" id="overlayBR"></div>
+        <canvas id="dicomCanvas"></canvas>
+        <div class="viewport-empty" id="viewportEmpty">
+          <div class="viewport-empty-icon">🩻</div>
+          <div>No image loaded</div>
+          <div class="muted small">Open DICOM files to begin viewing</div>
+        </div>
+      </main>
+
+      <!-- Metadata panel -->
+      <aside class="panel panel-right" id="metaPanel">
+        <div class="panel-title">DICOM Metadata</div>
+        <div class="meta-table" id="metaTable">
+          <p class="muted small">No image loaded.</p>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Bottom controls: slice scrubber + window/level + cine -->
+    <footer class="controls">
+      <div class="controls-row">
+        <button class="icon-btn" id="cinePlayBtn" title="Play/Pause cine (Space)">▶️</button>
+        <input type="range" id="sliceSlider" min="0" max="0" value="0" step="1" disabled />
+        <span class="slice-counter" id="sliceCounter">0 / 0</span>
+      </div>
+      <div class="controls-row">
+        <div class="wl-control">
+          <label for="windowWidth">Window Width</label>
+          <input type="number" id="windowWidth" step="1" />
+        </div>
+        <div class="wl-control">
+          <label for="windowCenter">Window Level</label>
+          <input type="number" id="windowCenter" step="1" />
+        </div>
+        <div class="zoom-indicator">Zoom: <span id="zoomLabel">100%</span></div>
+        <div class="hint muted small">
+          Left-drag: window/level &nbsp;·&nbsp; Wheel: zoom &nbsp;·&nbsp; Right/Middle-drag: pan &nbsp;·&nbsp; ↑/↓ or Wheel+Shift: change slice
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="js/vendor/dicomParser.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

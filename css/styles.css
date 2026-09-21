@@ -224,6 +224,19 @@ button, input, select, textarea { font-family: inherit; }
   box-shadow: var(--shadow);
 }
 
+/* Collapsible settings panels */
+details.settings-panel summary {
+  font-size: 1.05rem; font-weight: 600; color: var(--text);
+  cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between;
+}
+details.settings-panel summary::-webkit-details-marker { display: none; }
+details.settings-panel summary::after {
+  content: '▾'; font-size: 0.8em; color: var(--text-muted); margin-left: 10px; transition: transform 0.15s ease;
+}
+details.settings-panel[open] summary::after { transform: rotate(180deg); }
+details.settings-panel summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+details.settings-panel[open] summary { margin-bottom: 12px; }
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -403,6 +416,10 @@ button, input, select, textarea { font-family: inherit; }
 }
 .receipt-marker { margin-left: 4px; opacity: 0.65; }
 
+.category-select-row { display: flex; align-items: center; gap: 9px; }
+.category-select-row select { flex: 1; min-width: 0; }
+.cat-color-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+
 .type-toggle { flex-direction: row; gap: 8px; }
 .type-btn {
   flex: 1;
@@ -450,4 +467,14 @@ button, input, select, textarea { font-family: inherit; }
   font-size: 0.88rem;
   z-index: 200;
   box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 32px);
 }
+.toast[hidden] { display: none; }
+.toast-action {
+  background: none; border: none; padding: 0; font: inherit; font-weight: 700; text-decoration: underline;
+  color: inherit; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.toast-action[hidden] { display: none; }

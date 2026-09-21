@@ -247,12 +247,25 @@ function monthLabel(key) {
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
-function showToast(msg) {
+function showToast(msg, opts) {
   const toast = document.getElementById('toast');
-  toast.textContent = msg;
+  const actionBtn = document.getElementById('toastAction');
+  document.getElementById('toastMsg').textContent = msg;
+  if (opts && opts.actionLabel) {
+    actionBtn.textContent = opts.actionLabel;
+    actionBtn.hidden = false;
+    actionBtn.onclick = () => {
+      toast.hidden = true;
+      clearTimeout(showToast._t);
+      opts.onAction();
+    };
+  } else {
+    actionBtn.hidden = true;
+    actionBtn.onclick = null;
+  }
   toast.hidden = false;
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => { toast.hidden = true; }, 2200);
+  showToast._t = setTimeout(() => { toast.hidden = true; }, opts && opts.actionLabel ? 5000 : 2200);
 }
 
 /* ---------- Navigation ---------- */
@@ -538,7 +551,7 @@ function renderTransactionsView() {
     return `<tr data-id="${t.id}">
       <td>${formatDate(t.date)}</td>
       <td>${escapeHTML(t.description)}${t.receiptImage ? '<span class="receipt-marker" title="Has a receipt photo">📎</span>' : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
-      <td><span class="cat-badge">${info.icon} ${info.label}</span></td>
+      <td><span class="cat-badge" style="color:${info.color};background:${info.color}26;">${info.icon} ${info.label}</span></td>
       <td>${t.type === 'income' ? 'Income' : 'Expense'}</td>
       <td class="right ${t.type === 'income' ? 'txn-amount income' : 'txn-amount expense'}">${sign} ${formatCurrency(t.amount)}</td>
       <td>
@@ -563,12 +576,19 @@ function wireRowActions(container) {
   container.querySelectorAll('[data-action="delete"]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const id = e.target.closest('[data-id]').dataset.id;
-      if (confirm('Delete this transaction?')) {
-        state.transactions = state.transactions.filter((t) => t.id !== id);
-        saveState();
-        refreshCurrentView();
-        showToast('Transaction deleted');
-      }
+      const idx = state.transactions.findIndex((t) => t.id === id);
+      if (idx === -1) return;
+      const [removed] = state.transactions.splice(idx, 1);
+      saveState();
+      refreshCurrentView();
+      showToast('Transaction deleted', {
+        actionLabel: 'Undo',
+        onAction: () => {
+          state.transactions.splice(idx, 0, removed);
+          saveState();
+          refreshCurrentView();
+        },
+      });
     });
   });
   // Clicking a dashboard txn-row opens edit too
@@ -641,7 +661,15 @@ let currentTxnType = 'expense';
 
 function populateCategorySelect(type) {
   const select = document.getElementById('txnCategory');
-  select.innerHTML = CATEGORIES[type].map((c) => `<option value="${c.key}">${c.icon} ${c.label}</option>`).join('');
+  select.innerHTML = CATEGORIES[type].map((c) => `<option value="${c.key}" style="color:${c.color};">${c.icon} ${c.label}</option>`).join('');
+  updateCategoryColorDot();
+}
+
+function updateCategoryColorDot() {
+  const dot = document.getElementById('categoryColorDot');
+  if (!dot) return;
+  const info = categoryInfo(document.getElementById('txnCategory').value);
+  dot.style.background = info.color;
 }
 
 function openTransactionModal(txn) {
@@ -660,6 +688,7 @@ function openTransactionModal(txn) {
   document.getElementById('txnDate').value = txn ? txn.date : todayStr();
   document.getElementById('txnNotes').value = txn ? (txn.notes || '') : '';
   if (txn) document.getElementById('txnCategory').value = txn.category;
+  updateCategoryColorDot();
 
   pendingReceiptImage = txn && txn.receiptImage ? txn.receiptImage : null;
   renderReceiptPreview();
@@ -987,6 +1016,7 @@ function updateAppLockUI() {
   document.getElementById('autoLockRow').hidden = !on;
   if (on) document.getElementById('autoLockSelect').value = String(lockMeta.autoLockMinutes);
   document.getElementById('lockNowBtn').hidden = !on;
+  if (on) btn.closest('details.settings-panel').open = true; // keep an active feature's panel expanded, not tucked away
 }
 
 /* ---------- Voice dictation (Description field) ---------- */
@@ -1220,6 +1250,7 @@ function init() {
     if (e.target.id === 'modalOverlay') closeTransactionModal();
   });
   document.getElementById('txnForm').addEventListener('submit', handleTransactionSubmit);
+  document.getElementById('txnCategory').addEventListener('change', updateCategoryColorDot);
   document.getElementById('typeExpenseBtn').addEventListener('click', () => setTypeButtons('expense'));
   document.getElementById('typeIncomeBtn').addEventListener('click', () => setTypeButtons('income'));
   document.getElementById('voiceDictateBtn').addEventListener('click', toggleDictation);

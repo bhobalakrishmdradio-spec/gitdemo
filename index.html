@@ -138,8 +138,8 @@
 
       <!-- SETTINGS VIEW -->
       <section id="view-settings" class="view">
-        <div class="panel">
-          <h2>Preferences</h2>
+        <details class="panel settings-panel">
+          <summary>Preferences</summary>
           <div class="settings-row">
             <label for="currencySelect">Currency</label>
             <select id="currencySelect">
@@ -152,10 +152,10 @@
               <option value="AUD">AUD ($)</option>
             </select>
           </div>
-        </div>
+        </details>
 
-        <div class="panel">
-          <h2>Data Management</h2>
+        <details class="panel settings-panel" open>
+          <summary>Data Management</summary>
           <p class="muted">All your data is stored locally in this browser (localStorage) — nothing is sent to a server.</p>
           <p class="muted" id="lastBackupLabel">You haven't exported a backup yet.</p>
           <div class="settings-actions">
@@ -167,10 +167,10 @@
             </label>
             <button class="danger-btn" id="resetBtn">🗑️ Reset All Data</button>
           </div>
-        </div>
+        </details>
 
-        <div class="panel">
-          <h2>App Lock</h2>
+        <details class="panel settings-panel">
+          <summary>App Lock</summary>
           <p class="muted">Require a PIN to open MyFinances, and encrypt your data at rest on this device.</p>
           <button id="appLockToggle" class="theme-switch" aria-pressed="false" style="padding-left:0;">
             <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -187,10 +187,10 @@
             </select>
           </div>
           <p class="muted" id="appLockStatusLabel" style="margin-top:8px;">Turn on to protect MyFinances with a PIN.</p>
-        </div>
+        </details>
 
-        <div class="panel">
-          <h2>Backup Reminders</h2>
+        <details class="panel settings-panel">
+          <summary>Backup Reminders</summary>
           <p class="muted">Get a reminder banner on the dashboard when it's time to export a fresh backup.</p>
           <div class="settings-row">
             <label for="reminderFrequencySelect">Remind me</label>
@@ -202,13 +202,13 @@
               <option value="30">Monthly</option>
             </select>
           </div>
-        </div>
+        </details>
 
-        <div class="panel">
-          <h2>Sample Data</h2>
+        <details class="panel settings-panel">
+          <summary>Sample Data</summary>
           <p class="muted">New here? Load a few example transactions to see how MyFinances works.</p>
           <button class="ghost-btn" id="loadSampleBtn">Load Sample Data</button>
-        </div>
+        </details>
       </section>
     </main>
   </div>
@@ -245,7 +245,10 @@
         </div>
         <div class="form-row">
           <label for="txnCategory">Category</label>
-          <select id="txnCategory" required></select>
+          <div class="category-select-row">
+            <span class="cat-color-dot" id="categoryColorDot"></span>
+            <select id="txnCategory" required></select>
+          </div>
         </div>
         <div class="form-row">
           <label for="txnNotes">Notes (optional)</label>
@@ -314,7 +317,10 @@
     </div>
   </div>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" hidden>
+    <span id="toastMsg"></span>
+    <button type="button" id="toastAction" class="toast-action" hidden></button>
+  </div>
 
   <script src="js/app.js"></script>
 </body>

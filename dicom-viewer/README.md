@@ -59,6 +59,55 @@ radiologist's report and your official imaging system for clinical decisions.
 - **3D MIP** through the whole volume.
 - Adjustable opacity; drag to rotate, wheel to zoom.
 
+### Measurements
+
+- **Distance**, **angle**, and **elliptical ROI** with mean ± SD, min, max,
+  area and pixel count.
+- Statistics are computed from the **pixel values of the plane**, never from
+  the displayed image — changing window/level or invert cannot change a
+  reported number.
+- Units are only claimed when the metadata supports them: with Pixel Spacing
+  present you get millimetres, without it you get pixels and an explicit
+  *uncalibrated* note. Intensities are labelled **HU** only for CT (or an
+  explicit `RescaleType` of HU); otherwise they are reported as stored values.
+- Measurements are stored in plane coordinates, so they stay anchored to the
+  anatomy through zoom, pan, rotation and flipping.
+
+### Data inspection
+
+- **Study → Series hierarchy**, keyed on Study Instance UID.
+- **Searchable DICOM tag browser** — free-text search across every element in
+  the dataset, by keyword, value, or tag number such as `0028,1053`.
+- **Geometry validation** before reconstruction: irregular slice spacing,
+  changing Image Orientation, tilted/non-axial acquisitions, missing slice
+  positions and excluded mismatched slices are all reported rather than
+  silently reformatted.
+- **PNG export** of the active viewport, with the overlays as displayed.
+- Duplicate instances (same SOP Instance UID) are ignored on re-import and
+  reported.
+
+## Relationship to the base plan
+
+This build follows the phased plan in
+`RadiAnt_DICOM_Viewer_Base_Plan.md`, adapted for a browser target and
+educational use:
+
+| Plan phase | Status here |
+| --- | --- |
+| Phase 1 — Import and display | Done: import, Study/Series grouping, real pixel decoding, thumbnails, navigation, window/level, zoom, pan, rotate, flip, invert, reset |
+| Phase 2 — Measurements and comparison | Done: distance, angle, ellipse ROI with statistics; searchable tag panel; PNG export. **Not done:** side-by-side comparison of two different series, persistent archive |
+| Phase 3 — Reconstruction | Done: orthogonal MPR with linked crosshairs, slab projections (Average/MIP/MinIP), volume rendering. **Not done:** oblique MPR |
+| Phase 4 — PACS | Not applicable to a browser build with no network access by design |
+| Phase 5 — Advanced workflows | Not started: fusion, PET/SUV, time-intensity curves, DSA, STL export |
+
+The plan's §7 image-correctness requirements are implemented as follows:
+pixel representation / bit depth / photometric interpretation and the
+modality-rescale pipeline are handled explicitly; statistics come from pixel
+values rather than the rendered image; spatial ordering uses Image Position
+(Patient) ahead of instance number; physical units require calibration
+metadata; orientation markers and measurements survive view transforms; and
+incompatible geometry is detected and explained before reconstruction.
+
 ## Running it
 
 No build step, no dependencies to install — plain HTML/CSS/JS.
@@ -123,12 +172,29 @@ dicom-viewer/
   css/styles.css                # Dark radiology-console theme
   js/app.js                     # Parsing, UI, MPR viewports, interaction
   js/volume.js                  # Volume build, reslicing, slab/MIP, bone mask
+  js/measure.js                 # Distance / angle / ROI math and calibration
   js/vr.js                      # WebGL2 raymarching volume renderer
   js/vendor/dicomParser.min.js  # Third-party DICOM parser (MIT license)
 ```
 
-`volume.js` is pure computation over typed arrays with no DOM dependency, so
-the reconstruction math can be exercised headlessly.
+`volume.js` and `measure.js` are pure computation over typed arrays with no
+DOM dependency, so the reconstruction and measurement math can be exercised
+headlessly.
+
+### Verified against known values
+
+The measurement and reconstruction math is checked against a synthetic
+phantom of known geometry (a 20 px-radius disc at exactly 200 HU, 0.5 mm
+in-plane, 2 mm slices):
+
+| Quantity | Expected | Measured |
+| --- | --- | --- |
+| Distance across the disc | 20.000 mm | 20.000 mm |
+| Right angle | 90.00° | 90.00° |
+| ROI mean / SD | 200.00 / 0.00 HU | 200.00 / 0.00 HU |
+| ROI area | 78.54 mm² | 78.54 mm² |
+| ROI after changing window | unchanged | unchanged |
+| Plane↔canvas round-trip (all rotations/flips) | 0 px | < 1e-14 px |
 
 ## Privacy
 

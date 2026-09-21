@@ -48,7 +48,8 @@
     });
     if (usable.length < 2) return null;
 
-    var spacingZ = estimateSliceSpacing(usable);
+    var geometry = inspectGeometry(usable);
+    var spacingZ = geometry.spacing;
     var step = 1;
     while ((cols / step) * (rows / step) * usable.length > MAX_VOXELS) step *= 2;
 
@@ -98,8 +99,94 @@
       downsample: step,
       slices: usable,
       boneMask: null,
+      warnings: geometry.warnings.concat(
+        usable.length < slices.length
+          ? [(slices.length - usable.length) + " slice(s) excluded: image matrix differs from the rest of the series."]
+          : []
+      ),
+      // Reslicing across Z is only metrically trustworthy when the slice
+      // spacing is actually regular.
+      spacingZReliable: geometry.regular,
     };
   }
+
+  /**
+   * Check the series geometry before it is reconstructed, so incompatible
+   * or incomplete stacks are explained rather than silently reformatted.
+   */
+  function inspectGeometry(slices) {
+    var warnings = [];
+    var zs = [];
+    for (var i = 0; i < slices.length; i++) {
+      var inst = slices[i].instance;
+      var z = inst.imagePositionZ;
+      if (z === null || z === undefined || isNaN(z)) z = inst.sliceLocation;
+      if (z !== null && z !== undefined && !isNaN(z)) zs.push(z);
+    }
+
+    if (zs.length < slices.length) {
+      warnings.push(
+        "Slice positions are missing on " + (slices.length - zs.length) +
+        " slice(s); ordering fell back to instance number and spacing is assumed."
+      );
+    }
+
+    // Orientation must be consistent for a single stack to be meaningful.
+    var first = slices[0].instance.imageOrientation;
+    var orientationVaries = false;
+    if (first) {
+      for (var k = 1; k < slices.length; k++) {
+        var o = slices[k].instance.imageOrientation;
+        if (!o) continue;
+        for (var c = 0; c < 6; c++) {
+          if (Math.abs(o[c] - first[c]) > 1e-3) { orientationVaries = true; break; }
+        }
+        if (orientationVaries) break;
+      }
+      if (orientationVaries) {
+        warnings.push("Image Orientation changes within the series — reformatted planes may be geometrically wrong.");
+      }
+      // Gantry tilt / non-axial acquisition: row and column cosines that
+      // aren't aligned to the patient axes aren't handled by this reslicer.
+      var axial = Math.abs(first[0]) > 0.99 && Math.abs(first[4]) > 0.99;
+      if (!axial) {
+        warnings.push("Non-axial or tilted acquisition detected — this viewer reslices on the voxel grid only, so MPR may be skewed.");
+      }
+    } else {
+      warnings.push("Image Orientation (Patient) is absent — orientation markers are not shown.");
+    }
+
+    // Regular spacing check.
+    var gaps = [];
+    for (var g = 1; g < zs.length; g++) {
+      var d = Math.abs(zs[g] - zs[g - 1]);
+      if (d > 1e-4) gaps.push(d);
+    }
+    var regular = true;
+    var spacing = 1;
+    if (gaps.length) {
+      var sorted = gaps.slice().sort(function (a, b) { return a - b; });
+      spacing = sorted[Math.floor(sorted.length / 2)];
+      var tolerance = Math.max(0.02 * spacing, 1e-3);
+      var irregular = gaps.filter(function (d) { return Math.abs(d - spacing) > tolerance; }).length;
+      if (irregular) {
+        regular = false;
+        warnings.push(
+          irregular + " inter-slice gap(s) differ from the median " + round2(spacing) +
+          "mm — the stack is irregularly sampled, so out-of-plane distances are approximate."
+        );
+      }
+    } else {
+      regular = false;
+      var thickness = slices[0].instance.sliceThickness;
+      spacing = thickness && thickness > 0 ? thickness : 1;
+      warnings.push("No usable slice positions — spacing assumed from Slice Thickness; out-of-plane measurements are uncalibrated.");
+    }
+
+    return { spacing: spacing, regular: regular, warnings: warnings };
+  }
+
+  function round2(v) { return Math.round(v * 100) / 100; }
 
   /**
    * Slice-to-slice spacing in mm. Prefers the median gap between

@@ -11,6 +11,7 @@
 
   var V = window.CTVolume;
   var VR = window.CTVolumeRenderer;
+  var MEAS = window.CTMeasure;
 
   /* ---------------------------------------------------------------------
    * Constants
@@ -46,14 +47,21 @@
     seriesOrder: [],
     seriesMap: {},
     currentSeriesUID: null,
+    duplicateCount: 0,
 
     volume: null,
+    geometryWarnings: [],
     index: { axial: 0, coronal: 0, sagittal: 0 },
     view: {
-      axial: { zoom: 1, panX: 0, panY: 0 },
-      coronal: { zoom: 1, panX: 0, panY: 0 },
-      sagittal: { zoom: 1, panX: 0, panY: 0 },
+      axial: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
+      coronal: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
+      sagittal: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
     },
+
+    tool: "none",
+    measurements: [],
+    pendingMeasure: null,
+    selectedMeasurement: null,
 
     windowWidth: 400,
     windowCenter: 40,
@@ -92,10 +100,20 @@
     dom.folderInput = byId("folderInput");
     dom.clearBtn = byId("clearBtn");
     dom.layoutSeg = byId("layoutSeg");
+    dom.toolSeg = byId("toolSeg");
     dom.presetSelect = byId("presetSelect");
     dom.invertBtn = byId("invertBtn");
+    dom.flipHBtn = byId("flipHBtn");
+    dom.flipVBtn = byId("flipVBtn");
+    dom.rotateBtn = byId("rotateBtn");
     dom.crosshairBtn = byId("crosshairBtn");
+    dom.exportBtn = byId("exportBtn");
     dom.resetBtn = byId("resetBtn");
+    dom.measureList = byId("measureList");
+    dom.clearMeasureBtn = byId("clearMeasureBtn");
+    dom.calibrationNote = byId("calibrationNote");
+    dom.geometryWarnings = byId("geometryWarnings");
+    dom.tagSearch = byId("tagSearch");
     dom.seriesToggleBtn = byId("seriesToggleBtn");
     dom.panelToggleBtn = byId("panelToggleBtn");
 
@@ -194,6 +212,27 @@
     return d.slice(0, 4) + "-" + d.slice(4, 6) + "-" + d.slice(6, 8);
   }
 
+  /**
+   * Whether this instance's rescaled values can honestly be called
+   * Hounsfield Units. CT with an explicit HU Rescale Type is unambiguous;
+   * CT with a rescale slope/intercept but no Rescale Type is the common
+   * real-world case and is accepted. Anything else reports plain values.
+   */
+  function huUnitOf(instance) {
+    var type = (instance.rescaleType || "").toUpperCase().trim();
+    if (type === "HU") return "HU";
+    if (type && type !== "US") return type;           // e.g. OD, MGML
+    if (instance.modality === "CT") return "HU";
+    return "";                                        // unitless stored value
+  }
+
+  /** Label for intensity readouts, honest about unknown units. */
+  function intensityUnit() {
+    var group = getCurrentGroup();
+    if (!group || !group.slices.length) return "";
+    return huUnitOf(group.slices[0].instance);
+  }
+
   // A Window Center of 0 is a legitimate value, so these can't use `||`.
   function wwOf(instance) {
     var v = instance.fileWW;
@@ -217,11 +256,26 @@
     var rows = uint16(dataSet, "x00280010", 0);
     var columns = uint16(dataSet, "x00280011", 0);
 
+    // Pixel Spacing is what makes millimetre measurements legitimate; track
+    // whether it was actually present rather than silently defaulting to 1.
     var pixelSpacingRow = 1, pixelSpacingCol = 1;
+    var hasPixelSpacing = false;
     if (dataSet.elements.x00280030) {
-      pixelSpacingRow = num(dataSet, "x00280030", 1);
-      pixelSpacingCol = dataSet.floatString("x00280030", 1);
-      if (isNaN(pixelSpacingCol)) pixelSpacingCol = pixelSpacingRow;
+      var psr = num(dataSet, "x00280030", NaN);
+      var psc = dataSet.floatString("x00280030", 1);
+      if (isFinite(psr) && psr > 0) {
+        pixelSpacingRow = psr;
+        pixelSpacingCol = isFinite(psc) && psc > 0 ? psc : psr;
+        hasPixelSpacing = true;
+      }
+    }
+
+    // Image Orientation (Patient): row and column direction cosines.
+    var orientation = null;
+    if (dataSet.elements.x00200037) {
+      var o = [];
+      for (var oi = 0; oi < 6; oi++) o.push(dataSet.floatString("x00200037", oi));
+      if (o.every(function (v) { return isFinite(v); })) orientation = o;
     }
 
     var instanceNumber = parseInt(str(dataSet, "x00200013", ""), 10);
@@ -252,17 +306,25 @@
 
       rescaleSlope: num(dataSet, "x00281053", 1),
       rescaleIntercept: num(dataSet, "x00281052", 0),
+      rescaleType: str(dataSet, "x00281054", ""),
       fileWW: num(dataSet, "x00281051", null),
       fileWC: num(dataSet, "x00281050", null),
       pixelSpacingRow: pixelSpacingRow,
       pixelSpacingCol: pixelSpacingCol,
+      hasPixelSpacing: hasPixelSpacing,
       sliceThickness: num(dataSet, "x00180050", null),
+      imageOrientation: orientation,
+      frameOfReferenceUID: str(dataSet, "x00200052", ""),
 
       instanceNumber: isNaN(instanceNumber) ? null : instanceNumber,
       sliceLocation: isNaN(sliceLocation) ? null : sliceLocation,
       imagePositionZ: isNaN(imagePositionZ) ? null : imagePositionZ,
 
+      studyUID: str(dataSet, "x0020000d", "(no study UID)"),
+      studyDescription: str(dataSet, "x00081030", ""),
+      studyDate: str(dataSet, "x00080020", ""),
       seriesUID: str(dataSet, "x0020000e", file.name),
+      seriesNumber: parseInt(str(dataSet, "x00200011", ""), 10),
       seriesDescription: str(dataSet, "x0008103e", ""),
       modality: str(dataSet, "x00080060", ""),
       sopInstanceUID: str(dataSet, "x00080018", ""),
@@ -391,14 +453,56 @@
     if (!group) {
       group = {
         uid: instance.seriesUID,
+        studyUID: instance.studyUID,
+        studyDescription: instance.studyDescription,
+        studyDate: instance.studyDate,
+        seriesNumber: isNaN(instance.seriesNumber) ? null : instance.seriesNumber,
         description: instance.seriesDescription || "(no series description)",
         modality: instance.modality || "",
         instances: [],
+        seenSopUids: {},
       };
       state.seriesMap[instance.seriesUID] = group;
       state.seriesOrder.push(instance.seriesUID);
     }
+    // Opening the same folder twice shouldn't double the stack.
+    var key = instance.sopInstanceUID;
+    if (key) {
+      if (group.seenSopUids[key]) {
+        state.duplicateCount++;
+        return;
+      }
+      group.seenSopUids[key] = true;
+    }
     group.instances.push(instance);
+  }
+
+  /** Series grouped under their Study, in load order. */
+  function studyGroups() {
+    var studies = [], byUid = {};
+    state.seriesOrder.forEach(function (uid) {
+      var group = state.seriesMap[uid];
+      var sUid = group.studyUID || "(no study UID)";
+      if (!byUid[sUid]) {
+        byUid[sUid] = {
+          uid: sUid,
+          description: group.studyDescription || "",
+          date: group.studyDate || "",
+          series: [],
+        };
+        studies.push(byUid[sUid]);
+      }
+      byUid[sUid].series.push(group);
+    });
+    studies.forEach(function (s) {
+      s.series.sort(function (a, b) {
+        if (a.seriesNumber != null && b.seriesNumber != null && a.seriesNumber !== b.seriesNumber) {
+          return a.seriesNumber - b.seriesNumber;
+        }
+        return 0;
+      });
+    });
+    return studies;
   }
 
   function sortSeriesInstances(group) {
@@ -474,10 +578,10 @@
     }
 
     renderSeriesList();
-    showToast(
-      loaded + " image" + (loaded === 1 ? "" : "s") + " loaded" +
-      (skipped ? ", " + skipped + " skipped (not readable DICOM)" : ".")
-    );
+    var parts = [loaded + " image" + (loaded === 1 ? "" : "s") + " loaded"];
+    if (skipped) parts.push(skipped + " skipped (not readable DICOM)");
+    if (state.duplicateCount) parts.push(state.duplicateCount + " duplicate(s) ignored");
+    showToast(parts.join(", ") + ".");
 
     if (!state.currentSeriesUID) selectSeries(firstNewSeriesUID || state.seriesOrder[0]);
     else renderSeriesList();
@@ -496,17 +600,35 @@
       delete seriesNodes[uid];
     });
 
-    state.seriesOrder.forEach(function (uid) {
-      var group = state.seriesMap[uid];
-      var cached = seriesNodes[uid];
-      if (cached && cached.sliceCount === group.slices.length) {
-        cached.wrapper.classList.toggle("active", uid === state.currentSeriesUID);
-        return;
+    var studies = studyGroups();
+    var showStudyHeaders = studies.length > 1 || (studies[0] && studies[0].description);
+
+    studies.forEach(function (study) {
+      if (showStudyHeaders) {
+        var headerId = "study-" + study.uid;
+        if (!seriesNodes[headerId]) {
+          var head = document.createElement("div");
+          head.className = "study-header";
+          head.innerHTML =
+            "<span>" + escapeHtml(study.description || "Study") + "</span>" +
+            '<span class="study-date">' + escapeHtml(formatDicomDate(study.date)) + "</span>";
+          dom.seriesList.appendChild(head);
+          seriesNodes[headerId] = { wrapper: head, sliceCount: -1 };
+        }
       }
-      var wrapper = buildSeriesNode(group, uid);
-      if (cached && cached.wrapper.parentNode) dom.seriesList.replaceChild(wrapper, cached.wrapper);
-      else dom.seriesList.appendChild(wrapper);
-      seriesNodes[uid] = { wrapper: wrapper, sliceCount: group.slices.length };
+
+      study.series.forEach(function (group) {
+        var uid = group.uid;
+        var cached = seriesNodes[uid];
+        if (cached && cached.sliceCount === group.slices.length) {
+          cached.wrapper.classList.toggle("active", uid === state.currentSeriesUID);
+          return;
+        }
+        var wrapper = buildSeriesNode(group, uid);
+        if (cached && cached.wrapper.parentNode) dom.seriesList.replaceChild(wrapper, cached.wrapper);
+        else dom.seriesList.appendChild(wrapper);
+        seriesNodes[uid] = { wrapper: wrapper, sliceCount: group.slices.length };
+      });
     });
   }
 
@@ -626,8 +748,11 @@
       }
 
       resetView();
+      clearMeasurements();
       setBusy(false);
       updateVolumeInfo();
+      updateGeometryWarnings();
+      updateCalibrationNote();
       syncSliders();
       renderAll();
       highlightActiveThumb();
@@ -705,7 +830,8 @@
     if (!state.volume) {
       ctx.restore();
       clearOverlays(plane);
-      drawCrosshair(plane, null);
+      vp.geom = null;
+      drawAnnotations(plane, null);
       return;
     }
 
@@ -715,22 +841,83 @@
       state.windowWidth, state.windowCenter, state.invert, false
     );
 
-    // Fit the plane's *physical* size into the viewport, so anisotropic
-    // voxels (thick slices) don't render squashed.
-    var physW = slab.width * slab.spacingX;
-    var physH = slab.height * slab.spacingY;
-    var view = state.view[plane];
-    var scale = Math.min(cw / physW, ch / physH) * view.zoom;
-    var drawW = physW * scale, drawH = physH * scale;
+    var t = planeTransform(plane, slab, cw, ch);
 
+    // Canvas composes right-to-left, so this applies flip, then rotation,
+    // then the translate — matching planeToCanvas() exactly.
     ctx.imageSmoothingEnabled = true;
-    ctx.translate(cw / 2 + view.panX, ch / 2 + view.panY);
+    ctx.translate(t.tx, t.ty);
+    ctx.rotate(t.rot);
+    ctx.scale(t.flipH ? -1 : 1, t.flipV ? -1 : 1);
+    var drawW = t.physW * t.scale, drawH = t.physH * t.scale;
     ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    vp.geom = { scale: scale, drawW: drawW, drawH: drawH, cw: cw, ch: ch, slab: slab };
+    vp.geom = { t: t, cw: cw, ch: ch, slab: slab };
     updateOverlays(plane, slab);
-    drawCrosshair(plane, vp.geom);
+    drawAnnotations(plane, vp.geom);
+  }
+
+  /* ---------------------------------------------------------------------
+   * Plane <-> canvas transform
+   *
+   * Measurements are stored in plane (column/row) coordinates, so the view
+   * transform has to be invertible: zooming, panning, rotating or flipping
+   * moves the drawing but must not move a measurement off the anatomy.
+   * ------------------------------------------------------------------- */
+  function planeTransform(plane, slab, cw, ch) {
+    var view = state.view[plane];
+    var physW = slab.width * slab.spacingX;
+    var physH = slab.height * slab.spacingY;
+    var rot = ((view.rotation || 0) * Math.PI) / 180;
+
+    // Fit the *rotated* bounding box so a 90° rotation still fits the pane.
+    var c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+    var boundW = physW * c + physH * s;
+    var boundH = physW * s + physH * c;
+    var scale = Math.min(cw / boundW, ch / boundH) * view.zoom;
+
+    return {
+      physW: physW, physH: physH, scale: scale, rot: rot,
+      flipH: !!view.flipH, flipV: !!view.flipV,
+      tx: cw / 2 + view.panX, ty: ch / 2 + view.panY,
+      width: slab.width, height: slab.height,
+      spacingX: slab.spacingX, spacingY: slab.spacingY,
+    };
+  }
+
+  /** Plane column/row -> canvas device pixels. */
+  function planeToCanvas(t, px, py) {
+    var x = (px - t.width / 2) * t.spacingX;
+    var y = (py - t.height / 2) * t.spacingY;
+    if (t.flipH) x = -x;
+    if (t.flipV) y = -y;
+    var cos = Math.cos(t.rot), sin = Math.sin(t.rot);
+    return {
+      x: t.tx + (x * cos - y * sin) * t.scale,
+      y: t.ty + (x * sin + y * cos) * t.scale,
+    };
+  }
+
+  /** Canvas device pixels -> plane column/row (inverse of the above). */
+  function canvasToPlane(t, cx, cy) {
+    var rx = (cx - t.tx) / t.scale;
+    var ry = (cy - t.ty) / t.scale;
+    var cos = Math.cos(-t.rot), sin = Math.sin(-t.rot);
+    var x = rx * cos - ry * sin;
+    var y = rx * sin + ry * cos;
+    if (t.flipH) x = -x;
+    if (t.flipV) y = -y;
+    return { x: x / t.spacingX + t.width / 2, y: y / t.spacingY + t.height / 2 };
+  }
+
+  /** Mouse event -> plane coordinates for a given viewport. */
+  function eventToPlane(plane, clientX, clientY) {
+    var vp = dom.vp[plane];
+    if (!vp.geom) return null;
+    var rect = vp.canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    return canvasToPlane(vp.geom.t, (clientX - rect.left) * dpr, (clientY - rect.top) * dpr);
   }
 
   function resizeCanvas(canvas) {
@@ -755,54 +942,125 @@
     return { h: "coronal", v: "axial" };   // sagittal
   }
 
-  function drawCrosshair(plane, geom) {
+  /**
+   * Overlay layer: crosshair, orientation markers and measurements.
+   * Drawn on a separate canvas so it can be refreshed without re-windowing
+   * the image underneath.
+   */
+  function drawAnnotations(plane, geom) {
     var vp = dom.vp[plane];
     var ctx = vp.cross.getContext("2d");
     ctx.clearRect(0, 0, vp.cross.width, vp.cross.height);
-    if (!geom || !state.crosshair || !state.volume) return;
-
-    var axes = planeAxes(plane);
-    var slab = geom.slab;
-    var view = state.view[plane];
-
-    // Fractional position of each companion plane along this plane's axes.
-    var fx = (state.index[axes.h] + 0.5) / V.planeCount(state.volume, axes.h);
-    var fy = (state.index[axes.v] + 0.5) / V.planeCount(state.volume, axes.v);
-
-    var left = geom.cw / 2 + view.panX - geom.drawW / 2;
-    var top = geom.ch / 2 + view.panY - geom.drawH / 2;
-    var x = left + fx * geom.drawW;
-    var y = top + fy * geom.drawH;
+    if (!geom || !state.volume) return;
 
     var dpr = window.devicePixelRatio || 1;
+    if (state.crosshair) drawCrosshair(ctx, plane, geom, dpr);
+    drawOrientationMarkers(ctx, plane, geom, dpr);
+    drawMeasurements(ctx, plane, geom, dpr);
+  }
+
+  function drawCrosshair(ctx, plane, geom, dpr) {
+    var axes = planeAxes(plane);
+    var t = geom.t;
+
+    // Position of the two companion planes expressed in *this* plane's
+    // column/row space, then pushed through the same transform as the image.
+    var px = ((state.index[axes.h] + 0.5) / V.planeCount(state.volume, axes.h)) * t.width;
+    var py = ((state.index[axes.v] + 0.5) / V.planeCount(state.volume, axes.v)) * t.height;
+
+    var vTop = planeToCanvas(t, px, 0), vBot = planeToCanvas(t, px, t.height);
+    var hLeft = planeToCanvas(t, 0, py), hRight = planeToCanvas(t, t.width, py);
+
     ctx.save();
     ctx.strokeStyle = "rgba(255, 210, 74, 0.75)";
     ctx.lineWidth = Math.max(1, dpr);
     ctx.setLineDash([6 * dpr, 5 * dpr]);
     ctx.beginPath();
-    ctx.moveTo(x, top); ctx.lineTo(x, top + geom.drawH);
-    ctx.moveTo(left, y); ctx.lineTo(left + geom.drawW, y);
+    ctx.moveTo(vTop.x, vTop.y); ctx.lineTo(vBot.x, vBot.y);
+    ctx.moveTo(hLeft.x, hLeft.y); ctx.lineTo(hRight.x, hRight.y);
     ctx.stroke();
     ctx.restore();
-    void slab;
+  }
+
+  /**
+   * Anatomical direction letters on each edge. They are derived from the
+   * plane's patient axes and pushed through the *same* transform as the
+   * image, so they stay correct after rotation and flipping.
+   */
+  function drawOrientationMarkers(ctx, plane, geom, dpr) {
+    var labels = orientationLabels(plane);
+    if (!labels) return;
+    var t = geom.t;
+
+    // Edge midpoints in plane space: left, right, top, bottom. The top edge
+    // is inset further so the letter clears the plane-name badge.
+    var edges = [
+      { p: planeToCanvas(t, 0, t.height / 2), text: labels.left, ax: 1, ay: 0, inset: 14 },
+      { p: planeToCanvas(t, t.width, t.height / 2), text: labels.right, ax: -1, ay: 0, inset: 14 },
+      { p: planeToCanvas(t, t.width / 2, 0), text: labels.top, ax: 0, ay: 1, inset: 32 },
+      { p: planeToCanvas(t, t.width / 2, t.height), text: labels.bottom, ax: 0, ay: -1, inset: 30 },
+    ];
+
+    ctx.save();
+    ctx.font = "bold " + Math.round(12 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.fillStyle = "rgba(216, 240, 255, 0.92)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,0.9)";
+    ctx.shadowBlur = 3 * dpr;
+    edges.forEach(function (e) {
+      if (!e.text) return;
+      var inset = e.inset * dpr;
+      var margin = 14 * dpr;
+      var x = Math.max(margin, Math.min(geom.cw - margin, e.p.x + e.ax * inset));
+      var y = Math.max(32 * dpr, Math.min(geom.ch - 30 * dpr, e.p.y + e.ay * inset));
+      ctx.fillText(e.text, x, y);
+    });
+    ctx.restore();
+  }
+
+  /**
+   * Patient-direction letters for each plane edge.
+   *
+   * The volume is built by stacking slices along the patient Z axis, so the
+   * plane axes map onto patient axes directly. Returns null when the source
+   * orientation is missing or non-axial, since guessing would be worse than
+   * showing nothing.
+   */
+  function orientationLabels(plane) {
+    var group = getCurrentGroup();
+    if (!group || !group.slices.length) return null;
+    var o = group.slices[0].instance.imageOrientation;
+    if (!o) return null;
+
+    // Only label when the acquisition is (near) axial: row along +x, col
+    // along +y in patient space.
+    var rowIsX = Math.abs(o[0]) > 0.9, colIsY = Math.abs(o[4]) > 0.9;
+    if (!rowIsX || !colIsY) return null;
+
+    var rowPos = o[0] > 0 ? "L" : "R";   // increasing column -> patient left
+    var rowNeg = o[0] > 0 ? "R" : "L";
+    var colPos = o[4] > 0 ? "P" : "A";   // increasing row -> patient posterior
+    var colNeg = o[4] > 0 ? "A" : "P";
+
+    if (plane === "axial") {
+      return { left: rowNeg, right: rowPos, top: colNeg, bottom: colPos };
+    }
+    if (plane === "coronal") {
+      // Horizontal is patient X, vertical is patient Z (slice order).
+      return { left: rowNeg, right: rowPos, top: "H", bottom: "F" };
+    }
+    // Sagittal: horizontal is patient Y, vertical is patient Z.
+    return { left: colNeg, right: colPos, top: "H", bottom: "F" };
   }
 
   /** Map a viewport click to indices on the two companion planes. */
   function crosshairFromPoint(plane, clientX, clientY) {
-    var vp = dom.vp[plane];
-    if (!vp.geom || !state.volume) return;
-    var rect = vp.canvas.getBoundingClientRect();
-    var dpr = window.devicePixelRatio || 1;
-    var px = (clientX - rect.left) * dpr;
-    var py = (clientY - rect.top) * dpr;
-
-    var geom = vp.geom;
-    var view = state.view[plane];
-    var left = geom.cw / 2 + view.panX - geom.drawW / 2;
-    var top = geom.ch / 2 + view.panY - geom.drawH / 2;
-
-    var fx = (px - left) / geom.drawW;
-    var fy = (py - top) / geom.drawH;
+    if (!state.volume) return;
+    var p = eventToPlane(plane, clientX, clientY);
+    if (!p) return;
+    var t = dom.vp[plane].geom.t;
+    var fx = p.x / t.width, fy = p.y / t.height;
     if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
 
     var axes = planeAxes(plane);
@@ -810,6 +1068,188 @@
     setPlaneIndex(axes.v, Math.floor(fy * V.planeCount(state.volume, axes.v)), true);
     renderAll();
     syncSliders();
+  }
+
+  /* ---------------------------------------------------------------------
+   * Measurements
+   * ------------------------------------------------------------------- */
+
+  /** Calibration for a plane, carrying provenance so units stay honest. */
+  function calibrationFor(plane, slab) {
+    var group = getCurrentGroup();
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    var source = inst && inst.hasPixelSpacing ? "PixelSpacing" : null;
+    // Coronal/sagittal also depend on slice spacing being trustworthy.
+    if (source && plane !== "axial" && !state.volume.spacingZReliable) source = null;
+    return MEAS.calibrationOf(slab, source);
+  }
+
+  /** Measurements that belong to the plane/slice currently shown. */
+  function measurementsFor(plane) {
+    return state.measurements.filter(function (m) {
+      return m.plane === plane && m.sliceIndex === state.index[plane];
+    });
+  }
+
+  function drawMeasurements(ctx, plane, geom, dpr) {
+    var list = measurementsFor(plane);
+    var pending = state.pendingMeasure && state.pendingMeasure.plane === plane &&
+      state.pendingMeasure.sliceIndex === state.index[plane] ? state.pendingMeasure : null;
+    if (!list.length && !pending) return;
+
+    var t = geom.t;
+    var cal = calibrationFor(plane, geom.slab);
+
+    ctx.save();
+    ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
+    ctx.font = Math.round(12 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.textBaseline = "bottom";
+    ctx.shadowColor = "rgba(0,0,0,0.9)";
+    ctx.shadowBlur = 3 * dpr;
+
+    list.forEach(function (m) {
+      drawOne(m, m.id === state.selectedMeasurement ? "#6ef2a0" : "#4ad6ff", false);
+    });
+    if (pending) drawOne(pending, "#ffd24a", true);
+    ctx.restore();
+
+    function drawOne(m, colour, isPending) {
+      var pts = m.points.map(function (p) { return planeToCanvas(t, p.x, p.y); });
+      ctx.strokeStyle = colour;
+      ctx.fillStyle = colour;
+
+      if (m.tool === MEAS.TOOLS.ellipse && pts.length >= 2) {
+        // Draw the ellipse through the transform so it rotates with the image.
+        var c = planeToCanvas(t, (m.points[0].x + m.points[1].x) / 2, (m.points[0].y + m.points[1].y) / 2);
+        var rxPlane = Math.abs(m.points[1].x - m.points[0].x) / 2;
+        var ryPlane = Math.abs(m.points[1].y - m.points[0].y) / 2;
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.rotate(t.rot);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rxPlane * t.spacingX * t.scale, ryPlane * t.spacingY * t.scale, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (pts.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+      }
+
+      pts.forEach(function (p) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      if (isPending) return;
+      var res = MEAS.evaluate(m, geom.slab, cal);
+      var unit = m.tool === MEAS.TOOLS.ellipse ? (" " + intensityUnit()).trimEnd() : "";
+      var label = res.primary + unit;
+      var anchor = pts[pts.length - 1];
+      ctx.fillText(label, anchor.x + 8 * dpr, anchor.y - 6 * dpr);
+    }
+  }
+
+  /** Handle a click while a measurement tool is active. */
+  function measureClick(plane, clientX, clientY) {
+    var p = eventToPlane(plane, clientX, clientY);
+    if (!p) return;
+    var need = MEAS.pointsNeeded(state.tool);
+    if (!need) return;
+
+    var pending = state.pendingMeasure;
+    if (!pending || pending.plane !== plane || pending.sliceIndex !== state.index[plane]) {
+      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, plane, state.index[plane], [p]);
+      renderPlaneOverlay(plane);
+      return;
+    }
+
+    pending.points.push({ x: p.x, y: p.y });
+    if (pending.points.length >= need) {
+      state.measurements.push(pending);
+      state.selectedMeasurement = pending.id;
+      state.pendingMeasure = null;
+      renderMeasurementList();
+    }
+    renderPlaneOverlay(plane);
+  }
+
+  /** Live preview of the in-progress measurement as the mouse moves. */
+  function measureHover(plane, clientX, clientY) {
+    var pending = state.pendingMeasure;
+    if (!pending || pending.plane !== plane) return;
+    var p = eventToPlane(plane, clientX, clientY);
+    if (!p) return;
+    var need = MEAS.pointsNeeded(state.tool);
+    var preview = pending.points.slice(0, need - 1);
+    preview.push(p);
+    var saved = pending.points;
+    pending.points = preview;
+    renderPlaneOverlay(plane);
+    pending.points = saved;
+  }
+
+  /** Redraw just the annotation layer for one plane. */
+  function renderPlaneOverlay(plane) {
+    var vp = dom.vp[plane];
+    if (vp.geom) drawAnnotations(plane, vp.geom);
+  }
+
+  function renderMeasurementList() {
+    var list = state.measurements;
+    if (!list.length) {
+      dom.measureList.innerHTML = '<p class="muted small">No measurements yet.</p>';
+      return;
+    }
+    var unit = intensityUnit();
+    var html = "";
+    list.forEach(function (m) {
+      var slab = planeCache[m.plane] && planeCache[m.plane].result;
+      var res = slab && m.sliceIndex === state.index[m.plane]
+        ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab))
+        : null;
+      var value = res ? res.primary + (m.tool === MEAS.TOOLS.ellipse && unit ? " " + unit : "") : "—";
+      html +=
+        '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
+        '" data-id="' + m.id + '">' +
+        '<span class="measure-kind">' + toolGlyph(m.tool) + "</span>" +
+        '<span class="measure-main">' + escapeHtml(value) +
+        (res && res.detail ? '<span class="measure-detail">' + escapeHtml(res.detail) + "</span>" : "") +
+        "</span>" +
+        '<span class="measure-loc">' + m.plane.slice(0, 3) + " " + (m.sliceIndex + 1) + "</span>" +
+        '<button class="measure-del" data-del="' + m.id + '" title="Delete">×</button>' +
+        "</div>";
+    });
+    dom.measureList.innerHTML = html;
+  }
+
+  function toolGlyph(tool) {
+    if (tool === MEAS.TOOLS.distance) return "↔";
+    if (tool === MEAS.TOOLS.angle) return "∠";
+    if (tool === MEAS.TOOLS.ellipse) return "◯";
+    return "•";
+  }
+
+  function setTool(tool) {
+    state.tool = tool;
+    state.pendingMeasure = null;
+    Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
+      btn.classList.toggle("active", btn.dataset.tool === tool);
+    });
+    MPR_PLANES.forEach(function (p) {
+      dom.vp[p].root.style.cursor = tool === MEAS.TOOLS.none ? "crosshair" : "cell";
+    });
+    MPR_PLANES.forEach(renderPlaneOverlay);
+  }
+
+  function clearMeasurements() {
+    state.measurements = [];
+    state.pendingMeasure = null;
+    state.selectedMeasurement = null;
+    renderMeasurementList();
+    MPR_PLANES.forEach(renderPlaneOverlay);
   }
 
   /* ---------------------------------------------------------------------
@@ -873,6 +1313,56 @@
     dom.volumeInfo.innerHTML = html;
   }
 
+  /**
+   * A named subset of tags, plus free-text search across everything in the
+   * dataset so the panel doubles as a DICOM tag browser.
+   */
+  var TAG_TABLE = [
+    ["Patient", [
+      ["x00100010", "Patient Name", formatPersonName],
+      ["x00100020", "Patient ID"],
+      ["x00100040", "Patient Sex"],
+      ["x00101010", "Patient Age"],
+    ]],
+    ["Study", [
+      ["x0020000d", "Study Instance UID"],
+      ["x00080020", "Study Date", formatDicomDate],
+      ["x00081030", "Study Description"],
+      ["x00080050", "Accession Number"],
+    ]],
+    ["Series", [
+      ["x0020000e", "Series Instance UID"],
+      ["x00200011", "Series Number"],
+      ["x0008103e", "Series Description"],
+      ["x00080060", "Modality"],
+      ["x00180050", "Slice Thickness"],
+      ["x00180088", "Spacing Between Slices"],
+    ]],
+    ["Image", [
+      ["x00080018", "SOP Instance UID"],
+      ["x00200013", "Instance Number"],
+      ["x00280010", "Rows"],
+      ["x00280011", "Columns"],
+      ["x00280030", "Pixel Spacing"],
+      ["x00200032", "Image Position (Patient)"],
+      ["x00200037", "Image Orientation (Patient)"],
+      ["x00200052", "Frame of Reference UID"],
+    ]],
+    ["Pixel Data", [
+      ["x00280100", "Bits Allocated"],
+      ["x00280101", "Bits Stored"],
+      ["x00280103", "Pixel Representation"],
+      ["x00280004", "Photometric Interpretation"],
+      ["x00280008", "Number of Frames"],
+      ["x00281052", "Rescale Intercept"],
+      ["x00281053", "Rescale Slope"],
+      ["x00281054", "Rescale Type"],
+      ["x00281050", "Window Center"],
+      ["x00281051", "Window Width"],
+      ["x00020010", "Transfer Syntax UID"],
+    ]],
+  ];
+
   function updateMetadata() {
     var group = getCurrentGroup();
     if (!group || !group.slices.length) {
@@ -881,23 +1371,60 @@
     }
     var inst = group.slices[Math.min(state.index.axial, group.slices.length - 1)].instance;
     var ds = inst.dataSet;
+    var query = (dom.tagSearch.value || "").trim().toLowerCase();
+
     var html = "";
-    html += metaSection("Patient");
-    html += metaRow("Name", formatPersonName(str(ds, "x00100010", "—")));
-    html += metaRow("ID", str(ds, "x00100020", "—"));
-    html += metaRow("Sex / Age", str(ds, "x00100040", "—") + " / " + str(ds, "x00101010", "—"));
-    html += metaSection("Study");
-    html += metaRow("Date", formatDicomDate(str(ds, "x00080020", "")) || "—");
-    html += metaRow("Description", str(ds, "x00081030", "—"));
-    html += metaSection("Series / Image");
-    html += metaRow("Modality", inst.modality || "—");
-    html += metaRow("Series", group.description);
-    html += metaRow("Matrix", inst.columns + " × " + inst.rows);
-    html += metaRow("Slice thickness", inst.sliceThickness != null ? fmt(inst.sliceThickness) + " mm" : "—");
-    html += metaRow("Rescale", fmt(inst.rescaleSlope) + " / " + fmt(inst.rescaleIntercept));
-    html += metaRow("Transfer syntax", inst.transferSyntax);
-    html += metaRow("File", inst.fileName);
-    dom.metaTable.innerHTML = html;
+    if (query) {
+      html += renderTagSearch(ds, query, inst);
+    } else {
+      TAG_TABLE.forEach(function (section) {
+        var rows = "";
+        section[1].forEach(function (def) {
+          var raw = str(ds, def[0], "");
+          if (raw === "") return;
+          rows += metaRow(def[1], def[2] ? def[2](raw) : raw);
+        });
+        if (rows) html += metaSection(section[0]) + rows;
+      });
+      html += metaSection("Derived");
+      html += metaRow("Intensity units", intensityUnit() || "stored values (not HU)");
+      html += metaRow("Calibration", inst.hasPixelSpacing ? "Pixel Spacing present" : "absent — measurements in pixels");
+      html += metaRow("File", inst.fileName);
+    }
+    dom.metaTable.innerHTML = html || '<p class="muted small">No matching tags.</p>';
+  }
+
+  /** Free-text search over every element present in the dataset. */
+  function renderTagSearch(ds, query, inst) {
+    var names = {};
+    TAG_TABLE.forEach(function (section) {
+      section[1].forEach(function (def) { names[def[0]] = def[1]; });
+    });
+
+    var hits = 0, html = metaSection("Search results");
+    Object.keys(ds.elements).sort().forEach(function (tag) {
+      if (hits >= 80) return;
+      var label = names[tag] || tagToDisplay(tag);
+      var value;
+      try {
+        value = ds.string(tag);
+      } catch (err) {
+        value = null;
+      }
+      if (value === undefined || value === null) value = "";
+      var haystack = (tag + " " + label + " " + value).toLowerCase();
+      if (haystack.indexOf(query) === -1) return;
+      hits++;
+      html += metaRow(label + "  " + tagToDisplay(tag), value === "" ? "(binary / empty)" : value);
+    });
+    void inst;
+    return hits ? html : "";
+  }
+
+  /** x0010,0010 -> (0010,0010) */
+  function tagToDisplay(tag) {
+    if (!/^x[0-9a-f]{8}$/i.test(tag)) return tag;
+    return "(" + tag.slice(1, 5) + "," + tag.slice(5) + ")";
   }
 
   function metaRow(key, value) {
@@ -955,7 +1482,7 @@
    * ------------------------------------------------------------------- */
   function resetView() {
     MPR_PLANES.forEach(function (plane) {
-      state.view[plane] = { zoom: 1, panX: 0, panY: 0 };
+      state.view[plane] = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
     });
     if (renderer) {
       renderer.rotX = -1.35;
@@ -1067,6 +1594,60 @@
       renderAll();
     });
 
+    // Rotate / flip act on the active plane, keeping each viewport's display
+    // state independent as the plan calls for.
+    dom.rotateBtn.addEventListener("click", function () {
+      var plane = activeMprPlane();
+      var view = state.view[plane];
+      view.rotation = ((view.rotation || 0) + 90) % 360;
+      renderPlane(plane);
+    });
+    dom.flipHBtn.addEventListener("click", function () {
+      var plane = activeMprPlane();
+      state.view[plane].flipH = !state.view[plane].flipH;
+      dom.flipHBtn.classList.toggle("active", state.view[plane].flipH);
+      renderPlane(plane);
+    });
+    dom.flipVBtn.addEventListener("click", function () {
+      var plane = activeMprPlane();
+      state.view[plane].flipV = !state.view[plane].flipV;
+      dom.flipVBtn.classList.toggle("active", state.view[plane].flipV);
+      renderPlane(plane);
+    });
+
+    dom.toolSeg.addEventListener("click", function (e) {
+      var btn = e.target.closest(".seg-btn");
+      if (btn) setTool(btn.dataset.tool);
+    });
+
+    dom.clearMeasureBtn.addEventListener("click", clearMeasurements);
+
+    dom.measureList.addEventListener("click", function (e) {
+      var del = e.target.closest("[data-del]");
+      if (del) {
+        var id = parseInt(del.dataset.del, 10);
+        state.measurements = state.measurements.filter(function (m) { return m.id !== id; });
+        if (state.selectedMeasurement === id) state.selectedMeasurement = null;
+        renderMeasurementList();
+        MPR_PLANES.forEach(renderPlaneOverlay);
+        return;
+      }
+      var row = e.target.closest(".measure-row");
+      if (!row) return;
+      var rid = parseInt(row.dataset.id, 10);
+      var m = state.measurements.filter(function (x) { return x.id === rid; })[0];
+      if (!m) return;
+      state.selectedMeasurement = rid;
+      // Jump to the slice the measurement was made on.
+      setPlaneIndex(m.plane, m.sliceIndex);
+      renderMeasurementList();
+      MPR_PLANES.forEach(renderPlaneOverlay);
+    });
+
+    dom.tagSearch.addEventListener("input", debounce(updateMetadata, 120));
+
+    dom.exportBtn.addEventListener("click", exportActiveViewport);
+
     dom.resetBtn.addEventListener("click", function () {
       resetView();
       renderAll();
@@ -1172,6 +1753,10 @@
         crosshairFromPoint(plane, e.clientX, e.clientY);
         return;
       }
+      if (e.button === 0 && state.tool !== MEAS.TOOLS.none) {
+        measureClick(plane, e.clientX, e.clientY);
+        return;
+      }
       state.drag = {
         plane: plane,
         mode: e.button === 0 ? "wl" : "pan",
@@ -1227,6 +1812,9 @@
   }
 
   function onMouseMove(e) {
+    if (state.pendingMeasure) {
+      measureHover(state.pendingMeasure.plane, e.clientX, e.clientY);
+    }
     var drag = state.drag;
     if (!drag) return;
     var dx = e.clientX - drag.x;
@@ -1351,6 +1939,97 @@
       (state.boneThreshold < 350 ? " Contrast-filled vessels are cut too at this threshold." : "");
   }
 
+  /** The active plane, falling back to axial when 3D is focused. */
+  function activeMprPlane() {
+    return MPR_PLANES.indexOf(state.activePlane) >= 0 ? state.activePlane : "axial";
+  }
+
+  /**
+   * Export the active viewport as a PNG, compositing the annotation layer
+   * (crosshair, orientation markers, measurements) over the image so what is
+   * saved matches what is on screen.
+   */
+  function exportActiveViewport() {
+    var plane = state.activePlane;
+    var vp = dom.vp[plane];
+    if (!vp || !vp.canvas) return;
+
+    var out = document.createElement("canvas");
+    var src = vp.canvas;
+    out.width = src.width;
+    out.height = src.height;
+    var ctx = out.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, out.width, out.height);
+
+    if (plane === "vr") {
+      if (!renderer) return showToast("Nothing to export from the 3D view yet.", true);
+      renderer.render();                       // ensure the buffer is current
+      ctx.drawImage(src, 0, 0);
+    } else {
+      if (!vp.geom) return showToast("Nothing to export yet.", true);
+      ctx.drawImage(src, 0, 0);
+      ctx.drawImage(vp.cross, 0, 0);
+    }
+
+    var group = getCurrentGroup();
+    var stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    var name = "ct-console-" + plane + "-" +
+      (group ? group.description.replace(/[^\w-]+/g, "_").slice(0, 40) : "view") +
+      "-" + stamp + ".png";
+
+    out.toBlob(function (blob) {
+      if (!blob) return showToast("Export failed.", true);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      showToast("Exported " + name);
+    }, "image/png");
+  }
+
+  /** Surface geometry problems found during reconstruction. */
+  function updateGeometryWarnings() {
+    var warnings = state.volume && state.volume.warnings ? state.volume.warnings : [];
+    if (!warnings.length) {
+      dom.geometryWarnings.innerHTML = "";
+      return;
+    }
+    dom.geometryWarnings.innerHTML =
+      '<div class="warn-block"><div class="warn-title">⚠ Geometry</div>' +
+      warnings.map(function (w) { return '<p class="warn-item">' + escapeHtml(w) + "</p>"; }).join("") +
+      "</div>";
+  }
+
+  /** Explain what the measurement units are based on. */
+  function updateCalibrationNote() {
+    var group = getCurrentGroup();
+    if (!group || !group.slices.length) {
+      dom.calibrationNote.textContent = "";
+      return;
+    }
+    var inst = group.slices[0].instance;
+    var unit = intensityUnit();
+    if (!inst.hasPixelSpacing) {
+      dom.calibrationNote.textContent =
+        "No Pixel Spacing in this series — distances and areas are reported in pixels, not millimetres.";
+      return;
+    }
+    var note = "Distances use Pixel Spacing " +
+      fmt(inst.pixelSpacingCol) + " × " + fmt(inst.pixelSpacingRow) + " mm.";
+    if (state.volume && !state.volume.spacingZReliable) {
+      note += " Slice spacing is irregular, so coronal/sagittal distances are uncalibrated.";
+    }
+    note += unit
+      ? " ROI statistics are in " + unit + "."
+      : " ROI statistics are stored pixel values — this series does not declare Hounsfield Units.";
+    dom.calibrationNote.textContent = note;
+  }
+
   function debounce(fn, wait) {
     var timer = null;
     return function () {
@@ -1372,7 +2051,9 @@
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     updateWLInputs();
     updateBoneStatus();
+    renderMeasurementList();
     syncSliders();
+    setTool("none");
     setActivePlane("axial");
     setLayout(state.layout);
 
@@ -1393,5 +2074,9 @@
     state: state,
     getPlaneData: getPlaneData,
     renderAll: renderAll,
+    orientationLabels: orientationLabels,
+    planeToCanvas: planeToCanvas,
+    canvasToPlane: canvasToPlane,
+    planeTransform: planeTransform,
   };
 })();

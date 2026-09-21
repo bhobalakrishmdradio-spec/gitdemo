@@ -92,7 +92,11 @@ function loadPrefs() {
 }
 
 function savePrefs(prefs) {
-  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch (e) {
+    console.error('Save prefs failed', e);
+  }
 }
 
 function loadLockMeta() {
@@ -111,7 +115,12 @@ function loadLockMeta() {
 }
 
 function saveLockMeta(meta) {
-  localStorage.setItem(LOCK_META_KEY, JSON.stringify(meta));
+  try {
+    localStorage.setItem(LOCK_META_KEY, JSON.stringify(meta));
+  } catch (e) {
+    console.error('Save lock meta failed', e);
+    showToast("Couldn't save - your browser is blocking local storage");
+  }
 }
 
 let lockMeta = loadLockMeta();
@@ -171,6 +180,10 @@ function loadState() {
 }
 
 function saveState() {
+  // Never let a storage failure (e.g. Safari Private Browsing, which throws
+  // on every localStorage.setItem, or a full quota) propagate out of here:
+  // the caller has already updated in-memory `state` and needs to keep going
+  // (close the modal, refresh the view) even if persistence itself fails.
   if (lockMeta.enabled && encryptionKey) {
     // Encrypted persistence is necessarily async (Web Crypto has no sync API).
     // The in-memory `state` is already updated by the caller, so the UI stays
@@ -179,9 +192,17 @@ function saveState() {
       .then((blob) => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ encrypted: true, cipher: blob.cipher, iv: blob.iv }));
       })
-      .catch((err) => console.error('Encrypted save failed', err));
+      .catch((err) => {
+        console.error('Encrypted save failed', err);
+        showToast("Couldn't save - your browser is blocking local storage");
+      });
   } else {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.error('Save failed', err);
+      showToast("Couldn't save - your browser is blocking local storage");
+    }
   }
 }
 

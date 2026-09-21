@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CT Console — DICOM Viewer</title>
+<title>CT Console — DICOM Viewer &amp; MPR/3D Workstation</title>
 <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="viewer">
-    <!-- Top toolbar -->
+    <!-- ================= Toolbar ================= -->
     <header class="toolbar">
       <div class="toolbar-brand">
         <span class="brand-icon">🩻</span>
@@ -28,7 +28,17 @@
       </div>
 
       <div class="toolbar-group">
-        <span class="tool-label">Preset</span>
+        <span class="tool-label">Layout</span>
+        <div class="seg" id="layoutSeg">
+          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D">⊞ 2×2</button>
+          <button class="seg-btn" data-layout="axial" title="Axial only">▣ Axial</button>
+          <button class="seg-btn" data-layout="mpr" title="Three MPR planes">◫ MPR</button>
+          <button class="seg-btn" data-layout="vr" title="3D only">◉ 3D</button>
+        </div>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="tool-label">Window</span>
         <select id="presetSelect">
           <option value="">Custom</option>
           <option value="lung">Lung (W:1500 L:-600)</option>
@@ -42,79 +52,186 @@
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗 Invert</button>
-        <button class="icon-btn" id="flipHBtn" title="Flip horizontal">↔️</button>
-        <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
-        <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
+        <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗</button>
+        <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
         <button class="icon-btn" id="resetBtn" title="Reset view (R)">⤾ Reset</button>
       </div>
 
       <div class="toolbar-group toolbar-group-right">
-        <button class="icon-btn" id="metaToggleBtn" title="Toggle DICOM metadata panel">ℹ️ Info</button>
-        <button class="icon-btn" id="thumbToggleBtn" title="Toggle series thumbnails">🧱 Thumbnails</button>
+        <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱</button>
+        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️ Tools</button>
       </div>
     </header>
 
     <div class="viewer-body">
-      <!-- Series / thumbnail panel -->
-      <aside class="panel panel-left" id="thumbPanel">
-        <div class="panel-title">Series &amp; Slices</div>
+      <!-- ================= Series panel ================= -->
+      <aside class="panel panel-left" id="seriesPanel">
+        <div class="panel-title">Series</div>
         <div class="drop-hint" id="dropHint">
-          Drag &amp; drop DICOM files here,<br />or use <strong>Open Files</strong> / <strong>Open Folder</strong> above.
+          Drag &amp; drop DICOM files here,<br />or use <strong>Open Files</strong> / <strong>Open Folder</strong>.
         </div>
         <div class="series-list" id="seriesList"></div>
       </aside>
 
-      <!-- Main image viewport -->
-      <main class="viewport" id="viewport">
-        <div class="viewport-overlay overlay-tl" id="overlayTL"></div>
-        <div class="viewport-overlay overlay-tr" id="overlayTR"></div>
-        <div class="viewport-overlay overlay-bl" id="overlayBL"></div>
-        <div class="viewport-overlay overlay-br" id="overlayBR"></div>
-        <canvas id="dicomCanvas"></canvas>
+      <!-- ================= Viewport grid ================= -->
+      <main class="viewgrid layout-quad" id="viewGrid">
+        <section class="vp" id="vp-axial" data-plane="axial">
+          <canvas class="vp-canvas"></canvas>
+          <div class="vp-overlay vp-tl"></div>
+          <div class="vp-overlay vp-tr"></div>
+          <div class="vp-overlay vp-bl"></div>
+          <div class="vp-overlay vp-br"></div>
+          <div class="vp-badge">Axial</div>
+          <canvas class="vp-cross"></canvas>
+          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
+        </section>
+
+        <section class="vp" id="vp-coronal" data-plane="coronal">
+          <canvas class="vp-canvas"></canvas>
+          <div class="vp-overlay vp-tl"></div>
+          <div class="vp-overlay vp-tr"></div>
+          <div class="vp-overlay vp-bl"></div>
+          <div class="vp-overlay vp-br"></div>
+          <div class="vp-badge">Coronal</div>
+          <canvas class="vp-cross"></canvas>
+          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
+        </section>
+
+        <section class="vp" id="vp-sagittal" data-plane="sagittal">
+          <canvas class="vp-canvas"></canvas>
+          <div class="vp-overlay vp-tl"></div>
+          <div class="vp-overlay vp-tr"></div>
+          <div class="vp-overlay vp-bl"></div>
+          <div class="vp-overlay vp-br"></div>
+          <div class="vp-badge">Sagittal</div>
+          <canvas class="vp-cross"></canvas>
+          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
+        </section>
+
+        <section class="vp vp-3d" id="vp-vr" data-plane="vr">
+          <canvas class="vp-canvas" id="vrCanvas"></canvas>
+          <div class="vp-overlay vp-tl"></div>
+          <div class="vp-overlay vp-br"></div>
+          <div class="vp-badge">3D</div>
+          <div class="vp-empty" id="vrEmpty">3D volume rendering<br /><span class="muted small">needs a multi-slice series</span></div>
+        </section>
+
         <div class="viewport-empty" id="viewportEmpty">
           <div class="viewport-empty-icon">🩻</div>
-          <div>No image loaded</div>
-          <div class="muted small">Open DICOM files to begin viewing</div>
+          <div>No study loaded</div>
+          <div class="muted small">Open a DICOM folder to begin</div>
         </div>
       </main>
 
-      <!-- Metadata panel -->
-      <aside class="panel panel-right" id="metaPanel">
-        <div class="panel-title">DICOM Metadata</div>
-        <div class="meta-table" id="metaTable">
-          <p class="muted small">No image loaded.</p>
+      <!-- ================= Tools panel ================= -->
+      <aside class="panel panel-right" id="toolsPanel">
+        <div class="panel-title">Tools</div>
+        <div class="tools-scroll">
+
+          <section class="tool-section">
+            <h4>Window / Level</h4>
+            <div class="field-row">
+              <label for="windowWidth">Width</label>
+              <input type="number" id="windowWidth" step="1" />
+            </div>
+            <div class="field-row">
+              <label for="windowCenter">Level</label>
+              <input type="number" id="windowCenter" step="1" />
+            </div>
+            <p class="hint-text">Left-drag on any plane adjusts W/L.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>Slice Thickness</h4>
+            <div class="field-row">
+              <label for="thicknessRange">Slab</label>
+              <input type="range" id="thicknessRange" min="0" max="50" step="0.5" value="0" />
+              <span class="field-value" id="thicknessValue">Thin</span>
+            </div>
+            <div class="field-row">
+              <label for="projectionMode">Project</label>
+              <select id="projectionMode">
+                <option value="average">Average</option>
+                <option value="mip">MIP (max)</option>
+                <option value="minip">MinIP (min)</option>
+              </select>
+            </div>
+            <p class="hint-text">Slab of 0 renders the native thin slice.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>Bone Cut</h4>
+            <div class="field-row">
+              <label class="switch">
+                <input type="checkbox" id="boneCutToggle" />
+                <span>Remove bone</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label for="boneThreshold">HU ≥</label>
+              <input type="range" id="boneThreshold" min="100" max="800" step="10" value="200" />
+              <span class="field-value" id="boneThresholdValue">200</span>
+            </div>
+            <p class="hint-text" id="boneCutStatus">Threshold segmentation — applies to MPR and 3D.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>3D Rendering</h4>
+            <div class="field-row">
+              <label for="vrMode">Mode</label>
+              <select id="vrMode">
+                <option value="vr">Volume Rendering</option>
+                <option value="mip">3D MIP</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="vrPreset">Preset</label>
+              <select id="vrPreset">
+                <option value="bone">Bone</option>
+                <option value="angio">Angio</option>
+                <option value="soft">Soft Tissue</option>
+                <option value="lung">Lung</option>
+                <option value="skin">Skin</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="vrOpacity">Opacity</label>
+              <input type="range" id="vrOpacity" min="0.1" max="2" step="0.05" value="1" />
+            </div>
+            <p class="hint-text">Drag to rotate · wheel to zoom.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>Volume</h4>
+            <div class="meta-table" id="volumeInfo">
+              <p class="muted small">No volume built.</p>
+            </div>
+          </section>
+
+          <section class="tool-section">
+            <h4>DICOM Metadata</h4>
+            <div class="meta-table" id="metaTable">
+              <p class="muted small">No image loaded.</p>
+            </div>
+          </section>
         </div>
       </aside>
     </div>
 
-    <!-- Bottom controls: slice scrubber + window/level + cine -->
-    <footer class="controls">
-      <div class="controls-row">
-        <button class="icon-btn" id="cinePlayBtn" title="Play/Pause cine (Space)">▶️</button>
-        <input type="range" id="sliceSlider" min="0" max="0" value="0" step="1" disabled />
-        <span class="slice-counter" id="sliceCounter">0 / 0</span>
-      </div>
-      <div class="controls-row">
-        <div class="wl-control">
-          <label for="windowWidth">Window Width</label>
-          <input type="number" id="windowWidth" step="1" />
-        </div>
-        <div class="wl-control">
-          <label for="windowCenter">Window Level</label>
-          <input type="number" id="windowCenter" step="1" />
-        </div>
-        <div class="zoom-indicator">Zoom: <span id="zoomLabel">100%</span></div>
-        <div class="hint muted small">
-          Left-drag: window/level &nbsp;·&nbsp; Wheel: zoom &nbsp;·&nbsp; Right/Middle-drag: pan &nbsp;·&nbsp; ↑/↓ or Wheel+Shift: change slice
-        </div>
-      </div>
+    <!-- ================= Status bar ================= -->
+    <footer class="statusbar">
+      <span id="statusText" class="muted">Ready</span>
+      <span class="statusbar-spacer"></span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan</span>
     </footer>
   </div>
 
   <div id="toast" class="toast" hidden></div>
+  <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><span id="busyText">Working…</span></div></div>
 
   <script src="js/vendor/dicomParser.min.js"></script>
+  <script src="js/volume.js"></script>
+  <script src="js/vr.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

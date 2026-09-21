@@ -268,6 +268,18 @@ function showToast(msg, opts) {
   showToast._t = setTimeout(() => { toast.hidden = true; }, opts && opts.actionLabel ? 5000 : 2200);
 }
 
+/* ---------- Full-size receipt photo viewer ---------- */
+function openPhotoLightbox(dataUrl) {
+  if (!dataUrl) return;
+  document.getElementById('photoLightboxImg').src = dataUrl;
+  document.getElementById('photoLightbox').hidden = false;
+}
+
+function closePhotoLightbox() {
+  document.getElementById('photoLightbox').hidden = true;
+  document.getElementById('photoLightboxImg').src = '';
+}
+
 /* ---------- Navigation ---------- */
 const views = ['dashboard', 'transactions', 'budgets', 'settings'];
 const viewTitles = { dashboard: 'Dashboard', transactions: 'Transactions', budgets: 'Budgets', settings: 'Settings' };
@@ -500,7 +512,7 @@ function txnRowHTML(t) {
   const sign = t.type === 'income' ? '+' : '−';
   return `<div class="txn-row" data-id="${t.id}">
     <div class="txn-info">
-      <span class="txn-desc">${info.icon} ${escapeHTML(t.description)}${t.receiptImage ? '<span class="receipt-marker" title="Has a receipt photo">📎</span>' : ''}</span>
+      <span class="txn-desc">${info.icon} ${escapeHTML(t.description)}${t.receiptImage ? `<button type="button" class="receipt-marker" data-photo="${t.receiptImage}" title="View receipt photo">📎</button>` : ''}</span>
       <span class="txn-meta">${info.label} · ${formatDate(t.date)}</span>
     </div>
     <div class="txn-amount ${t.type}">${sign} ${formatCurrency(t.amount)}</div>
@@ -550,7 +562,7 @@ function renderTransactionsView() {
     const sign = t.type === 'income' ? '+' : '−';
     return `<tr data-id="${t.id}">
       <td>${formatDate(t.date)}</td>
-      <td>${escapeHTML(t.description)}${t.receiptImage ? '<span class="receipt-marker" title="Has a receipt photo">📎</span>' : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
+      <td>${escapeHTML(t.description)}${t.receiptImage ? `<button type="button" class="receipt-marker" data-photo="${t.receiptImage}" title="View receipt photo">📎</button>` : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
       <td><span class="cat-badge" style="color:${info.color};background:${info.color}26;">${info.icon} ${info.label}</span></td>
       <td>${t.type === 'income' ? 'Income' : 'Expense'}</td>
       <td class="right ${t.type === 'income' ? 'txn-amount income' : 'txn-amount expense'}">${sign} ${formatCurrency(t.amount)}</td>
@@ -597,6 +609,12 @@ function wireRowActions(container) {
     row.addEventListener('click', () => {
       const id = row.dataset.id;
       openTransactionModal(state.transactions.find((t) => t.id === id));
+    });
+  });
+  container.querySelectorAll('.receipt-marker').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation(); // view the photo without also opening the edit modal
+      openPhotoLightbox(el.dataset.photo);
     });
   });
 }
@@ -784,11 +802,9 @@ function compressImageFile(file, maxDim, quality) {
 function renderReceiptPreview() {
   const preview = document.getElementById('receiptPreview');
   const thumb = document.getElementById('receiptThumb');
-  const thumbLink = document.getElementById('receiptThumbLink');
   const attachBtn = document.getElementById('receiptAttachBtn');
   if (pendingReceiptImage) {
     thumb.src = pendingReceiptImage;
-    thumbLink.href = pendingReceiptImage;
     preview.hidden = false;
     attachBtn.textContent = '📷 Replace receipt photo';
   } else {
@@ -1257,6 +1273,9 @@ function init() {
   document.getElementById('receiptAttachBtn').addEventListener('click', () => document.getElementById('receiptFileInput').click());
   document.getElementById('receiptFileInput').addEventListener('change', handleReceiptFileSelected);
   document.getElementById('receiptRemoveBtn').addEventListener('click', removeReceiptPhoto);
+  document.getElementById('receiptThumbBtn').addEventListener('click', () => openPhotoLightbox(pendingReceiptImage));
+  document.getElementById('photoLightboxClose').addEventListener('click', closePhotoLightbox);
+  document.getElementById('photoLightbox').addEventListener('click', (e) => { if (e.target.id === 'photoLightbox') closePhotoLightbox(); });
 
   ['searchInput', 'filterType', 'filterCategory', 'filterMonth'].forEach((id) => {
     document.getElementById(id).addEventListener('input', renderTransactionsView);
@@ -1329,8 +1348,10 @@ function init() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !document.getElementById('modalOverlay').hidden) closeTransactionModal();
-    if (e.key === 'Escape' && !document.getElementById('pinModalOverlay').hidden) closePinModal(null);
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('photoLightbox').hidden) closePhotoLightbox();
+    else if (!document.getElementById('modalOverlay').hidden) closeTransactionModal();
+    else if (!document.getElementById('pinModalOverlay').hidden) closePinModal(null);
   });
 
   switchView('dashboard');

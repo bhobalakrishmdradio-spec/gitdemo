@@ -89,6 +89,15 @@ button, input, select, textarea { font-family: inherit; }
 }
 
 .sidebar-footer { margin-top: auto; padding-top: 16px; }
+.lock-now-btn { width: 100%; justify-content: center; margin-bottom: 8px; }
+
+/* Toggle switch (Sync/App Lock style controls) */
+.theme-switch { display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 6px 4px; width: 100%; }
+.switch-track { width: 34px; height: 18px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); position: relative; flex-shrink: 0; }
+.switch-thumb { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-muted); transition: transform 0.15s ease; }
+.theme-switch[aria-pressed="true"] .switch-thumb { transform: translateX(16px); background: var(--primary); }
+@media (prefers-reduced-motion: reduce) { .switch-thumb { transition: none; } }
+.switch-label { font-size: 0.85rem; color: var(--text-muted); }
 
 .main {
   flex: 1;
@@ -398,6 +407,24 @@ button, input, select, textarea { font-family: inherit; }
 .type-btn.active[data-type="income"] { background: var(--income); color: #fff; border-color: var(--income); }
 
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+
+/* ---------- App Lock screen ---------- */
+.lock-screen {
+  position: fixed; inset: 0; z-index: 500; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.lock-screen[hidden] { display: none; }
+.lock-card { max-width: 320px; width: 100%; text-align: center; }
+.lock-card .brand { justify-content: center; font-size: 1.4rem; margin-bottom: 4px; }
+.lock-subtitle { color: var(--text-muted); font-size: 0.9rem; margin: 8px 0 4px; }
+.lock-pin-input {
+  width: 100%; text-align: center; font-size: 1.9rem; letter-spacing: 0.5em;
+  padding: 14px 10px 14px 16px; margin: 16px 0 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.lock-error { color: var(--expense); font-size: 0.85rem; min-height: 1.2em; margin: 0 0 14px; }
+.lock-card .primary-btn { width: 100%; margin-bottom: 12px; }
+.lock-forgot-btn { font-size: 0.8rem; }
 
 /* ---------- Toast ---------- */
 .toast {

@@ -21,6 +21,7 @@
         <button class="nav-btn" data-view="settings">⚙️ Settings</button>
       </nav>
       <div class="sidebar-footer">
+        <button id="lockNowBtn" class="ghost-btn lock-now-btn" hidden>🔒 Lock now</button>
         <button id="themeToggle" class="ghost-btn" title="Toggle light/dark theme">🌙 Dark mode</button>
       </div>
     </aside>
@@ -159,12 +160,33 @@
           <p class="muted" id="lastBackupLabel">You haven't exported a backup yet.</p>
           <div class="settings-actions">
             <button class="ghost-btn" id="exportBtn">⬇️ Export Data (JSON)</button>
+            <button class="ghost-btn" id="exportCsvBtn">⬇️ Export as CSV</button>
             <label class="ghost-btn file-btn">
               ⬆️ Import Data (JSON)
               <input type="file" id="importInput" accept="application/json" hidden />
             </label>
             <button class="danger-btn" id="resetBtn">🗑️ Reset All Data</button>
           </div>
+        </div>
+
+        <div class="panel">
+          <h2>App Lock</h2>
+          <p class="muted">Require a PIN to open MyFinances, and encrypt your data at rest on this device.</p>
+          <button id="appLockToggle" class="theme-switch" aria-pressed="false" style="padding-left:0;">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label" id="appLockToggleLabel">App Lock off</span>
+          </button>
+          <div class="settings-row" id="autoLockRow" hidden>
+            <label for="autoLockSelect">Auto-lock after</label>
+            <select id="autoLockSelect">
+              <option value="1">1 minute</option>
+              <option value="5">5 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="0">Never (manual lock only)</option>
+            </select>
+          </div>
+          <p class="muted" id="appLockStatusLabel" style="margin-top:8px;">Turn on to protect MyFinances with a PIN.</p>
         </div>
 
         <div class="panel">
@@ -234,6 +256,49 @@
           <button type="submit" class="primary-btn">Save Transaction</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- PIN set/confirm modal (reused for enabling and disabling App Lock) -->
+  <div id="pinModalOverlay" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="pinModalTitle">Set App Lock PIN</h2>
+        <button class="icon-btn" id="pinModalClose">✕</button>
+      </div>
+      <p class="muted" id="pinModalSubtitle">Choose a 4-6 digit PIN. You'll need it to unlock MyFinances.</p>
+      <form id="pinForm">
+        <div class="form-row">
+          <label for="pinInput1" id="pinInput1Label">PIN</label>
+          <input type="password" inputmode="numeric" pattern="[0-9]*" id="pinInput1" minlength="4" maxlength="6" autocomplete="off" required />
+        </div>
+        <div class="form-row" id="pinInput2Row">
+          <label for="pinInput2">Confirm PIN</label>
+          <input type="password" inputmode="numeric" pattern="[0-9]*" id="pinInput2" minlength="4" maxlength="6" autocomplete="off" />
+        </div>
+        <p class="lock-error" id="pinModalError" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="pinModalCancel">Cancel</button>
+          <button type="submit" class="primary-btn" id="pinModalSubmit">Continue</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- App Lock screen: covers everything while locked -->
+  <div id="lockScreen" class="lock-screen" hidden>
+    <div class="lock-card">
+      <div class="brand">
+        <span class="brand-icon">💰</span>
+        <span class="brand-name">MyFinances</span>
+      </div>
+      <p class="lock-subtitle">Enter your PIN to unlock</p>
+      <form id="lockForm">
+        <input type="password" inputmode="numeric" pattern="[0-9]*" id="lockPinInput" class="lock-pin-input" maxlength="6" autocomplete="off" placeholder="••••" />
+        <p class="lock-error" id="lockError" hidden>Incorrect PIN</p>
+        <button type="submit" class="primary-btn" id="lockUnlockBtn">Unlock</button>
+      </form>
+      <button type="button" class="link-btn lock-forgot-btn" id="lockForgotBtn">Forgot PIN? Reset all data</button>
     </div>
   </div>
 

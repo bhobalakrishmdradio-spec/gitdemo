@@ -31,9 +31,103 @@ const CATEGORIES = {
 const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£', INR: '₹', JPY: '¥', CAD: '$', AUD: '$' };
 
 const STORAGE_KEY = 'myfinances_state_v1';
+const PREFS_KEY = 'myfinances_prefs_v1';       // plaintext, non-sensitive (theme only) - readable before unlock
+const LOCK_META_KEY = 'myfinances_lock_meta_v1'; // plaintext meta (salt, PIN-check ciphertext) - no financial data
+const LOCK_CHECK_PLAINTEXT = 'myfinances-lock-v1';
+
+/* ---------- App Lock: crypto helpers (Web Crypto API) ---------- */
+function cryptoAvailable() {
+  return !!(window.crypto && window.crypto.subtle);
+}
+
+function bufToB64(buf) {
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function b64ToBuf(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function deriveKeyFromPin(pin, saltB64) {
+  const salt = b64ToBuf(saltB64);
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptWithKey(key, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const data = enc.encode(JSON.stringify(obj));
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  return { cipher: bufToB64(cipherBuf), iv: bufToB64(iv) };
+}
+
+async function decryptWithKey(key, cipherB64, ivB64) {
+  const cipherBuf = b64ToBuf(cipherB64);
+  const iv = new Uint8Array(b64ToBuf(ivB64));
+  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipherBuf);
+  return JSON.parse(new TextDecoder().decode(plainBuf));
+}
+
+/* ---------- App Lock: meta + prefs (always-plaintext, non-financial) ---------- */
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function savePrefs(prefs) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+function loadLockMeta() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LOCK_META_KEY) || '{}');
+    return {
+      enabled: !!raw.enabled,
+      salt: raw.salt || null,
+      checkCipher: raw.checkCipher || null,
+      checkIv: raw.checkIv || null,
+      autoLockMinutes: typeof raw.autoLockMinutes === 'number' ? raw.autoLockMinutes : 5,
+    };
+  } catch (e) {
+    return { enabled: false, salt: null, checkCipher: null, checkIv: null, autoLockMinutes: 5 };
+  }
+}
+
+function saveLockMeta(meta) {
+  localStorage.setItem(LOCK_META_KEY, JSON.stringify(meta));
+}
+
+let lockMeta = loadLockMeta();
+let encryptionKey = null;     // in-memory only; never persisted
+let isLocked = false;         // true while the lock screen is covering the app
+let pendingEncryptedBlob = null; // { cipher, iv } read at boot, decrypted once the PIN is entered
+let autoLockTimer = null;
 
 /* ---------- State ---------- */
 let state = loadState();
+if (isLocked) {
+  // The theme lives in a small plaintext prefs entry so the lock screen
+  // itself can theme correctly before the PIN has decrypted anything else.
+  const prefs = loadPrefs();
+  if (prefs.theme) state.settings.theme = prefs.theme;
+}
 
 function defaultState() {
   return {
@@ -49,16 +143,27 @@ function defaultState() {
   };
 }
 
+function normalizeState(parsed) {
+  return {
+    transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+    budgets: parsed.budgets && typeof parsed.budgets === 'object' ? parsed.budgets : {},
+    settings: Object.assign(defaultState().settings, parsed.settings || {}),
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
-    return {
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-      budgets: parsed.budgets && typeof parsed.budgets === 'object' ? parsed.budgets : {},
-      settings: Object.assign(defaultState().settings, parsed.settings || {}),
-    };
+    if (parsed && parsed.encrypted) {
+      // Locked: can't decrypt without the PIN yet. Stash the ciphertext and
+      // hand back an empty shell; the lock screen fills this in on unlock.
+      pendingEncryptedBlob = { cipher: parsed.cipher, iv: parsed.iv };
+      isLocked = true;
+      return defaultState();
+    }
+    return normalizeState(parsed);
   } catch (e) {
     console.error('Failed to load saved data, starting fresh.', e);
     return defaultState();
@@ -66,7 +171,18 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (lockMeta.enabled && encryptionKey) {
+    // Encrypted persistence is necessarily async (Web Crypto has no sync API).
+    // The in-memory `state` is already updated by the caller, so the UI stays
+    // correct immediately; this just needs to land in storage shortly after.
+    encryptWithKey(encryptionKey, { transactions: state.transactions, budgets: state.budgets, settings: state.settings })
+      .then((blob) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ encrypted: true, cipher: blob.cipher, iv: blob.iv }));
+      })
+      .catch((err) => console.error('Encrypted save failed', err));
+  } else {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
 }
 
 /* ---------- Helpers ---------- */
@@ -579,6 +695,205 @@ function refreshCurrentView() {
   switchView(view);
 }
 
+/* ---------- App Lock: UI flow ---------- */
+let pinModalResolve = null;
+
+function openPinModal({ title, subtitle, singleInput, label1, label2 }) {
+  return new Promise((resolve) => {
+    pinModalResolve = resolve;
+    document.getElementById('pinModalTitle').textContent = title;
+    document.getElementById('pinModalSubtitle').textContent = subtitle;
+    document.getElementById('pinInput1Label').textContent = label1 || 'PIN';
+    document.getElementById('pinInput2Row').hidden = !!singleInput;
+    document.getElementById('pinInput2').required = !singleInput;
+    if (label2) document.querySelector('label[for="pinInput2"]').textContent = label2;
+    document.getElementById('pinForm').reset();
+    document.getElementById('pinModalError').hidden = true;
+    document.getElementById('pinModalOverlay').hidden = false;
+    document.getElementById('pinInput1').focus();
+  });
+}
+
+function closePinModal(result) {
+  document.getElementById('pinModalOverlay').hidden = true;
+  if (pinModalResolve) {
+    pinModalResolve(result);
+    pinModalResolve = null;
+  }
+}
+
+function pinModalErrorText(msg) {
+  const el = document.getElementById('pinModalError');
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function handlePinFormSubmit(e) {
+  e.preventDefault();
+  const pin1 = document.getElementById('pinInput1').value;
+  const singleInput = document.getElementById('pinInput2Row').hidden;
+
+  if (!/^\d{4,6}$/.test(pin1)) {
+    pinModalErrorText('PIN must be 4-6 digits');
+    return;
+  }
+  if (!singleInput) {
+    const pin2 = document.getElementById('pinInput2').value;
+    if (pin1 !== pin2) {
+      pinModalErrorText("PINs don't match");
+      return;
+    }
+  }
+  closePinModal(pin1);
+}
+
+async function enableAppLock() {
+  if (!cryptoAvailable()) {
+    showToast('App Lock needs a secure browser context (serve over HTTPS or via a local server) and is not available here');
+    return;
+  }
+
+  const pin = await openPinModal({
+    title: 'Set App Lock PIN',
+    subtitle: "Choose a 4-6 digit PIN. You'll need it every time you open MyFinances.",
+    singleInput: false,
+    label1: 'New PIN',
+    label2: 'Confirm PIN',
+  });
+  if (!pin) return; // cancelled
+
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const saltB64 = bufToB64(saltBytes.buffer);
+  const key = await deriveKeyFromPin(pin, saltB64);
+  const check = await encryptWithKey(key, { v: LOCK_CHECK_PLAINTEXT });
+
+  lockMeta = {
+    enabled: true,
+    salt: saltB64,
+    checkCipher: check.cipher,
+    checkIv: check.iv,
+    autoLockMinutes: 5,
+  };
+  saveLockMeta(lockMeta);
+  encryptionKey = key;
+  saveState(); // re-persists current state encrypted under the new key
+  updateAppLockUI();
+  resetAutoLockTimer();
+  showToast('App Lock turned on');
+}
+
+async function disableAppLock() {
+  const pin = await openPinModal({
+    title: 'Turn off App Lock',
+    subtitle: 'Enter your current PIN to confirm.',
+    singleInput: true,
+    label1: 'Current PIN',
+  });
+  if (!pin) return; // cancelled
+
+  try {
+    const key = await deriveKeyFromPin(pin, lockMeta.salt);
+    const result = await decryptWithKey(key, lockMeta.checkCipher, lockMeta.checkIv);
+    if (result.v !== LOCK_CHECK_PLAINTEXT) throw new Error('bad pin');
+  } catch (e) {
+    showToast('Incorrect PIN');
+    return;
+  }
+
+  lockMeta = { enabled: false, salt: null, checkCipher: null, checkIv: null, autoLockMinutes: 5 };
+  saveLockMeta(lockMeta);
+  encryptionKey = null;
+  clearTimeout(autoLockTimer);
+  saveState(); // now writes plaintext, since lockMeta.enabled is false
+  updateAppLockUI();
+  showToast('App Lock turned off');
+}
+
+async function attemptUnlock(pin) {
+  const errorEl = document.getElementById('lockError');
+  errorEl.hidden = true;
+  if (!/^\d{4,6}$/.test(pin)) {
+    errorEl.textContent = 'Enter your 4-6 digit PIN';
+    errorEl.hidden = false;
+    return;
+  }
+
+  try {
+    const key = await deriveKeyFromPin(pin, lockMeta.salt);
+    const check = await decryptWithKey(key, lockMeta.checkCipher, lockMeta.checkIv);
+    if (check.v !== LOCK_CHECK_PLAINTEXT) throw new Error('bad pin');
+
+    // Correct PIN: decrypt the real data (freshest copy on disk, in case
+    // another unlock/lock cycle wrote to it since boot).
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const blob = raw.encrypted ? raw : pendingEncryptedBlob;
+    state = blob ? normalizeState(await decryptWithKey(key, blob.cipher, blob.iv)) : defaultState();
+
+    encryptionKey = key;
+    isLocked = false;
+    pendingEncryptedBlob = null;
+    document.getElementById('lockScreen').hidden = true;
+    document.getElementById('lockPinInput').value = '';
+    applyTheme(state.settings.theme);
+    document.getElementById('currencySelect').value = state.settings.currency;
+    document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
+    updateAppLockUI();
+    refreshCurrentView();
+    resetAutoLockTimer();
+  } catch (e) {
+    errorEl.textContent = 'Incorrect PIN';
+    errorEl.hidden = false;
+    document.getElementById('lockPinInput').value = '';
+    document.getElementById('lockPinInput').focus();
+  }
+}
+
+function engageLock() {
+  if (!lockMeta.enabled || isLocked) return;
+  encryptionKey = null;
+  isLocked = true;
+  // Blank sensitive in-memory data so it isn't sitting in the DOM/state while locked.
+  state = defaultState();
+  clearTimeout(autoLockTimer);
+  document.getElementById('lockScreen').hidden = false;
+  document.getElementById('lockPinInput').value = '';
+  document.getElementById('lockError').hidden = true;
+  refreshCurrentView();
+  setTimeout(() => document.getElementById('lockPinInput').focus(), 50);
+}
+
+function lockNow() {
+  if (!lockMeta.enabled) return;
+  engageLock();
+}
+
+function resetAutoLockTimer() {
+  clearTimeout(autoLockTimer);
+  if (!lockMeta.enabled || isLocked || lockMeta.autoLockMinutes === 0) return;
+  autoLockTimer = setTimeout(engageLock, lockMeta.autoLockMinutes * 60000);
+}
+
+function forgotPin() {
+  if (!confirm('This erases all MyFinances data on this device - there is no way to recover an encrypted backup without the PIN. Continue?')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LOCK_META_KEY);
+  location.reload();
+}
+
+function updateAppLockUI() {
+  const btn = document.getElementById('appLockToggle');
+  if (!btn) return;
+  const on = lockMeta.enabled;
+  btn.setAttribute('aria-pressed', String(on));
+  document.getElementById('appLockToggleLabel').textContent = on ? 'App Lock on' : 'App Lock off';
+  document.getElementById('appLockStatusLabel').textContent = on
+    ? 'MyFinances is PIN-protected and your data is encrypted at rest on this device.'
+    : 'Turn on to protect MyFinances with a PIN.';
+  document.getElementById('autoLockRow').hidden = !on;
+  if (on) document.getElementById('autoLockSelect').value = String(lockMeta.autoLockMinutes);
+  document.getElementById('lockNowBtn').hidden = !on;
+}
+
 /* ---------- Voice dictation (Description field) ---------- */
 let dictationRecognition = null;
 
@@ -673,6 +988,41 @@ function exportData() {
   showToast('Data exported');
 }
 
+function csvEscape(value) {
+  const str = String(value == null ? '' : value);
+  if (/[",\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+  return str;
+}
+
+function buildCsv() {
+  const header = ['Date', 'Description', 'Category', 'Type', 'Amount', 'Notes'];
+  const rows = [...state.transactions]
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt)
+    .map((t) => {
+      const info = categoryInfo(t.category);
+      const amount = t.type === 'income' ? t.amount : -t.amount;
+      return [t.date, t.description, info.label, t.type === 'income' ? 'Income' : 'Expense', amount.toFixed(2), t.notes || ''];
+    });
+  return [header, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
+}
+
+function exportCsvData() {
+  if (state.transactions.length === 0) {
+    showToast('No transactions to export yet');
+    return;
+  }
+  const blob = new Blob([buildCsv()], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `myfinances-transactions-${todayStr()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('CSV exported');
+}
+
 function importData(file) {
   const reader = new FileReader();
   reader.onload = () => {
@@ -697,9 +1047,14 @@ function importData(file) {
 }
 
 function resetAllData() {
-  if (!confirm('This will permanently delete all transactions and budgets. Continue?')) return;
+  if (!confirm('This will permanently delete all transactions and budgets, and turn off App Lock. Continue?')) return;
+  lockMeta = { enabled: false, salt: null, checkCipher: null, checkIv: null, autoLockMinutes: 5 };
+  saveLockMeta(lockMeta);
+  encryptionKey = null;
+  clearTimeout(autoLockTimer);
   state = defaultState();
   saveState();
+  updateAppLockUI();
   refreshCurrentView();
   showToast('All data cleared');
 }
@@ -737,6 +1092,7 @@ function applyTheme(theme) {
 function toggleTheme() {
   state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark';
   applyTheme(state.settings.theme);
+  savePrefs({ theme: state.settings.theme }); // plaintext copy so the lock screen can theme itself pre-unlock
   saveState();
   refreshCurrentView(); // charts read CSS colors, so redraw
 }
@@ -744,6 +1100,11 @@ function toggleTheme() {
 /* ---------- Wire up events ---------- */
 function init() {
   applyTheme(state.settings.theme);
+  updateAppLockUI();
+  if (isLocked) {
+    document.getElementById('lockScreen').hidden = false;
+    setTimeout(() => document.getElementById('lockPinInput').focus(), 50);
+  }
   document.getElementById('currencySelect').value = state.settings.currency;
   document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
   populateCategoryFilter();
@@ -792,6 +1153,7 @@ function init() {
   });
 
   document.getElementById('exportBtn').addEventListener('click', exportData);
+  document.getElementById('exportCsvBtn').addEventListener('click', exportCsvData);
   document.getElementById('importInput').addEventListener('change', (e) => {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = '';
@@ -809,8 +1171,37 @@ function init() {
     showToast('Backup reminder updated');
   });
 
+  document.getElementById('appLockToggle').addEventListener('click', async () => {
+    if (lockMeta.enabled) await disableAppLock(); else await enableAppLock();
+  });
+  document.getElementById('autoLockSelect').addEventListener('change', (e) => {
+    lockMeta.autoLockMinutes = parseInt(e.target.value, 10) || 0;
+    saveLockMeta(lockMeta);
+    resetAutoLockTimer();
+    showToast('Auto-lock updated');
+  });
+  document.getElementById('lockNowBtn').addEventListener('click', lockNow);
+
+  document.getElementById('pinForm').addEventListener('submit', handlePinFormSubmit);
+  document.getElementById('pinModalCancel').addEventListener('click', () => closePinModal(null));
+  document.getElementById('pinModalClose').addEventListener('click', () => closePinModal(null));
+
+  document.getElementById('lockForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    attemptUnlock(document.getElementById('lockPinInput').value);
+  });
+  document.getElementById('lockForgotBtn').addEventListener('click', forgotPin);
+
+  ['mousemove', 'keydown', 'touchstart', 'click'].forEach((evt) => {
+    document.addEventListener(evt, resetAutoLockTimer, { passive: true });
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && lockMeta.enabled && lockMeta.autoLockMinutes !== 0) engageLock();
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.getElementById('modalOverlay').hidden) closeTransactionModal();
+    if (e.key === 'Escape' && !document.getElementById('pinModalOverlay').hidden) closePinModal(null);
   });
 
   switchView('dashboard');

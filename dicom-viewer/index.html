@@ -31,10 +31,14 @@
       <div class="toolbar-group">
         <span class="tool-label">Layout</span>
         <div class="seg" id="layoutSeg">
-          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D">⊞ 2×2</button>
-          <button class="seg-btn" data-layout="axial" title="Axial only">▣ Axial</button>
-          <button class="seg-btn" data-layout="mpr" title="Three MPR planes">◫ MPR</button>
-          <button class="seg-btn" data-layout="vr" title="3D only">◉ 3D</button>
+          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D  (1)">2×2</button>
+          <button class="seg-btn" data-layout="axial" title="Single pane (2)">1×1</button>
+          <button class="seg-btn" data-layout="mpr" title="Three MPR planes (3)">MPR</button>
+          <button class="seg-btn" data-layout="vr" title="3D only (4)">3D</button>
+          <span class="seg-sep"></span>
+          <button class="seg-btn" data-layout="1x2" title="Two panes side by side (5)">1×2</button>
+          <button class="seg-btn" data-layout="2x3" title="Six panes, 2 rows of 3 (6)">2×3</button>
+          <button class="seg-btn" data-layout="4x4" title="Sixteen panes (7)">4×4</button>
         </div>
       </div>
 
@@ -42,13 +46,13 @@
         <span class="tool-label">Window</span>
         <select id="presetSelect">
           <option value="">Custom</option>
-          <option value="lung">Lung (W:1500 L:-600)</option>
-          <option value="bone">Bone (W:2000 L:480)</option>
-          <option value="brain">Brain (W:80 L:40)</option>
-          <option value="soft">Soft Tissue (W:400 L:40)</option>
-          <option value="abdomen">Abdomen (W:400 L:50)</option>
-          <option value="mediastinum">Mediastinum (W:350 L:50)</option>
-          <option value="angio">Angio (W:600 L:150)</option>
+          <option value="lung">Lung 1500/-600</option>
+          <option value="bone">Bone 2000/480</option>
+          <option value="brain">Brain 80/40</option>
+          <option value="soft">Soft 400/40</option>
+          <option value="abdomen">Abdomen 400/50</option>
+          <option value="mediastinum">Mediast. 350/50</option>
+          <option value="angio">Angio 600/150</option>
         </select>
       </div>
 
@@ -68,7 +72,7 @@
         <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
         <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
         <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
-        <button class="icon-btn" id="exportBtn" title="Export the active viewport as PNG">⬇ PNG</button>
+        <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
         <button class="icon-btn" id="resetBtn" title="Reset view (R)">⤾ Reset</button>
       </div>
 
@@ -89,48 +93,7 @@
       </aside>
 
       <!-- ================= Viewport grid ================= -->
-      <main class="viewgrid layout-quad" id="viewGrid">
-        <section class="vp" id="vp-axial" data-plane="axial">
-          <canvas class="vp-canvas"></canvas>
-          <div class="vp-overlay vp-tl"></div>
-          <div class="vp-overlay vp-tr"></div>
-          <div class="vp-overlay vp-bl"></div>
-          <div class="vp-overlay vp-br"></div>
-          <div class="vp-badge">Axial</div>
-          <canvas class="vp-cross"></canvas>
-          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
-        </section>
-
-        <section class="vp" id="vp-coronal" data-plane="coronal">
-          <canvas class="vp-canvas"></canvas>
-          <div class="vp-overlay vp-tl"></div>
-          <div class="vp-overlay vp-tr"></div>
-          <div class="vp-overlay vp-bl"></div>
-          <div class="vp-overlay vp-br"></div>
-          <div class="vp-badge">Coronal</div>
-          <canvas class="vp-cross"></canvas>
-          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
-        </section>
-
-        <section class="vp" id="vp-sagittal" data-plane="sagittal">
-          <canvas class="vp-canvas"></canvas>
-          <div class="vp-overlay vp-tl"></div>
-          <div class="vp-overlay vp-tr"></div>
-          <div class="vp-overlay vp-bl"></div>
-          <div class="vp-overlay vp-br"></div>
-          <div class="vp-badge">Sagittal</div>
-          <canvas class="vp-cross"></canvas>
-          <input class="vp-slider" type="range" min="0" max="0" value="0" step="1" />
-        </section>
-
-        <section class="vp vp-3d" id="vp-vr" data-plane="vr">
-          <canvas class="vp-canvas" id="vrCanvas"></canvas>
-          <div class="vp-overlay vp-tl"></div>
-          <div class="vp-overlay vp-br"></div>
-          <div class="vp-badge">3D</div>
-          <div class="vp-empty" id="vrEmpty">3D volume rendering<br /><span class="muted small">needs a multi-slice series</span></div>
-        </section>
-
+      <main class="viewgrid" id="viewGrid">
         <div class="viewport-empty" id="viewportEmpty">
           <div class="viewport-empty-icon">🩻</div>
           <div>No study loaded</div>
@@ -263,7 +226,7 @@
     <footer class="statusbar">
       <span id="statusText" class="muted">Ready</span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique · Double-click: expand pane</span>
     </footer>
   </div>
 

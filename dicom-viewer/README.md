@@ -40,8 +40,31 @@ radiologist's report and your official imaging system for clinical decisions.
   Oblique cuts are trilinear-sampled at the volume's finest voxel pitch;
   while the planes are square the fast axis-aligned path is used instead, so
   you pay for resampling only when you actually tilt something.
-- **Layouts**: 2×2 (three planes + 3D), single axial, three-up MPR, or 3D
-  alone. Double-click a viewport to expand it; keys `1`–`4` switch layouts.
+- **Layouts**: 2×2 (three planes + 3D), single pane, three-up MPR, 3D alone,
+  and the larger grids **1×2**, **2×3** and **4×4**. Double-click a pane to
+  expand it and again to go back; keys `1`–`7` switch layouts.
+
+### Panes
+
+Every pane in a layout is independent, so a grid of six or sixteen is not six
+or sixteen copies of the same thing:
+
+- **Which view** — the selector at the top of each pane points it at axial,
+  coronal, sagittal or 3D. Only one pane can hold the 3D view, since that is a
+  single WebGL context; assigning it elsewhere moves it.
+- **Its own window** — `W/L: global` follows the toolbar, or pick a preset for
+  that pane alone. A bone window beside a soft-tissue window on the same slice
+  is one click. A pane with its own window keeps left-drag local to itself;
+  panes on `global` drive the toolbar W/L as before.
+- **Linked or free** — the 🔗 button. Linked panes on the same plane share the
+  slice with the crosshair, so they scroll together. Unlink one and it scrolls
+  alone, which is how you put two levels side by side; its slice counter then
+  reads *free*.
+- **Its own zoom, pan, rotation and flip** — rotate/flip act on the pane you
+  last clicked in.
+
+At 4×4 the panes drop the patient banner and orientation letters rather than
+covering the image with text.
 
 ### Slice thickness & projection
 
@@ -103,7 +126,7 @@ educational use:
 | Plan phase | Status here |
 | --- | --- |
 | Phase 1 — Import and display | Done: import, Study/Series grouping, real pixel decoding, thumbnails, navigation, window/level, zoom, pan, rotate, flip, invert, reset |
-| Phase 2 — Measurements and comparison | Done: distance, angle, ellipse ROI with statistics; searchable tag panel; PNG export. **Not done:** side-by-side comparison of two different series, persistent archive |
+| Phase 2 — Measurements and comparison | Done: distance, angle, ellipse ROI with statistics; searchable tag panel; PNG export; multi-pane layouts with per-pane window, plane and slice, which covers side-by-side comparison **within** a series. **Not done:** comparing two different series at once, persistent archive |
 | Phase 3 — Reconstruction | Done: orthogonal **and oblique** MPR with linked crosshairs, slab projections (Average/MIP/MinIP), volume rendering. **Not done:** curved-planar reformat |
 | Phase 4 — PACS | Not applicable to a browser build with no network access by design |
 | Phase 5 — Advanced workflows | Not started: fusion, PET/SUV, time-intensity curves, DSA, STL export |
@@ -168,13 +191,13 @@ reconstructed.
 | --- | --- |
 | `↑` `↓` / `←` `→` | Previous / next slice in the active plane |
 | `Page Up` / `Page Down` | Jump 10 slices |
-| `1` `2` `3` `4` | Layout: 2×2 · Axial · MPR · 3D |
+| `1` … `7` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 · 4×4 |
 | `I` | Invert grayscale |
 | `R` | Reset views |
 
 Mouse: left-drag = window/level · wheel = change slice · Shift+wheel = zoom ·
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
-two planes (oblique MPR)** · double-click = expand pane.
+two planes (oblique MPR)** · double-click = expand a pane and back.
 
 ## Project structure
 
@@ -182,7 +205,7 @@ two planes (oblique MPR)** · double-click = expand pane.
 dicom-viewer/
   index.html                    # Workstation layout
   css/styles.css                # Dark radiology-console theme
-  js/app.js                     # Parsing, UI, MPR viewports, interaction
+  js/app.js                     # Parsing, UI, pane grid, MPR viewports, interaction
   js/volume.js                  # Volume build, orthogonal + oblique reslicing, slab/MIP, bone mask
   js/measure.js                 # Distance / angle / ROI math and calibration
   js/vr.js                      # WebGL2 raymarching volume renderer

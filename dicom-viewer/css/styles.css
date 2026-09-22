@@ -42,7 +42,9 @@ button, input, select { font-family: inherit; font-size: 13px; }
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  /* Seven layout choices plus the rest fit on one row at laptop widths; the
+     vertical space a wrapped toolbar costs comes straight off a 4x4 grid. */
+  gap: 10px;
   padding: 8px 14px;
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
@@ -92,6 +94,10 @@ select, input[type="number"] {
   border-right: 1px solid var(--border);
 }
 .seg-btn:last-child { border-right: none; }
+.seg-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 1px; }
+.seg { flex-wrap: wrap; }
+/* The layout picker carries seven choices, so it buys its width back here. */
+#layoutSeg .seg-btn { padding-left: 8px; padding-right: 8px; }
 .seg-btn:hover { background: #232833; }
 .seg-btn.active { background: var(--accent-dim); color: #eaf6ff; }
 
@@ -212,13 +218,6 @@ select, input[type="number"] {
   flex: 1; position: relative; min-width: 0;
   display: grid; gap: 2px; background: var(--border); padding: 0;
 }
-.viewgrid.layout-quad { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.viewgrid.layout-axial { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.viewgrid.layout-mpr { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr; }
-.viewgrid.layout-vr { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.viewgrid.layout-axial .vp:not(#vp-axial),
-.viewgrid.layout-mpr .vp-3d,
-.viewgrid.layout-vr .vp:not(#vp-vr) { display: none; }
 
 .vp {
   position: relative; background: var(--canvas-bg); overflow: hidden;
@@ -228,7 +227,7 @@ select, input[type="number"] {
 .vp-3d { cursor: grab; }
 .vp-3d:active { cursor: grabbing; }
 .vp-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: pixelated; }
-#vrCanvas { image-rendering: auto; }
+.vp-3d .vp-canvas { image-rendering: auto; }
 .vp-cross { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
 .vp-overlay {
@@ -240,12 +239,33 @@ select, input[type="number"] {
 .vp-tr { top: 6px; right: 8px; text-align: right; }
 .vp-bl { bottom: 26px; left: 8px; }
 .vp-br { bottom: 26px; right: 8px; text-align: right; }
-.vp-badge {
-  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-muted); background: rgba(0,0,0,0.45);
-  padding: 2px 8px; border-radius: 10px; pointer-events: none; z-index: 6;
+/* Per-pane controls: which view it shows, its window, and slice linking.
+   Dimmed until the pane is hovered or active so they stay out of the way. */
+.vp-bar {
+  position: absolute; top: 4px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 3px; z-index: 8;
+  opacity: 0.35; transition: opacity 0.12s ease;
 }
+.vp:hover .vp-bar, .vp.active .vp-bar { opacity: 1; }
+.vp-bar select, .vp-bar button {
+  font: inherit; font-size: 10px; line-height: 1;
+  color: var(--text); background: rgba(0,0,0,0.6);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 3px 6px; cursor: pointer; appearance: none;
+}
+.vp-bar select:hover, .vp-bar button:hover { border-color: var(--accent); }
+.vp-plane { letter-spacing: 0.06em; text-transform: uppercase; }
+.vp-wl { max-width: 96px; }
+.vp-link { padding: 3px 5px; }
+.vp-link.off { color: #ffd24a; border-color: #ffd24a; text-decoration: line-through; }
+
+/* A 4x4 grid has no room for the patient banner or the big letters. */
+.vp.compact .vp-tl, .vp.compact .vp-tr { display: none; }
+.vp.compact .vp-overlay { font-size: 10px; }
+.vp.compact .vp-bl, .vp.compact .vp-br { bottom: 20px; }
+.vp.compact .vp-bar { gap: 2px; }
+.vp.compact .vp-wl { display: none; }
+.vp.compact .vp-slider { bottom: 2px; height: 10px; }
 .vp-slider {
   position: absolute; left: 8px; right: 8px; bottom: 5px; z-index: 7;
   accent-color: var(--accent); height: 14px; opacity: 0.75;
@@ -313,6 +333,5 @@ select, input[type="number"] {
   .panel-right { width: 230px; }
 }
 @media (max-width: 860px) {
-  .viewgrid.layout-mpr { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
   .statusbar .small { display: none; }
 }

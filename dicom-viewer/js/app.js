@@ -23,13 +23,13 @@
   };
 
   var PRESETS = {
-    lung: { ww: 1500, wc: -600 },
-    bone: { ww: 2000, wc: 480 },
-    brain: { ww: 80, wc: 40 },
-    soft: { ww: 400, wc: 40 },
-    abdomen: { ww: 400, wc: 50 },
-    mediastinum: { ww: 350, wc: 50 },
-    angio: { ww: 600, wc: 150 },
+    lung: { ww: 1500, wc: -600, label: "Lung" },
+    bone: { ww: 2000, wc: 480, label: "Bone" },
+    brain: { ww: 80, wc: 40, label: "Brain" },
+    soft: { ww: 400, wc: 40, label: "Soft" },
+    abdomen: { ww: 400, wc: 50, label: "Abdomen" },
+    mediastinum: { ww: 350, wc: 50, label: "Mediast." },
+    angio: { ww: 600, wc: 150, label: "Angio" },
   };
 
   var MAX_SERIES_FOR_THUMBNAILS = 60;
@@ -39,6 +39,37 @@
   // transfer-function presets can be expressed in real Hounsfield Units.
   var VR_WINDOW_LOW = -1024;
   var VR_WINDOW_HIGH = 3071;
+
+  /* Viewport layouts.
+   *
+   * A layout is a grid plus the planes its panes start out showing. Panes are
+   * reassignable afterwards, so the fill is only a starting point — but only
+   * one pane may hold the 3D view, since that is a single WebGL context.
+   * `fill: null` means "cycle the MPR planes", used by the larger grids.
+   */
+  var LAYOUTS = {
+    quad: { label: "2×2", cols: 2, rows: 2, fill: ["axial", "coronal", "sagittal", "vr"] },
+    axial: { label: "Axial", cols: 1, rows: 1, fill: ["axial"] },
+    mpr: { label: "MPR", cols: 3, rows: 1, fill: ["axial", "coronal", "sagittal"] },
+    vr: { label: "3D", cols: 1, rows: 1, fill: ["vr"] },
+    "1x2": { label: "1×2", cols: 2, rows: 1, fill: ["axial", "coronal"] },
+    "2x3": { label: "2×3", cols: 3, rows: 2, fill: null },
+    "4x4": { label: "4×4", cols: 4, rows: 4, fill: null },
+  };
+
+  /** Planes a layout's panes start on. */
+  function layoutFill(key) {
+    var def = LAYOUTS[key] || LAYOUTS.quad;
+    var total = def.cols * def.rows;
+    if (def.fill) return def.fill.slice(0, total);
+    var out = [];
+    for (var i = 0; i < total; i++) out.push(MPR_PLANES[i % MPR_PLANES.length]);
+    // One 3D pane, in the fourth slot, where the 2x2 layout also puts it.
+    if (total >= 4) out[3] = "vr";
+    return out;
+  }
+
+  var PLANE_LABELS = { axial: "Axial", coronal: "Coronal", sagittal: "Sagittal", vr: "3D" };
 
   /* Oblique MPR reslicing frames.
    *
@@ -72,11 +103,13 @@
     geometryWarnings: [],
     index: { axial: 0, coronal: 0, sagittal: 0 },
     frames: null,                 // set from BASE_FRAMES on init / reset
-    view: {
-      axial: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
-      coronal: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
-      sagittal: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
-    },
+
+    // One entry per pane in the current layout. Each pane carries its own
+    // view transform, its own window/level override and its own slice when
+    // unlinked, so two panes on the same plane are not redundant.
+    cells: [],
+    activeCell: 0,
+    measureCell: 0,             // pane the in-progress measurement started in
 
     tool: "none",
     measurements: [],
@@ -100,21 +133,25 @@
 
     layout: "quad",
     crosshair: true,
-    activePlane: "axial",
 
     drag: null,
   };
 
   var dom = {};
+  var cellEls = [];             // DOM for each pane, parallel to state.cells
   var toastTimer = null;
   var renderer = null;          // CTVolumeRenderer.Renderer
   var vrDirty = true;           // texture needs re-upload
-  var planeCache = {};          // plane -> { key, result }
+  var planeCache = {};          // request key -> extracted plane
+  var planeCacheKeys = [];      // insertion order, for trimming
   var seriesNodes = {};         // uid -> { wrapper, sliceCount }
 
   /* ---------------------------------------------------------------------
    * DOM
    * ------------------------------------------------------------------- */
+  // The grid layout to return to when a pane is un-expanded.
+  var lastGridLayout = "quad";
+
   function cacheDom() {
     dom.fileInput = byId("fileInput");
     dom.folderInput = byId("folderInput");
@@ -158,8 +195,6 @@
     dom.vrMode = byId("vrMode");
     dom.vrPreset = byId("vrPreset");
     dom.vrOpacity = byId("vrOpacity");
-    dom.vrCanvas = byId("vrCanvas");
-    dom.vrEmpty = byId("vrEmpty");
     dom.volumeInfo = byId("volumeInfo");
     dom.metaTable = byId("metaTable");
     dom.statusText = byId("statusText");
@@ -167,21 +202,209 @@
     dom.busy = byId("busy");
     dom.busyText = byId("busyText");
 
-    dom.vp = {};
-    MPR_PLANES.concat(["vr"]).forEach(function (plane) {
-      var el = byId("vp-" + plane);
-      dom.vp[plane] = {
-        root: el,
-        canvas: el.querySelector(".vp-canvas"),
-        cross: el.querySelector(".vp-cross"),
-        slider: el.querySelector(".vp-slider"),
-        tl: el.querySelector(".vp-tl"),
-        tr: el.querySelector(".vp-tr"),
-        bl: el.querySelector(".vp-bl"),
-        br: el.querySelector(".vp-br"),
-      };
-      if (dom.vp[plane].canvas && plane !== "vr") {
-        dom.vp[plane].ctx = dom.vp[plane].canvas.getContext("2d");
+  }
+
+  /* ---------------------------------------------------------------------
+   * Panes
+   *
+   * The grid is built from state.cells rather than from fixed markup, so a
+   * layout can hold any number of panes and a pane can be reassigned to a
+   * different plane without disturbing the others.
+   * ------------------------------------------------------------------- */
+
+  function newCell(plane) {
+    return {
+      plane: plane,
+      index: null,          // own slice; null while linked to the shared cut
+      linked: true,
+      view: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
+      wl: null,             // own window/level; null while following the global one
+    };
+  }
+
+  /** The slice a pane is showing: the shared cut, or its own when unlinked. */
+  function cellIndex(cell) {
+    if (!state.volume || cell.plane === "vr") return 0;
+    var count = V.planeCount(state.volume, cell.plane);
+    var i = cell.linked || cell.index === null ? state.index[cell.plane] : cell.index;
+    return Math.max(0, Math.min(count - 1, i));
+  }
+
+  /** The window a pane draws with: its own override, or the global one. */
+  function cellWindow(cell) {
+    if (cell.wl) return cell.wl;
+    return { ww: state.windowWidth, wc: state.windowCenter };
+  }
+
+  function activeCell() {
+    return state.cells[state.activeCell] || state.cells[0] || null;
+  }
+
+  /** The active pane's plane, or the first MPR pane, or axial. */
+  function activeMprPlane() {
+    var cell = activeCell();
+    if (cell && cell.plane !== "vr") return cell.plane;
+    for (var i = 0; i < state.cells.length; i++) {
+      if (state.cells[i].plane !== "vr") return state.cells[i].plane;
+    }
+    return "axial";
+  }
+
+  /**
+   * Only one pane may hold the 3D view — it is a single WebGL context.
+   * `keep` names the pane that just claimed it, if any; otherwise the first
+   * 3D pane wins and the rest fall back to axial.
+   */
+  function enforceSingleVR(keep) {
+    var winner = -1;
+    state.cells.forEach(function (cell, i) {
+      if (cell.plane !== "vr") return;
+      if (winner === -1 || i === keep) {
+        if (winner !== -1) state.cells[winner].plane = "axial";
+        winner = i;
+      } else {
+        cell.plane = "axial";
+      }
+    });
+  }
+
+  /** Apply a layout: fresh panes on the layout's starting planes. */
+  function applyLayout(key) {
+    state.layout = LAYOUTS[key] ? key : "quad";
+    state.cells = layoutFill(state.layout).map(newCell);
+    enforceSingleVR();
+    state.activeCell = 0;
+    rebuildCells();
+  }
+
+  /** Rebuild the pane DOM from state.cells, keeping their state. */
+  function rebuildCells() {
+    var def = LAYOUTS[state.layout] || LAYOUTS.quad;
+    dom.viewGrid.style.gridTemplateColumns = "repeat(" + def.cols + ", minmax(0, 1fr))";
+    dom.viewGrid.style.gridTemplateRows = "repeat(" + def.rows + ", minmax(0, 1fr))";
+
+    // The 3D renderer holds a canvas, so it cannot outlive a rebuild.
+    var camera = renderer ? { rotX: renderer.rotX, rotY: renderer.rotY, distance: renderer.distance } : null;
+    if (renderer) { renderer.dispose(); renderer = null; vrDirty = true; }
+
+    cellEls.forEach(function (rec) {
+      if (rec.root.parentNode) rec.root.parentNode.removeChild(rec.root);
+    });
+    cellEls = state.cells.map(buildCellEl);
+
+    if (camera) {
+      var r = ensureRenderer();
+      if (r) { r.rotX = camera.rotX; r.rotY = camera.rotY; r.distance = camera.distance; }
+    }
+    setActiveCell(Math.min(state.activeCell, state.cells.length - 1));
+    syncCellControls();
+    syncSliders();
+    requestAnimationFrame(renderAll);
+  }
+
+  function buildCellEl(cell, i) {
+    var root = document.createElement("section");
+    root.className = "vp" + (cell.plane === "vr" ? " vp-3d" : "");
+    root.dataset.cell = String(i);
+
+    var canvas = mk("canvas", "vp-canvas");
+    var cross = mk("canvas", "vp-cross");
+    var tl = mk("div", "vp-overlay vp-tl"), tr = mk("div", "vp-overlay vp-tr");
+    var bl = mk("div", "vp-overlay vp-bl"), br = mk("div", "vp-overlay vp-br");
+
+    var bar = mk("div", "vp-bar");
+    var planeSel = mk("select", "vp-plane");
+    planeSel.title = "Which view this pane shows";
+    ["axial", "coronal", "sagittal", "vr"].forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p; o.textContent = PLANE_LABELS[p];
+      planeSel.appendChild(o);
+    });
+    planeSel.value = cell.plane;
+    bar.appendChild(planeSel);
+
+    var wlSel = null, linkBtn = null, slider = null;
+    if (cell.plane !== "vr") {
+      wlSel = mk("select", "vp-wl");
+      wlSel.title = "Window for this pane";
+      var g = document.createElement("option");
+      g.value = ""; g.textContent = "W/L: global";
+      wlSel.appendChild(g);
+      Object.keys(PRESETS).forEach(function (key) {
+        var o = document.createElement("option");
+        o.value = key; o.textContent = PRESETS[key].label || key;
+        wlSel.appendChild(o);
+      });
+      bar.appendChild(wlSel);
+
+      linkBtn = mk("button", "vp-link");
+      linkBtn.type = "button";
+      bar.appendChild(linkBtn);
+
+      slider = document.createElement("input");
+      slider.type = "range"; slider.className = "vp-slider";
+      slider.min = "0"; slider.max = "0"; slider.value = "0"; slider.step = "1";
+    }
+
+    root.appendChild(canvas);
+    root.appendChild(tl); root.appendChild(tr); root.appendChild(bl); root.appendChild(br);
+    root.appendChild(bar);
+    root.appendChild(cross);
+    if (slider) root.appendChild(slider);
+
+    var empty = null;
+    if (cell.plane === "vr") {
+      empty = mk("div", "vp-empty");
+      empty.innerHTML = "3D volume rendering<br /><span class='muted small'>needs a multi-slice series</span>";
+      root.appendChild(empty);
+    }
+
+    dom.viewGrid.insertBefore(root, dom.viewportEmpty);
+
+    var rec = {
+      root: root, canvas: canvas, cross: cross, tl: tl, tr: tr, bl: bl, br: br,
+      bar: bar, planeSel: planeSel, wlSel: wlSel, linkBtn: linkBtn, slider: slider,
+      empty: empty, geom: null,
+      // A 2D context on the 3D pane's canvas would lock WebGL out of it.
+      ctx: cell.plane === "vr" ? null : canvas.getContext("2d"),
+    };
+    wireCell(i, rec);
+    return rec;
+  }
+
+  function mk(tag, className) {
+    var el = document.createElement(tag);
+    el.className = className;
+    return el;
+  }
+
+  /** Point a pane at a different view. */
+  function setCellPlane(i, plane) {
+    var cell = state.cells[i];
+    if (!cell || cell.plane === plane) return;
+    cell.plane = plane;
+    cell.index = null;
+    cell.linked = true;
+    if (plane === "vr") enforceSingleVR(i);
+    planeCacheTrim();
+    rebuildCells();
+  }
+
+  /** Push pane state back into its controls. */
+  function syncCellControls() {
+    state.cells.forEach(function (cell, i) {
+      var rec = cellEls[i];
+      if (!rec) return;
+      if (rec.planeSel) rec.planeSel.value = cell.plane;
+      if (rec.wlSel) rec.wlSel.value = cell.wl && cell.wl.preset ? cell.wl.preset : "";
+      if (rec.linkBtn) {
+        // One glyph either way — the state is carried by the .off styling,
+        // since the "broken chain" emoji is not reliably available.
+        rec.linkBtn.textContent = "🔗";
+        rec.linkBtn.title = cell.linked
+          ? "Linked: scrolls with the other panes on this plane"
+          : "Unlinked: this pane scrolls on its own";
+        rec.linkBtn.classList.toggle("off", !cell.linked);
       }
     });
   }
@@ -748,7 +971,7 @@
     dom.presetSelect.value = "";
 
     state.volume = null;
-    planeCache = {};
+    planeCache = {}; planeCacheKeys = [];
     vrDirty = true;
     renderSeriesList();
 
@@ -793,7 +1016,7 @@
     if (!state.volume) return;
     V.computeBoneMask(state.volume, state.boneThreshold, 2);
     state.boneMaskVersion++;
-    planeCache = {};
+    planeCache = {}; planeCacheKeys = [];
     vrDirty = true;
   }
 
@@ -857,14 +1080,14 @@
         n: V.rotateAbout(g.n, axis, theta),
       });
     });
-    planeCache = {};
+    planeCache = {}; planeCacheKeys = [];
   }
 
   /** Pointer angle about the crosshair, in this plane's own u/v basis. */
-  function obliqueAngleAt(plane, clientX, clientY) {
-    var geom = dom.vp[plane].geom;
+  function obliqueAngleAt(i, clientX, clientY) {
+    var rec = cellEls[i], geom = rec && rec.geom;
     if (!state.volume || !geom) return null;
-    var p = eventToPlane(plane, clientX, clientY);
+    var p = eventToCell(i, clientX, clientY);
     if (!p) return null;
     var slab = geom.slab;
     var a = (p.x - slab.width / 2) * slab.spacingX;
@@ -875,7 +1098,7 @@
 
   function resetOblique() {
     resetFrames();
-    planeCache = {};
+    planeCache = {}; planeCacheKeys = [];
     renderAll();
   }
 
@@ -927,11 +1150,13 @@
   }
 
   /** World centre of a rendered plane. */
-  function planeCenterWorld(plane, slab) {
+  function planeCenterWorld(plane, slab, index) {
     if (slab && slab.oblique) return slab.center;
+    if (index === undefined || index === null) index = state.index[plane];
     var c = volumeCenterMm();
     var n = state.frames[plane].n;
-    var off = planeOffsetMm(plane);
+    var count = V.planeCount(state.volume, plane);
+    var off = (index - (count - 1) / 2) * V.normalSpacing(state.volume, plane);
     return [c[0] + n[0] * off, c[1] + n[1] * off, c[2] + n[2] * off];
   }
 
@@ -941,9 +1166,9 @@
   }
 
   /** Plane column/row -> millimetres. Valid for orthogonal and oblique alike. */
-  function planeToWorld(plane, slab, px, py) {
+  function planeToWorld(plane, slab, px, py, index) {
     var f = planeAxesOf(plane, slab);
-    var c = planeCenterWorld(plane, slab);
+    var c = planeCenterWorld(plane, slab, index);
     var a = (px - slab.width / 2) * slab.spacingX;
     var b = (py - slab.height / 2) * slab.spacingY;
     return [
@@ -954,9 +1179,9 @@
   }
 
   /** Millimetres -> plane column/row (the in-plane part; exact inverse). */
-  function worldToPlane(plane, slab, w) {
+  function worldToPlane(plane, slab, w, index) {
     var f = planeAxesOf(plane, slab);
-    var c = planeCenterWorld(plane, slab);
+    var c = planeCenterWorld(plane, slab, index);
     var d = [w[0] - c[0], w[1] - c[1], w[2] - c[2]];
     return {
       x: dot3(d, f.u) / slab.spacingX + slab.width / 2,
@@ -964,22 +1189,28 @@
     };
   }
 
-  /** Extract a plane, memoised so W/L drags don't re-slice the volume. */
-  function getPlaneData(plane) {
+  /**
+   * Extract a plane, memoised so W/L drags don't re-slice the volume.
+   *
+   * `index` defaults to the shared cut, but unlinked panes ask for their own,
+   * so the cache is keyed on the whole request and bounded rather than being
+   * one slot per plane.
+   */
+  function getPlaneData(plane, index) {
+    if (index === undefined || index === null) index = state.index[plane];
     // Decided per plane: rotating in the axial view tilts coronal and
     // sagittal but leaves axial square, so axial keeps the fast path and its
     // full in-plane resolution.
     var oblique = planeOblique(plane);
     var frame = state.frames[plane];
     var key = [
-      plane, state.index[plane], state.thicknessMm, state.projectionMode,
+      plane, index, state.thicknessMm, state.projectionMode,
       state.boneCut ? "cut" + state.boneMaskVersion : "raw",
       oblique ? frameKey(frame) + "|" + state.index.axial + "," +
         state.index.coronal + "," + state.index.sagittal : "ortho",
     ].join("|");
 
-    var cached = planeCache[plane];
-    if (cached && cached.key === key) return cached.result;
+    if (planeCache[key]) return planeCache[key];
 
     var opts = {
       thicknessMm: state.thicknessMm,
@@ -989,62 +1220,83 @@
     // The axis-aligned path is a plain blit, so keep using it while the frames
     // are at rest; only a genuine tilt pays for trilinear resampling.
     var result = oblique
-      ? V.extractOblique(state.volume, crosshairWorld(), frame.u, frame.v, opts)
-      : V.extractPlane(state.volume, plane, state.index[plane], opts);
-    planeCache[plane] = { key: key, result: result };
+      ? V.extractOblique(state.volume, obliqueCenterFor(plane, index), frame.u, frame.v, opts)
+      : V.extractPlane(state.volume, plane, index, opts);
+
+    planeCache[key] = result;
+    planeCacheKeys.push(key);
+    planeCacheTrim();
     return result;
+  }
+
+  /** Keep the reslice cache to a handful of panes' worth of planes. */
+  function planeCacheTrim() {
+    var limit = Math.max(8, state.cells.length * 2);
+    while (planeCacheKeys.length > limit) {
+      delete planeCache[planeCacheKeys.shift()];
+    }
+  }
+
+  /**
+   * Centre of an oblique cut. The crosshair fixes where the three planes
+   * meet; an unlinked pane slides from there along its own normal.
+   */
+  function obliqueCenterFor(plane, index) {
+    var c = crosshairWorld();
+    var delta = (index - state.index[plane]) * V.normalSpacing(state.volume, plane);
+    if (!delta) return c;
+    var nv = state.frames[plane].n;
+    return [c[0] + nv[0] * delta, c[1] + nv[1] * delta, c[2] + nv[2] * delta];
   }
 
   function frameKey(f) {
     return f.u.concat(f.v).map(function (x) { return x.toFixed(6); }).join(",");
   }
 
-  function planeVisible(plane) {
-    if (state.layout === "quad") return true;
-    if (state.layout === "axial") return plane === "axial";
-    if (state.layout === "mpr") return plane !== "vr";
-    if (state.layout === "vr") return plane === "vr";
-    return true;
-  }
-
   function renderAll() {
     var hasVolume = !!state.volume;
     dom.viewportEmpty.style.display = hasVolume || getCurrentGroup() ? "none" : "flex";
 
-    MPR_PLANES.forEach(function (plane) {
-      if (planeVisible(plane)) renderPlane(plane);
+    state.cells.forEach(function (cell, i) {
+      if (cell.plane === "vr") renderVRCell(i);
+      else renderCell(i);
     });
-    if (planeVisible("vr")) renderVR();
     updateObliqueInfo();
     updateMetadata();
   }
 
-  function renderPlane(plane) {
-    var vp = dom.vp[plane];
-    var ctx = vp.ctx;
-    resizeCanvas(vp.canvas);
-    resizeCanvas(vp.cross);
+  function renderCell(i) {
+    var cell = state.cells[i], rec = cellEls[i];
+    if (!cell || !rec || !rec.ctx) return;
+    var ctx = rec.ctx;
+    resizeCanvas(rec.canvas);
+    resizeCanvas(rec.cross);
 
-    var cw = vp.canvas.width, ch = vp.canvas.height;
+    var cw = rec.canvas.width, ch = rec.canvas.height;
+    // A 4x4 grid leaves little room, so the patient banner and the letters
+    // step aside rather than covering the image.
+    rec.root.classList.toggle("compact", rec.root.clientWidth < 320 || rec.root.clientHeight < 250);
+
     ctx.save();
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, cw, ch);
 
     if (!state.volume) {
       ctx.restore();
-      clearOverlays(plane);
-      vp.geom = null;
-      drawAnnotations(plane, null);
+      clearOverlays(i);
+      rec.geom = null;
+      drawAnnotations(i, null);
       return;
     }
 
-    var slab = getPlaneData(plane);
+    var index = cellIndex(cell);
+    var slab = getPlaneData(cell.plane, index);
+    var win = cellWindow(cell);
     var img = windowToCanvas(
-      slab.data, slab.width, slab.height,
-      state.windowWidth, state.windowCenter, state.invert, false
+      slab.data, slab.width, slab.height, win.ww, win.wc, state.invert, false
     );
 
-    var t = planeTransform(plane, slab, cw, ch);
+    var t = planeTransform(cell, slab, cw, ch);
 
     // Canvas composes right-to-left, so this applies flip, then rotation,
     // then the translate — matching planeToCanvas() exactly.
@@ -1056,9 +1308,9 @@
     ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    vp.geom = { t: t, cw: cw, ch: ch, slab: slab };
-    updateOverlays(plane, slab);
-    drawAnnotations(plane, vp.geom);
+    rec.geom = { t: t, cw: cw, ch: ch, slab: slab, index: index, plane: cell.plane };
+    updateOverlays(i, slab);
+    drawAnnotations(i, rec.geom);
   }
 
   /* ---------------------------------------------------------------------
@@ -1068,8 +1320,8 @@
    * transform has to be invertible: zooming, panning, rotating or flipping
    * moves the drawing but must not move a measurement off the anatomy.
    * ------------------------------------------------------------------- */
-  function planeTransform(plane, slab, cw, ch) {
-    var view = state.view[plane];
+  function planeTransform(cell, slab, cw, ch) {
+    var view = cell.view;
     var physW = slab.width * slab.spacingX;
     var physH = slab.height * slab.spacingY;
     var rot = ((view.rotation || 0) * Math.PI) / 180;
@@ -1114,13 +1366,13 @@
     return { x: x / t.spacingX + t.width / 2, y: y / t.spacingY + t.height / 2 };
   }
 
-  /** Mouse event -> plane coordinates for a given viewport. */
-  function eventToPlane(plane, clientX, clientY) {
-    var vp = dom.vp[plane];
-    if (!vp.geom) return null;
-    var rect = vp.canvas.getBoundingClientRect();
+  /** Mouse event -> plane coordinates within a pane. */
+  function eventToCell(i, clientX, clientY) {
+    var rec = cellEls[i];
+    if (!rec || !rec.geom) return null;
+    var rect = rec.canvas.getBoundingClientRect();
     var dpr = window.devicePixelRatio || 1;
-    return canvasToPlane(vp.geom.t, (clientX - rect.left) * dpr, (clientY - rect.top) * dpr);
+    return canvasToPlane(rec.geom.t, (clientX - rect.left) * dpr, (clientY - rect.top) * dpr);
   }
 
   function resizeCanvas(canvas) {
@@ -1143,16 +1395,17 @@
    * Drawn on a separate canvas so it can be refreshed without re-windowing
    * the image underneath.
    */
-  function drawAnnotations(plane, geom) {
-    var vp = dom.vp[plane];
-    var ctx = vp.cross.getContext("2d");
-    ctx.clearRect(0, 0, vp.cross.width, vp.cross.height);
+  function drawAnnotations(i, geom) {
+    var rec = cellEls[i];
+    if (!rec) return;
+    var ctx = rec.cross.getContext("2d");
+    ctx.clearRect(0, 0, rec.cross.width, rec.cross.height);
     if (!geom || !state.volume) return;
 
     var dpr = window.devicePixelRatio || 1;
-    if (state.crosshair) drawCrosshair(ctx, plane, geom, dpr);
-    drawOrientationMarkers(ctx, plane, geom, dpr);
-    drawMeasurements(ctx, plane, geom, dpr);
+    if (state.crosshair) drawCrosshair(ctx, geom, dpr);
+    if (!rec.root.classList.contains("compact")) drawOrientationMarkers(ctx, geom, dpr);
+    drawMeasurements(ctx, geom, dpr);
   }
 
   /**
@@ -1161,10 +1414,11 @@
    * once the frames are tilted, and reduces to the axis-aligned lines when
    * they are not.
    */
-  function crosshairArm(plane, geom, other) {
+  function crosshairArm(geom, other) {
+    var plane = geom.plane;
     var slab = geom.slab;
     var f = planeAxesOf(plane, slab);
-    var cp = planeCenterWorld(plane, slab);
+    var cp = planeCenterWorld(plane, slab, geom.index);
     var cq = planeCenterWorld(other, null);
     var nq = state.frames[other].n;
 
@@ -1188,9 +1442,9 @@
     };
   }
 
-  function drawCrosshair(ctx, plane, geom, dpr) {
+  function drawCrosshair(ctx, geom, dpr) {
     var t = geom.t;
-    var others = MPR_PLANES.filter(function (p) { return p !== plane; });
+    var others = MPR_PLANES.filter(function (p) { return p !== geom.plane; });
     var tilted = obliqueActive();
 
     ctx.save();
@@ -1199,7 +1453,7 @@
     ctx.setLineDash([6 * dpr, 5 * dpr]);
     ctx.beginPath();
     others.forEach(function (other) {
-      var arm = crosshairArm(plane, geom, other);
+      var arm = crosshairArm(geom, other);
       if (!arm) return;
       var a = planeToCanvas(t, arm.at(-1).x, arm.at(-1).y);
       var b = planeToCanvas(t, arm.at(1).x, arm.at(1).y);
@@ -1209,7 +1463,7 @@
 
     // Rotation handles: only shown once the arms can actually be grabbed,
     // i.e. when a volume is loaded and the crosshair is live.
-    var arm0 = crosshairArm(plane, geom, others[0]);
+    var arm0 = crosshairArm(geom, others[0]);
     if (arm0) {
       ctx.setLineDash([]);
       ctx.fillStyle = tilted ? "rgba(110, 242, 160, 0.9)" : "rgba(255, 210, 74, 0.55)";
@@ -1229,8 +1483,8 @@
    * plane's patient axes and pushed through the *same* transform as the
    * image, so they stay correct after rotation and flipping.
    */
-  function drawOrientationMarkers(ctx, plane, geom, dpr) {
-    var labels = orientationLabels(plane);
+  function drawOrientationMarkers(ctx, geom, dpr) {
+    var labels = orientationLabels(geom.plane);
     if (!labels) return;
     var t = geom.t;
 
@@ -1312,20 +1566,20 @@
   }
 
   /** Map a viewport click to indices on the two companion planes. */
-  function crosshairFromPoint(plane, clientX, clientY) {
+  function crosshairFromPoint(i, clientX, clientY) {
     if (!state.volume) return;
-    var geom = dom.vp[plane].geom;
+    var rec = cellEls[i], geom = rec && rec.geom;
     if (!geom) return;
-    var p = eventToPlane(plane, clientX, clientY);
+    var p = eventToCell(i, clientX, clientY);
     if (!p) return;
     var t = geom.t;
     if (p.x < 0 || p.x > t.width || p.y < 0 || p.y > t.height) return;
 
     // Go through millimetres so the click lands correctly on a tilted plane.
-    var world = planeToWorld(plane, geom.slab, p.x, p.y);
+    var world = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index);
     var want = indicesFromWorld(world);
     MPR_PLANES.forEach(function (q) {
-      if (q === plane) return;         // clicking in-plane must not move this cut
+      if (q === geom.plane) return;    // clicking in-plane must not move this cut
       setPlaneIndex(q, want[q], true);
     });
     renderAll();
@@ -1357,9 +1611,10 @@
    * therefore hides measurements taken on the old cut rather than redrawing
    * them over different anatomy.
    */
-  function sliceKeyFor(plane) {
-    if (!planeOblique(plane)) return state.index[plane];
-    return "obl:" + state.index.axial + "," + state.index.coronal + "," +
+  function sliceKeyFor(plane, index) {
+    if (index === undefined || index === null) index = state.index[plane];
+    if (!planeOblique(plane)) return index;
+    return "obl:" + index + ":" + state.index.axial + "," + state.index.coronal + "," +
       state.index.sagittal + ":" + frameKey(state.frames[plane]);
   }
 
@@ -1368,17 +1623,18 @@
   }
 
   /** Measurements that belong to the plane/slice currently shown. */
-  function measurementsFor(plane) {
-    var key = sliceKeyFor(plane);
+  function measurementsFor(plane, index) {
+    var key = sliceKeyFor(plane, index);
     return state.measurements.filter(function (m) {
       return m.plane === plane && m.sliceIndex === key;
     });
   }
 
-  function drawMeasurements(ctx, plane, geom, dpr) {
-    var list = measurementsFor(plane);
+  function drawMeasurements(ctx, geom, dpr) {
+    var plane = geom.plane;
+    var list = measurementsFor(plane, geom.index);
     var pending = state.pendingMeasure && state.pendingMeasure.plane === plane &&
-      state.pendingMeasure.sliceIndex === sliceKeyFor(plane) ? state.pendingMeasure : null;
+      state.pendingMeasure.sliceIndex === sliceKeyFor(plane, geom.index) ? state.pendingMeasure : null;
     if (!list.length && !pending) return;
 
     var t = geom.t;
@@ -1437,16 +1693,20 @@
   }
 
   /** Handle a click while a measurement tool is active. */
-  function measureClick(plane, clientX, clientY) {
-    var p = eventToPlane(plane, clientX, clientY);
+  function measureClick(i, clientX, clientY) {
+    var rec = cellEls[i], geom = rec && rec.geom;
+    if (!geom) return;
+    var p = eventToCell(i, clientX, clientY);
     if (!p) return;
     var need = MEAS.pointsNeeded(state.tool);
     if (!need) return;
 
+    var key = sliceKeyFor(geom.plane, geom.index);
     var pending = state.pendingMeasure;
-    if (!pending || pending.plane !== plane || pending.sliceIndex !== sliceKeyFor(plane)) {
-      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, plane, sliceKeyFor(plane), [p]);
-      renderPlaneOverlay(plane);
+    if (!pending || pending.plane !== geom.plane || pending.sliceIndex !== key) {
+      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, geom.plane, key, [p]);
+      state.measureCell = i;
+      renderCellOverlay(i);
       return;
     }
 
@@ -1457,28 +1717,43 @@
       state.pendingMeasure = null;
       renderMeasurementList();
     }
-    renderPlaneOverlay(plane);
+    renderAllOverlays();
   }
 
   /** Live preview of the in-progress measurement as the mouse moves. */
-  function measureHover(plane, clientX, clientY) {
+  function measureHover(i, clientX, clientY) {
     var pending = state.pendingMeasure;
-    if (!pending || pending.plane !== plane) return;
-    var p = eventToPlane(plane, clientX, clientY);
+    var geom = cellEls[i] && cellEls[i].geom;
+    if (!pending || !geom || pending.plane !== geom.plane) return;
+    var p = eventToCell(i, clientX, clientY);
     if (!p) return;
     var need = MEAS.pointsNeeded(state.tool);
     var preview = pending.points.slice(0, need - 1);
     preview.push(p);
     var saved = pending.points;
     pending.points = preview;
-    renderPlaneOverlay(plane);
+    renderCellOverlay(i);
     pending.points = saved;
   }
 
-  /** Redraw just the annotation layer for one plane. */
-  function renderPlaneOverlay(plane) {
-    var vp = dom.vp[plane];
-    if (vp.geom) drawAnnotations(plane, vp.geom);
+  /** Redraw just the annotation layer for one pane. */
+  function renderCellOverlay(i) {
+    var rec = cellEls[i];
+    if (rec && rec.geom) drawAnnotations(i, rec.geom);
+  }
+
+  function renderAllOverlays() {
+    cellEls.forEach(function (rec, i) { if (rec.geom) drawAnnotations(i, rec.geom); });
+  }
+
+  /** The slab of a visible pane showing this measurement's cut, if any. */
+  function visibleSlabFor(m) {
+    for (var i = 0; i < state.cells.length; i++) {
+      var rec = cellEls[i], geom = rec && rec.geom;
+      if (!geom || geom.plane !== m.plane) continue;
+      if (sliceKeyFor(geom.plane, geom.index) === m.sliceIndex) return geom.slab;
+    }
+    return null;
   }
 
   function renderMeasurementList() {
@@ -1490,10 +1765,8 @@
     var unit = intensityUnit();
     var html = "";
     list.forEach(function (m) {
-      var slab = planeCache[m.plane] && planeCache[m.plane].result;
-      var res = slab && m.sliceIndex === sliceKeyFor(m.plane)
-        ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab))
-        : null;
+      var slab = visibleSlabFor(m);
+      var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
       var value = res ? res.primary + (m.tool === MEAS.TOOLS.ellipse && unit ? " " + unit : "") : "—";
       html +=
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
@@ -1522,10 +1795,12 @@
     Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
       btn.classList.toggle("active", btn.dataset.tool === tool);
     });
-    MPR_PLANES.forEach(function (p) {
-      dom.vp[p].root.style.cursor = tool === MEAS.TOOLS.none ? "crosshair" : "cell";
+    cellEls.forEach(function (rec, i) {
+      if (state.cells[i] && state.cells[i].plane !== "vr") {
+        rec.root.style.cursor = tool === MEAS.TOOLS.none ? "crosshair" : "cell";
+      }
     });
-    MPR_PLANES.forEach(renderPlaneOverlay);
+    renderAllOverlays();
   }
 
   function clearMeasurements() {
@@ -1533,19 +1808,22 @@
     state.pendingMeasure = null;
     state.selectedMeasurement = null;
     renderMeasurementList();
-    MPR_PLANES.forEach(renderPlaneOverlay);
+    renderAllOverlays();
   }
 
   /* ---------------------------------------------------------------------
    * Overlays
    * ------------------------------------------------------------------- */
-  function clearOverlays(plane) {
-    var vp = dom.vp[plane];
-    vp.tl.textContent = vp.tr.textContent = vp.bl.textContent = vp.br.textContent = "";
+  function clearOverlays(i) {
+    var rec = cellEls[i];
+    if (!rec) return;
+    rec.tl.textContent = rec.tr.textContent = rec.bl.textContent = rec.br.textContent = "";
   }
 
-  function updateOverlays(plane, slab) {
-    var vp = dom.vp[plane];
+  function updateOverlays(i, slab) {
+    var rec = cellEls[i], cell = state.cells[i];
+    if (!rec || !cell) return;
+    var plane = cell.plane;
     var group = getCurrentGroup();
     var first = group && group.slices.length ? group.slices[0].instance : null;
     var vol = state.volume;
@@ -1553,12 +1831,14 @@
     if (first) {
       var name = formatPersonName(str(first.dataSet, "x00100010", ""));
       var id = str(first.dataSet, "x00100020", "");
-      vp.tl.textContent = (name ? name + "\n" : "") + (id ? "ID: " + id : "");
-      vp.tr.textContent = (first.modality || "") + "\n" + (group.description || "");
+      rec.tl.textContent = (name ? name + "\n" : "") + (id ? "ID: " + id : "");
+      rec.tr.textContent = (first.modality || "") + "\n" + (group.description || "");
     }
 
-    vp.bl.textContent =
-      "WW: " + Math.round(state.windowWidth) + "  WL: " + Math.round(state.windowCenter) +
+    var win = cellWindow(cell);
+    rec.bl.textContent =
+      "WW: " + Math.round(win.ww) + "  WL: " + Math.round(win.wc) +
+      (cell.wl ? " *" : "") +
       (state.invert ? "  [Inv]" : "") +
       (state.boneCut ? "\nBone cut ≥ " + state.boneThreshold + " HU" : "");
 
@@ -1568,10 +1848,10 @@
       ? fmt(slab.samples * pitch) + "mm " + modeLabel(state.projectionMode)
       : fmt(pitch) + "mm";
     var tilt = tiltOf(plane);
-    vp.br.textContent =
-      (state.index[plane] + 1) + " / " + count + "\n" + thicknessLabel +
+    rec.br.textContent =
+      (cellIndex(cell) + 1) + " / " + count + (cell.linked ? "" : "  free") + "\n" + thicknessLabel +
       (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
-      "\n" + Math.round(state.view[plane].zoom * 100) + "%";
+      "\n" + Math.round(cell.view.zoom * 100) + "%";
   }
 
   function modeLabel(mode) {
@@ -1727,28 +2007,40 @@
   /* ---------------------------------------------------------------------
    * 3D volume rendering
    * ------------------------------------------------------------------- */
+  /** Index of the pane holding the 3D view, or -1. */
+  function vrCellIndex() {
+    for (var i = 0; i < state.cells.length; i++) if (state.cells[i].plane === "vr") return i;
+    return -1;
+  }
+
   function ensureRenderer() {
     if (renderer) return renderer;
+    var i = vrCellIndex();
+    var rec = i >= 0 ? cellEls[i] : null;
+    if (!rec) return null;
     try {
-      renderer = new VR.Renderer(dom.vrCanvas);
+      renderer = new VR.Renderer(rec.canvas);
       renderer.setTransferFunction(state.vrPreset, VR_WINDOW_LOW, VR_WINDOW_HIGH);
     } catch (err) {
       renderer = null;
-      dom.vrEmpty.innerHTML = "3D unavailable<br /><span class='muted small'>" + escapeHtml(err.message) + "</span>";
-      dom.vrEmpty.style.display = "flex";
+      rec.empty.innerHTML = "3D unavailable<br /><span class='muted small'>" +
+        escapeHtml(err.message) + "</span>";
+      rec.empty.style.display = "flex";
     }
     return renderer;
   }
 
-  function renderVR() {
+  function renderVRCell(i) {
+    var rec = cellEls[i];
+    if (!rec) return;
     if (!state.volume) {
-      dom.vrEmpty.style.display = "flex";
+      rec.empty.style.display = "flex";
       if (renderer) renderer.render();
       return;
     }
     var r = ensureRenderer();
     if (!r) return;
-    dom.vrEmpty.style.display = "none";
+    rec.empty.style.display = "none";
 
     if (vrDirty) {
       var packed = V.packTexture(state.volume, VR_WINDOW_LOW, VR_WINDOW_HIGH, 256, state.boneCut);
@@ -1761,20 +2053,25 @@
     r.opacity = state.vrOpacity;
     r.render();
 
-    var vp = dom.vp.vr;
-    vp.tl.textContent = state.vrMode === "mip" ? "3D MIP" : "Volume Rendering";
-    vp.br.textContent = (VR.TRANSFER_FUNCTIONS[state.vrPreset] || {}).label || state.vrPreset;
+    rec.tl.textContent = state.vrMode === "mip" ? "3D MIP" : "Volume Rendering";
+    rec.br.textContent = (VR.TRANSFER_FUNCTIONS[state.vrPreset] || {}).label || state.vrPreset;
+  }
+
+  /** Redraw only the 3D pane, for camera drags. */
+  function renderVR() {
+    var i = vrCellIndex();
+    if (i >= 0) renderVRCell(i);
   }
 
   /* ---------------------------------------------------------------------
    * View state
    * ------------------------------------------------------------------- */
   function resetView() {
-    MPR_PLANES.forEach(function (plane) {
-      state.view[plane] = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
+    state.cells.forEach(function (cell) {
+      cell.view = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
     });
     resetFrames();
-    planeCache = {};
+    planeCache = {}; planeCacheKeys = [];
     if (renderer) {
       renderer.rotX = -1.35;
       renderer.rotY = 0;
@@ -1796,17 +2093,18 @@
   }
 
   function syncSliders() {
-    MPR_PLANES.forEach(function (plane) {
-      var slider = dom.vp[plane].slider;
+    state.cells.forEach(function (cell, i) {
+      var rec = cellEls[i];
+      if (!rec || !rec.slider) return;
       if (!state.volume) {
-        slider.disabled = true;
-        slider.max = 0;
-        slider.value = 0;
+        rec.slider.disabled = true;
+        rec.slider.max = 0;
+        rec.slider.value = 0;
         return;
       }
-      slider.disabled = false;
-      slider.max = Math.max(0, V.planeCount(state.volume, plane) - 1);
-      slider.value = state.index[plane];
+      rec.slider.disabled = false;
+      rec.slider.max = Math.max(0, V.planeCount(state.volume, cell.plane) - 1);
+      rec.slider.value = cellIndex(cell);
     });
   }
 
@@ -1825,13 +2123,11 @@
   }
 
   function setLayout(layout) {
-    state.layout = layout;
-    dom.viewGrid.className = "viewgrid layout-" + layout;
+    if (!LAYOUTS[layout]) return;
+    applyLayout(layout);
     Array.prototype.forEach.call(dom.layoutSeg.querySelectorAll(".seg-btn"), function (btn) {
       btn.classList.toggle("active", btn.dataset.layout === layout);
     });
-    // Canvases were display:none, so they need a re-measure before drawing.
-    requestAnimationFrame(renderAll);
   }
 
   /* ---------------------------------------------------------------------
@@ -1857,7 +2153,7 @@
       state.index = { axial: 0, coronal: 0, sagittal: 0 };
       state.measurements = [];
       state.pendingMeasure = null;
-      planeCache = {};
+      planeCache = {}; planeCacheKeys = [];
       vrDirty = true;
       if (renderer) renderer.dispose();
       resetView();
@@ -1893,25 +2189,27 @@
       renderAll();
     });
 
-    // Rotate / flip act on the active plane, keeping each viewport's display
+    // Rotate / flip act on the active pane, keeping each pane's display
     // state independent as the plan calls for.
     dom.rotateBtn.addEventListener("click", function () {
-      var plane = activeMprPlane();
-      var view = state.view[plane];
-      view.rotation = ((view.rotation || 0) + 90) % 360;
-      renderPlane(plane);
+      withActiveMprCell(function (cell, i) {
+        cell.view.rotation = ((cell.view.rotation || 0) + 90) % 360;
+        renderCell(i);
+      });
     });
     dom.flipHBtn.addEventListener("click", function () {
-      var plane = activeMprPlane();
-      state.view[plane].flipH = !state.view[plane].flipH;
-      dom.flipHBtn.classList.toggle("active", state.view[plane].flipH);
-      renderPlane(plane);
+      withActiveMprCell(function (cell, i) {
+        cell.view.flipH = !cell.view.flipH;
+        dom.flipHBtn.classList.toggle("active", cell.view.flipH);
+        renderCell(i);
+      });
     });
     dom.flipVBtn.addEventListener("click", function () {
-      var plane = activeMprPlane();
-      state.view[plane].flipV = !state.view[plane].flipV;
-      dom.flipVBtn.classList.toggle("active", state.view[plane].flipV);
-      renderPlane(plane);
+      withActiveMprCell(function (cell, i) {
+        cell.view.flipV = !cell.view.flipV;
+        dom.flipVBtn.classList.toggle("active", cell.view.flipV);
+        renderCell(i);
+      });
     });
 
     dom.toolSeg.addEventListener("click", function (e) {
@@ -1928,7 +2226,7 @@
         state.measurements = state.measurements.filter(function (m) { return m.id !== id; });
         if (state.selectedMeasurement === id) state.selectedMeasurement = null;
         renderMeasurementList();
-        MPR_PLANES.forEach(renderPlaneOverlay);
+        renderAllOverlays();
         return;
       }
       var row = e.target.closest(".measure-row");
@@ -1938,9 +2236,10 @@
       if (!m) return;
       state.selectedMeasurement = rid;
       // Jump to the slice the measurement was made on.
-      setPlaneIndex(m.plane, m.sliceIndex);
+      // Oblique measurements carry a composite key, not a slice number.
+      if (typeof m.sliceIndex === "number") setPlaneIndex(m.plane, m.sliceIndex);
       renderMeasurementList();
-      MPR_PLANES.forEach(renderPlaneOverlay);
+      renderAllOverlays();
     });
 
     dom.tagSearch.addEventListener("input", debounce(updateMetadata, 120));
@@ -1994,7 +2293,7 @@
         });
         return;
       }
-      planeCache = {};
+      planeCache = {}; planeCacheKeys = [];
       vrDirty = true;
       renderAll();
       updateBoneStatus();
@@ -2029,95 +2328,152 @@
       renderVR();
     });
 
-    MPR_PLANES.forEach(wirePlane);
-    wireVRViewport();
-
     window.addEventListener("resize", debounce(function () { renderAll(); }, 120));
     document.addEventListener("keydown", onKeyDown);
     wireDragAndDrop();
   }
 
-  function wirePlane(plane) {
-    var vp = dom.vp[plane];
+  function wireCell(i, rec) {
+    var cell = state.cells[i];
 
-    vp.slider.addEventListener("input", function (e) {
-      setPlaneIndex(plane, parseInt(e.target.value, 10));
+    rec.planeSel.addEventListener("change", function (e) {
+      setCellPlane(i, e.target.value);
     });
+    rec.planeSel.addEventListener("mousedown", function (e) { e.stopPropagation(); });
 
-    vp.root.addEventListener("mousedown", function (e) {
-      if (e.target === vp.slider) return;
-      setActivePlane(plane);
+    if (rec.wlSel) {
+      rec.wlSel.addEventListener("change", function (e) {
+        var key = e.target.value;
+        var preset = PRESETS[key];
+        cell.wl = preset ? { ww: preset.ww, wc: preset.wc, preset: key } : null;
+        renderCell(i);
+      });
+      rec.wlSel.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    }
+
+    if (rec.linkBtn) {
+      rec.linkBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        cell.linked = !cell.linked;
+        // Unlinking keeps the pane where it is rather than jumping.
+        if (!cell.linked) cell.index = cellIndex(cell);
+        syncCellControls();
+        renderCell(i);
+      });
+      rec.linkBtn.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    }
+
+    if (rec.slider) {
+      rec.slider.addEventListener("input", function (e) {
+        setCellIndex(i, parseInt(e.target.value, 10));
+      });
+      rec.slider.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    }
+
+    rec.root.addEventListener("mousedown", function (e) {
+      if (e.target === rec.slider || rec.bar.contains(e.target)) return;
+      setActiveCell(i);
       e.preventDefault();
+
+      if (cell.plane === "vr") {
+        state.drag = { cell: i, mode: "orbit", x: e.clientX, y: e.clientY };
+        return;
+      }
       if (e.button === 0 && e.altKey) {
-        var a0 = obliqueAngleAt(plane, e.clientX, e.clientY);
-        if (a0 !== null) state.drag = { plane: plane, mode: "oblique", angle: a0 };
+        var a0 = obliqueAngleAt(i, e.clientX, e.clientY);
+        if (a0 !== null) state.drag = { cell: i, mode: "oblique", angle: a0 };
         return;
       }
       if (e.button === 0 && e.shiftKey) {
-        crosshairFromPoint(plane, e.clientX, e.clientY);
+        crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
       if (e.button === 0 && state.tool !== MEAS.TOOLS.none) {
-        measureClick(plane, e.clientX, e.clientY);
+        measureClick(i, e.clientX, e.clientY);
         return;
       }
+      var win = cellWindow(cell);
       state.drag = {
-        plane: plane,
+        cell: i,
         mode: e.button === 0 ? "wl" : "pan",
         x: e.clientX, y: e.clientY,
-        ww: state.windowWidth, wc: state.windowCenter,
-        panX: state.view[plane].panX, panY: state.view[plane].panY,
+        ww: win.ww, wc: win.wc,
+        panX: cell.view.panX, panY: cell.view.panY,
       };
     });
 
-    vp.root.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    rec.root.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
-    vp.root.addEventListener("wheel", function (e) {
-      if (!state.volume) return;
+    rec.root.addEventListener("wheel", function (e) {
       e.preventDefault();
-      setActivePlane(plane);
+      setActiveCell(i);
+      if (cell.plane === "vr") {
+        if (!renderer) return;
+        renderer.zoom(e.deltaY > 0 ? 1.1 : 1 / 1.1);
+        renderVR();
+        return;
+      }
+      if (!state.volume) return;
       if (e.shiftKey) {
-        var view = state.view[plane];
+        var view = cell.view;
         view.zoom = Math.max(0.2, Math.min(12, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
-        renderPlane(plane);
+        renderCell(i);
       } else {
-        setPlaneIndex(plane, state.index[plane] + (e.deltaY > 0 ? 1 : -1));
+        setCellIndex(i, cellIndex(cell) + (e.deltaY > 0 ? 1 : -1));
       }
     }, { passive: false });
 
-    vp.root.addEventListener("dblclick", function () {
-      setLayout(state.layout === "quad" ? plane : "quad");
+    // Double-click expands a pane to fill the grid, and back again.
+    rec.root.addEventListener("dblclick", function (e) {
+      if (rec.bar.contains(e.target)) return;
+      if (state.layout === "axial" || state.layout === "vr") {
+        setLayout(lastGridLayout);
+      } else {
+        lastGridLayout = state.layout;
+        expandCell(i);
+      }
     });
   }
 
-  function wireVRViewport() {
-    var vp = dom.vp.vr;
-    vp.root.addEventListener("mousedown", function (e) {
-      setActivePlane("vr");
-      e.preventDefault();
-      state.drag = { plane: "vr", mode: "orbit", x: e.clientX, y: e.clientY };
+  /** Blow one pane up to fill the window, keeping its plane. */
+  function expandCell(i) {
+    var cell = state.cells[i];
+    var target = cell.plane === "vr" ? "vr" : "axial";
+    applyLayout(target);
+    if (state.cells[0]) state.cells[0].plane = cell.plane;
+    Array.prototype.forEach.call(dom.layoutSeg.querySelectorAll(".seg-btn"), function (btn) {
+      btn.classList.toggle("active", btn.dataset.layout === target);
     });
-    vp.root.addEventListener("wheel", function (e) {
-      e.preventDefault();
-      if (!renderer) return;
-      renderer.zoom(e.deltaY > 0 ? 1.1 : 1 / 1.1);
-      renderVR();
-    }, { passive: false });
-    vp.root.addEventListener("dblclick", function () {
-      setLayout(state.layout === "quad" ? "vr" : "quad");
-    });
+    rebuildCells();
   }
 
-  function setActivePlane(plane) {
-    state.activePlane = plane;
-    MPR_PLANES.concat(["vr"]).forEach(function (p) {
-      dom.vp[p].root.classList.toggle("active", p === plane);
-    });
+  function setActiveCell(i) {
+    state.activeCell = i;
+    cellEls.forEach(function (rec, j) { rec.root.classList.toggle("active", i === j); });
+  }
+
+  /**
+   * Move a pane's slice. A linked pane drives the shared cut, so every other
+   * linked pane on that plane follows and the crosshair stays consistent.
+   */
+  function setCellIndex(i, index) {
+    var cell = state.cells[i];
+    if (!cell || !state.volume || cell.plane === "vr") return;
+    if (cell.linked) {
+      setPlaneIndex(cell.plane, index);
+      return;
+    }
+    var count = V.planeCount(state.volume, cell.plane);
+    var clamped = Math.max(0, Math.min(index, count - 1));
+    if (clamped === cell.index) return;
+    cell.index = clamped;
+    renderCell(i);
+    if (cellEls[i] && cellEls[i].slider) cellEls[i].slider.value = clamped;
   }
 
   function onMouseMove(e) {
-    if (state.pendingMeasure) {
-      measureHover(state.pendingMeasure.plane, e.clientX, e.clientY);
+    if (state.pendingMeasure && state.measureCell !== undefined) {
+      measureHover(state.measureCell, e.clientX, e.clientY);
     }
     var drag = state.drag;
     if (!drag) return;
@@ -2125,7 +2481,7 @@
     var dy = e.clientY - drag.y;
 
     if (drag.mode === "oblique") {
-      var a = obliqueAngleAt(drag.plane, e.clientX, e.clientY);
+      var a = obliqueAngleAt(drag.cell, e.clientX, e.clientY);
       if (a === null) return;
       // Incremental, so the drag can pass through any number of turns without
       // the shortest-arc wrap that an absolute angle would suffer.
@@ -2133,7 +2489,7 @@
       while (d > Math.PI) d -= 2 * Math.PI;
       while (d < -Math.PI) d += 2 * Math.PI;
       drag.angle = a;
-      rotateOblique(drag.plane, d);
+      rotateOblique(state.cells[drag.cell].plane, d);
       renderAll();
       return;
     }
@@ -2146,34 +2502,50 @@
     }
 
     if (drag.mode === "wl") {
-      state.windowWidth = Math.max(1, drag.ww + dx * 2);
-      state.windowCenter = drag.wc - dy * 2;
-      dom.presetSelect.value = "";
-      updateWLInputs();
-      renderAll();
+      var ww = Math.max(1, drag.ww + dx * 2), wc = drag.wc - dy * 2;
+      var cell = state.cells[drag.cell];
+      if (cell && cell.wl) {
+        // This pane has its own window, so keep the drag local to it.
+        cell.wl = { ww: ww, wc: wc, preset: "" };
+        if (cellEls[drag.cell].wlSel) cellEls[drag.cell].wlSel.value = "";
+        renderCell(drag.cell);
+      } else {
+        state.windowWidth = ww;
+        state.windowCenter = wc;
+        dom.presetSelect.value = "";
+        updateWLInputs();
+        renderAll();
+      }
       return;
     }
 
     // Pan: panX/panY live in device pixels, mouse deltas are CSS pixels.
     var dpr = window.devicePixelRatio || 1;
-    var view = state.view[drag.plane];
-    view.panX = drag.panX + dx * dpr;
-    view.panY = drag.panY + dy * dpr;
-    renderPlane(drag.plane);
+    var cellP = state.cells[drag.cell];
+    if (!cellP) return;
+    cellP.view.panX = drag.panX + dx * dpr;
+    cellP.view.panY = drag.panY + dy * dpr;
+    renderCell(drag.cell);
   }
 
   function onKeyDown(e) {
     if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
-    var plane = MPR_PLANES.indexOf(state.activePlane) >= 0 ? state.activePlane : "axial";
+    var i = state.activeCell;
+    var cell = state.cells[i];
+    if (!cell || cell.plane === "vr") {
+      i = state.cells.findIndex(function (c) { return c.plane !== "vr"; });
+      cell = state.cells[i];
+    }
+    var at = cell ? cellIndex(cell) : 0;
     switch (e.key) {
       case "ArrowDown": case "ArrowRight":
-        setPlaneIndex(plane, state.index[plane] + 1); e.preventDefault(); break;
+        setCellIndex(i, at + 1); e.preventDefault(); break;
       case "ArrowUp": case "ArrowLeft":
-        setPlaneIndex(plane, state.index[plane] - 1); e.preventDefault(); break;
+        setCellIndex(i, at - 1); e.preventDefault(); break;
       case "PageDown":
-        setPlaneIndex(plane, state.index[plane] + 10); e.preventDefault(); break;
+        setCellIndex(i, at + 10); e.preventDefault(); break;
       case "PageUp":
-        setPlaneIndex(plane, state.index[plane] - 10); e.preventDefault(); break;
+        setCellIndex(i, at - 10); e.preventDefault(); break;
       case "i": case "I":
         dom.invertBtn.click(); break;
       case "r": case "R":
@@ -2182,6 +2554,9 @@
       case "2": setLayout("axial"); break;
       case "3": setLayout("mpr"); break;
       case "4": setLayout("vr"); break;
+      case "5": setLayout("1x2"); break;
+      case "6": setLayout("2x3"); break;
+      case "7": setLayout("4x4"); break;
     }
   }
 
@@ -2257,9 +2632,13 @@
       (state.boneThreshold < 350 ? " Contrast-filled vessels are cut too at this threshold." : "");
   }
 
-  /** The active plane, falling back to axial when 3D is focused. */
-  function activeMprPlane() {
-    return MPR_PLANES.indexOf(state.activePlane) >= 0 ? state.activePlane : "axial";
+  /** Run fn against the active pane, or the first 2D pane if 3D is focused. */
+  function withActiveMprCell(fn) {
+    var i = state.activeCell;
+    if (!state.cells[i] || state.cells[i].plane === "vr") {
+      i = state.cells.findIndex(function (c) { return c.plane !== "vr"; });
+    }
+    if (i >= 0 && state.cells[i]) fn(state.cells[i], i);
   }
 
   /**
@@ -2268,12 +2647,13 @@
    * saved matches what is on screen.
    */
   function exportActiveViewport() {
-    var plane = state.activePlane;
-    var vp = dom.vp[plane];
-    if (!vp || !vp.canvas) return;
+    var i = state.activeCell;
+    var cell = state.cells[i], rec = cellEls[i];
+    if (!cell || !rec || !rec.canvas) return;
+    var plane = cell.plane;
 
     var out = document.createElement("canvas");
-    var src = vp.canvas;
+    var src = rec.canvas;
     out.width = src.width;
     out.height = src.height;
     var ctx = out.getContext("2d");
@@ -2285,9 +2665,9 @@
       renderer.render();                       // ensure the buffer is current
       ctx.drawImage(src, 0, 0);
     } else {
-      if (!vp.geom) return showToast("Nothing to export yet.", true);
+      if (!rec.geom) return showToast("Nothing to export yet.", true);
       ctx.drawImage(src, 0, 0);
-      ctx.drawImage(vp.cross, 0, 0);
+      ctx.drawImage(rec.cross, 0, 0);
     }
 
     var group = getCurrentGroup();
@@ -2405,12 +2785,7 @@
     renderMeasurementList();
     syncSliders();
     setTool("none");
-    setActivePlane("axial");
     setLayout(state.layout);
-
-    if (!VR.isSupported()) {
-      dom.vrEmpty.innerHTML = "3D unavailable<br /><span class='muted small'>WebGL2 not supported here</span>";
-    }
     setStatus("Ready — open a DICOM folder to begin");
   }
 
@@ -2438,5 +2813,16 @@
     planeToCanvas: planeToCanvas,
     canvasToPlane: canvasToPlane,
     planeTransform: planeTransform,
+    LAYOUTS: LAYOUTS,
+    layoutFill: layoutFill,
+    setLayout: setLayout,
+    setCellPlane: setCellPlane,
+    setCellIndex: setCellIndex,
+    setActiveCell: setActiveCell,
+    cellIndex: cellIndex,
+    cellWindow: cellWindow,
+    cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
+    cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
+    cellCount: function () { return cellEls.length; },
   };
 })();

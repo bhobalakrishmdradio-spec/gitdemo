@@ -40,6 +40,8 @@ const TRANSLATIONS = {
     'backup.later': 'Remind me later', 'backup.exportNow': 'Export now',
     'dash.totalBalance': 'Total Balance', 'dash.incomeMonth': 'Income (this month)', 'dash.expenseMonth': 'Expenses (this month)',
     'dash.salaryMonth': 'Salary (this month)', 'dash.otherIncomeMonth': 'Other Income (this month)',
+    'dash.salary': 'Salary', 'dash.otherIncome': 'Other Income', 'dash.expense': 'Expenses',
+    'dash.periodMonth': 'Month', 'dash.periodYear': 'Year',
     'dash.savingsRate': 'Savings Rate', 'dash.accounts': 'Accounts', 'dash.manage': 'Manage →',
     'dash.spendingByCategory': 'Spending by Category', 'dash.monthlyTrend': 'Monthly Trend',
     'dash.recentTxns': 'Recent Transactions', 'dash.viewAll': 'View all →',
@@ -111,6 +113,8 @@ const TRANSLATIONS = {
     'backup.later': 'பின்னர் நினைவூட்டு', 'backup.exportNow': 'இப்போது ஏற்றுமதி செய்',
     'dash.totalBalance': 'மொத்த இருப்பு', 'dash.incomeMonth': 'வரவு (இந்த மாதம்)', 'dash.expenseMonth': 'செலவு (இந்த மாதம்)',
     'dash.salaryMonth': 'சம்பளம் (இந்த மாதம்)', 'dash.otherIncomeMonth': 'மற்ற வரவு (இந்த மாதம்)',
+    'dash.salary': 'சம்பளம்', 'dash.otherIncome': 'மற்ற வரவு', 'dash.expense': 'செலவு',
+    'dash.periodMonth': 'மாதம்', 'dash.periodYear': 'ஆண்டு',
     'dash.savingsRate': 'சேமிப்பு விகிதம்', 'dash.accounts': 'கணக்குகள்', 'dash.manage': 'நிர்வகி →',
     'dash.spendingByCategory': 'வகை வாரியான செலவு', 'dash.monthlyTrend': 'மாதாந்திர போக்கு',
     'dash.recentTxns': 'சமீபத்திய பரிவர்த்தனைகள்', 'dash.viewAll': 'அனைத்தையும் காண்க →',
@@ -641,24 +645,50 @@ function snoozeBackupReminder() {
 }
 
 /* ---------- Dashboard rendering ---------- */
+// { type: 'month', value: 'YYYY-MM' } or { type: 'year', value: 'YYYY' } — drives the
+// stat cards and category chart so each month or year can be viewed separately.
+let dashboardPeriod = { type: 'month', value: currentMonthKey() };
+
+function transactionsInPeriod(txns, period) {
+  return txns.filter((t) => (period.type === 'month' ? monthKey(t.date) === period.value : t.date.slice(0, 4) === period.value));
+}
+
 function renderDashboard() {
-  const month = document.getElementById('chartMonthSelect').value || currentMonthKey();
+  populateDashboardPeriodSelect();
   renderStatCards();
   renderAccountBalances();
-  renderCategoryChart(month);
+  renderCategoryChart();
   renderTrendChart();
   renderRecentTransactions();
-  populateMonthSelect();
+}
+
+function populateDashboardPeriodSelect() {
+  const select = document.getElementById('dashPeriodValue');
+  let options, defaultValue;
+  if (dashboardPeriod.type === 'month') {
+    const months = Array.from(new Set(state.transactions.map((t) => monthKey(t.date)))).sort().reverse();
+    if (!months.includes(currentMonthKey())) months.unshift(currentMonthKey());
+    options = months.map((m) => ({ value: m, label: monthLabel(m) }));
+    defaultValue = currentMonthKey();
+  } else {
+    const years = Array.from(new Set(state.transactions.map((t) => t.date.slice(0, 4)))).sort().reverse();
+    const curYear = String(new Date().getFullYear());
+    if (!years.includes(curYear)) years.unshift(curYear);
+    options = years.map((y) => ({ value: y, label: y }));
+    defaultValue = curYear;
+  }
+  select.innerHTML = options.map((o) => `<option value="${o.value}">${escapeHTML(o.label)}</option>`).join('');
+  if (!options.some((o) => o.value === dashboardPeriod.value)) dashboardPeriod.value = defaultValue;
+  select.value = dashboardPeriod.value;
 }
 
 function renderStatCards() {
-  const mKey = currentMonthKey();
-  const monthTxns = state.transactions.filter((t) => monthKey(t.date) === mKey);
-  const monthIncome = monthTxns.filter((t) => t.type === 'income');
-  const salaryP = monthIncome.filter((t) => t.categoryId === 'salary').reduce((s, t) => s + t.amountPaise, 0);
-  const otherIncomeP = monthIncome.filter((t) => t.categoryId !== 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const periodTxns = transactionsInPeriod(state.transactions, dashboardPeriod);
+  const periodIncome = periodTxns.filter((t) => t.type === 'income');
+  const salaryP = periodIncome.filter((t) => t.categoryId === 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const otherIncomeP = periodIncome.filter((t) => t.categoryId !== 'salary').reduce((s, t) => s + t.amountPaise, 0);
   const incomeP = salaryP + otherIncomeP;
-  const expenseP = monthTxns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0);
+  const expenseP = periodTxns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0);
   const totalP = totalBalancePaise();
   const savingsRate = incomeP > 0 ? Math.round(((incomeP - expenseP) / incomeP) * 100) : 0;
 
@@ -683,22 +713,13 @@ function renderAccountBalances() {
     </div>`).join('');
 }
 
-function populateMonthSelect() {
-  const select = document.getElementById('chartMonthSelect');
-  const months = Array.from(new Set(state.transactions.map((t) => monthKey(t.date)))).sort().reverse();
-  if (!months.includes(currentMonthKey())) months.unshift(currentMonthKey());
-  const prevValue = select.value;
-  select.innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join('');
-  select.value = months.includes(prevValue) ? prevValue : currentMonthKey();
-}
-
 /* ---------- Canvas: category pie chart (expenses only; transfers excluded) ---------- */
-function renderCategoryChart(mKey) {
+function renderCategoryChart() {
   const canvas = document.getElementById('categoryChart');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const expenses = state.transactions.filter((t) => t.type === 'expense' && monthKey(t.date) === mKey);
+  const expenses = transactionsInPeriod(state.transactions.filter((t) => t.type === 'expense'), dashboardPeriod);
   const totals = {};
   expenses.forEach((t) => { totals[t.categoryId] = (totals[t.categoryId] || 0) + t.amountPaise; });
   const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
@@ -708,7 +729,7 @@ function renderCategoryChart(mKey) {
     ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--text-muted');
     ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('No expenses this month', canvas.width / 2, canvas.height / 2);
+    ctx.fillText(dashboardPeriod.type === 'month' ? 'No expenses this month' : 'No expenses this year', canvas.width / 2, canvas.height / 2);
     legend.innerHTML = '';
     return;
   }
@@ -2030,8 +2051,20 @@ function init() {
     renderTransactionsView();
   });
 
-  document.getElementById('chartMonthSelect').addEventListener('change', () => {
-    renderCategoryChart(document.getElementById('chartMonthSelect').value);
+  document.querySelectorAll('.period-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      dashboardPeriod = { type: btn.dataset.period, value: null };
+      document.querySelectorAll('.period-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      populateDashboardPeriodSelect();
+      renderStatCards();
+      renderCategoryChart();
+    });
+  });
+  document.getElementById('dashPeriodValue').addEventListener('change', (e) => {
+    dashboardPeriod.value = e.target.value;
+    renderStatCards();
+    renderCategoryChart();
   });
 
   document.getElementById('budgetMonthSelect').addEventListener('change', renderBudgetsView);

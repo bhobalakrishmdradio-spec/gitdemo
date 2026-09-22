@@ -192,6 +192,19 @@ button, input, select, textarea { font-family: inherit; }
 
 .file-btn { cursor: pointer; }
 
+/* ---------- Dashboard period picker (Month/Year) ---------- */
+.period-picker { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.period-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.period-btn {
+  background: var(--surface); color: var(--text-muted); border: none; padding: 7px 16px;
+  cursor: pointer; font-size: 0.85rem; font-weight: 600;
+}
+.period-btn + .period-btn { border-left: 1px solid var(--border); }
+.period-btn.active { background: var(--primary); color: #fff; }
+.period-picker select {
+  padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.88rem;
+}
+
 /* ---------- Cards ---------- */
 .cards {
   display: grid;

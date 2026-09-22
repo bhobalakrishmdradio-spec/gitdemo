@@ -43,21 +43,29 @@
 
       <!-- DASHBOARD VIEW -->
       <section id="view-dashboard" class="view active">
+        <div class="period-picker">
+          <div class="period-toggle">
+            <button type="button" class="period-btn active" data-period="month" data-i18n="dash.periodMonth">Month</button>
+            <button type="button" class="period-btn" data-period="year" data-i18n="dash.periodYear">Year</button>
+          </div>
+          <select id="dashPeriodValue"></select>
+        </div>
+
         <div class="cards">
           <div class="card card-balance">
             <div class="card-label" data-i18n="dash.totalBalance">Total Balance</div>
             <div class="card-value" id="statBalance">₹0.00</div>
           </div>
           <div class="card card-income">
-            <div class="card-label" data-i18n="dash.salaryMonth">Salary (this month)</div>
+            <div class="card-label" data-i18n="dash.salary">Salary</div>
             <div class="card-value" id="statSalary">₹0.00</div>
           </div>
           <div class="card card-income">
-            <div class="card-label" data-i18n="dash.otherIncomeMonth">Other Income (this month)</div>
+            <div class="card-label" data-i18n="dash.otherIncome">Other Income</div>
             <div class="card-value" id="statOtherIncome">₹0.00</div>
           </div>
           <div class="card card-expense">
-            <div class="card-label" data-i18n="dash.expenseMonth">Expenses (this month)</div>
+            <div class="card-label" data-i18n="dash.expense">Expenses</div>
             <div class="card-value" id="statExpense">₹0.00</div>
           </div>
           <div class="card card-savings">
@@ -78,7 +86,6 @@
           <div class="panel">
             <div class="panel-header">
               <h2 data-i18n="dash.spendingByCategory">Spending by Category</h2>
-              <select id="chartMonthSelect"></select>
             </div>
             <canvas id="categoryChart" width="360" height="260"></canvas>
             <ul id="chartLegend" class="legend"></ul>

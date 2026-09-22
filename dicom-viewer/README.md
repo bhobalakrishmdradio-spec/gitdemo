@@ -56,12 +56,28 @@ or sixteen copies of the same thing:
   that pane alone. A bone window beside a soft-tissue window on the same slice
   is one click. A pane with its own window keeps left-drag local to itself;
   panes on `global` drive the toolbar W/L as before.
-- **Linked or free** — the 🔗 button. Linked panes on the same plane share the
-  slice with the crosshair, so they scroll together. Unlink one and it scrolls
-  alone, which is how you put two levels side by side; its slice counter then
-  reads *free*.
 - **Its own zoom, pan, rotation and flip** — rotate/flip act on the pane you
   last clicked in.
+
+### Stacked scrolling
+
+Panes showing the same plane sit a fixed number of slices apart, so a grid is
+a **run of consecutive images rather than one image repeated** — the 4×4 grid
+shows fifteen different levels at once. Scrolling *any* pane (wheel, slider or
+arrow keys) moves the whole run together and keeps the spacing, so one scroll
+advances the entire page of images the way flipping a sheet of film does. The
+three planes keep separate runs: scrolling the axial panes leaves the coronal
+and sagittal ones where they are, and the crosshairs on every other pane
+follow along.
+
+**Tools → Panes → Stack** sets the spacing: *Same slice* (every repeated pane
+on the same image), *Every slice*, or every 2nd, 5th or 10th. The panel says
+how many slices the current grid covers at a time.
+
+The 📌 button pins a pane to the slice it is on. A pinned pane ignores
+scrolling, so you can hold a reference level while the rest of the grid moves
+past it; unpinning drops it back into the run where it stands. Each pane's
+slice counter shows its offset (`+3`) or `pinned`.
 
 At 4×4 the panes drop the patient banner and orientation letters rather than
 covering the image with text.
@@ -189,7 +205,7 @@ reconstructed.
 
 | Key | Action |
 | --- | --- |
-| `↑` `↓` / `←` `→` | Previous / next slice in the active plane |
+| `↑` `↓` / `←` `→` | Previous / next slice — moves the whole stack |
 | `Page Up` / `Page Down` | Jump 10 slices |
 | `1` … `7` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 · 4×4 |
 | `I` | Invert grayscale |

@@ -132,6 +132,9 @@
     vrOpacity: 1,
 
     layout: "quad",
+    // Slices between one pane and the next on the same plane. 0 makes every
+    // pane show the same slice; 1 makes a grid a filmstrip.
+    stackStep: 1,
     crosshair: true,
 
     drag: null,
@@ -169,6 +172,8 @@
     dom.measureList = byId("measureList");
     dom.clearMeasureBtn = byId("clearMeasureBtn");
     dom.calibrationNote = byId("calibrationNote");
+    dom.stackStep = byId("stackStep");
+    dom.stackNote = byId("stackNote");
     dom.obliqueInfo = byId("obliqueInfo");
     dom.obliqueReset = byId("obliqueResetBtn");
     dom.geometryWarnings = byId("geometryWarnings");
@@ -215,19 +220,42 @@
   function newCell(plane) {
     return {
       plane: plane,
-      index: null,          // own slice; null while linked to the shared cut
-      linked: true,
+      offset: 0,            // slices ahead of the shared cut for this plane
+      index: 0,             // absolute slice, used only while pinned
+      pinned: false,        // true = hold this slice, ignore scrolling
       view: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
       wl: null,             // own window/level; null while following the global one
     };
   }
 
-  /** The slice a pane is showing: the shared cut, or its own when unlinked. */
+  /**
+   * The slice a pane is showing.
+   *
+   * Panes track the shared cut at a fixed offset, so scrolling anywhere moves
+   * the whole stack together and a grid reads as a run of consecutive images
+   * rather than one image repeated. A pinned pane opts out and holds still.
+   */
   function cellIndex(cell) {
     if (!state.volume || cell.plane === "vr") return 0;
     var count = V.planeCount(state.volume, cell.plane);
-    var i = cell.linked || cell.index === null ? state.index[cell.plane] : cell.index;
+    var i = cell.pinned ? cell.index : state.index[cell.plane] + (cell.offset || 0);
     return Math.max(0, Math.min(count - 1, i));
+  }
+
+  /**
+   * Spread the panes of each plane across consecutive slices.
+   *
+   * Without this a grid of repeated planes is the same image several times
+   * over, and scrolling it gains you nothing. Pinned panes are left alone.
+   */
+  function restack() {
+    var seen = {};
+    state.cells.forEach(function (cell) {
+      if (cell.plane === "vr") return;
+      var k = seen[cell.plane] || 0;
+      seen[cell.plane] = k + 1;
+      if (!cell.pinned) cell.offset = k * state.stackStep;
+    });
   }
 
   /** The window a pane draws with: its own override, or the global one. */
@@ -273,6 +301,7 @@
     state.layout = LAYOUTS[key] ? key : "quad";
     state.cells = layoutFill(state.layout).map(newCell);
     enforceSingleVR();
+    restack();
     state.activeCell = 0;
     rebuildCells();
   }
@@ -299,6 +328,7 @@
     setActiveCell(Math.min(state.activeCell, state.cells.length - 1));
     syncCellControls();
     syncSliders();
+    updateStackNote();
     requestAnimationFrame(renderAll);
   }
 
@@ -383,9 +413,10 @@
     var cell = state.cells[i];
     if (!cell || cell.plane === plane) return;
     cell.plane = plane;
-    cell.index = null;
-    cell.linked = true;
+    cell.pinned = false;
+    cell.offset = 0;
     if (plane === "vr") enforceSingleVR(i);
+    restack();
     planeCacheTrim();
     rebuildCells();
   }
@@ -398,13 +429,13 @@
       if (rec.planeSel) rec.planeSel.value = cell.plane;
       if (rec.wlSel) rec.wlSel.value = cell.wl && cell.wl.preset ? cell.wl.preset : "";
       if (rec.linkBtn) {
-        // One glyph either way — the state is carried by the .off styling,
-        // since the "broken chain" emoji is not reliably available.
-        rec.linkBtn.textContent = "🔗";
-        rec.linkBtn.title = cell.linked
-          ? "Linked: scrolls with the other panes on this plane"
-          : "Unlinked: this pane scrolls on its own";
-        rec.linkBtn.classList.toggle("off", !cell.linked);
+        rec.linkBtn.textContent = "📌";
+        rec.linkBtn.title = cell.pinned
+          ? "Pinned to slice " + (cell.index + 1) + " — click to rejoin the stack"
+          : "Scrolling with the stack" +
+            (cell.offset ? " at +" + cell.offset + " slices" : "") +
+            " — click to pin this slice";
+        rec.linkBtn.classList.toggle("on", !!cell.pinned);
       }
     });
   }
@@ -1849,7 +1880,9 @@
       : fmt(pitch) + "mm";
     var tilt = tiltOf(plane);
     rec.br.textContent =
-      (cellIndex(cell) + 1) + " / " + count + (cell.linked ? "" : "  free") + "\n" + thicknessLabel +
+      (cellIndex(cell) + 1) + " / " + count +
+      (cell.pinned ? "  pinned" : cell.offset ? "  " + (cell.offset > 0 ? "+" : "") + cell.offset : "") +
+      "\n" + thicknessLabel +
       (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
       "\n" + Math.round(cell.view.zoom * 100) + "%";
   }
@@ -2179,6 +2212,17 @@
       renderAll();
     });
 
+    if (dom.stackStep) {
+      dom.stackStep.addEventListener("change", function (e) {
+        state.stackStep = parseInt(e.target.value, 10) || 0;
+        restack();
+        syncCellControls();
+        syncSliders();
+        renderAll();
+        updateStackNote();
+      });
+    }
+
     if (dom.obliqueReset) {
       dom.obliqueReset.addEventListener("click", resetOblique);
     }
@@ -2354,9 +2398,12 @@
     if (rec.linkBtn) {
       rec.linkBtn.addEventListener("click", function (e) {
         e.stopPropagation();
-        cell.linked = !cell.linked;
-        // Unlinking keeps the pane where it is rather than jumping.
-        if (!cell.linked) cell.index = cellIndex(cell);
+        // Pinning holds the slice the pane is already on; unpinning rejoins
+        // the stack at whatever offset keeps it where it is.
+        var at = cellIndex(cell);
+        cell.pinned = !cell.pinned;
+        if (cell.pinned) cell.index = at;
+        else cell.offset = at - state.index[cell.plane];
         syncCellControls();
         renderCell(i);
       });
@@ -2459,11 +2506,13 @@
   function setCellIndex(i, index) {
     var cell = state.cells[i];
     if (!cell || !state.volume || cell.plane === "vr") return;
-    if (cell.linked) {
-      setPlaneIndex(cell.plane, index);
+    var count = V.planeCount(state.volume, cell.plane);
+    if (!cell.pinned) {
+      // Move the shared cut so every unpinned pane on this plane follows,
+      // keeping its offset, and this pane lands where it was asked to.
+      setPlaneIndex(cell.plane, index - (cell.offset || 0));
       return;
     }
-    var count = V.planeCount(state.volume, cell.plane);
     var clamped = Math.max(0, Math.min(index, count - 1));
     if (clamped === cell.index) return;
     cell.index = clamped;
@@ -2705,6 +2754,31 @@
 
   /** Explain what the measurement units are based on. */
   /** Per-plane tilt readout, so the reslice angle is never implicit. */
+  /** Say what the stack setting is doing to the panes on screen. */
+  function updateStackNote() {
+    if (!dom.stackNote) return;
+    var counts = {};
+    state.cells.forEach(function (c) {
+      if (c.plane !== "vr") counts[c.plane] = (counts[c.plane] || 0) + 1;
+    });
+    var most = Math.max.apply(null, [1].concat(Object.keys(counts).map(function (k) { return counts[k]; })));
+    if (most < 2) {
+      dom.stackNote.textContent =
+        "No plane is repeated in this layout, so there is nothing to stack. " +
+        "Try the 2\u00d73 or 4\u00d74 grid.";
+      return;
+    }
+    if (!state.stackStep) {
+      dom.stackNote.textContent =
+        "Repeated panes all show the same slice. Scrolling moves them together.";
+      return;
+    }
+    var span = (most - 1) * state.stackStep;
+    dom.stackNote.textContent =
+      "Repeated panes step " + state.stackStep + " slice" + (state.stackStep > 1 ? "s" : "") +
+      " apart, covering " + (span + 1) + " slices at a time. Scrolling any pane moves the whole run.";
+  }
+
   var obliqueInfoKey = null;
 
   function updateObliqueInfo() {
@@ -2781,6 +2855,7 @@
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     updateWLInputs();
     updateBoneStatus();
+    updateStackNote();
     updateObliqueInfo();
     renderMeasurementList();
     syncSliders();
@@ -2821,6 +2896,7 @@
     setActiveCell: setActiveCell,
     cellIndex: cellIndex,
     cellWindow: cellWindow,
+    restack: restack,
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
     cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
     cellCount: function () { return cellEls.length; },

@@ -180,6 +180,21 @@
           </section>
 
           <section class="tool-section">
+            <h4>Panes</h4>
+            <div class="field-row">
+              <label for="stackStep">Stack</label>
+              <select id="stackStep">
+                <option value="0">Same slice</option>
+                <option value="1" selected>Every slice</option>
+                <option value="2">Every 2nd</option>
+                <option value="5">Every 5th</option>
+                <option value="10">Every 10th</option>
+              </select>
+            </div>
+            <p class="hint-text" id="stackNote"></p>
+          </section>
+
+          <section class="tool-section">
             <h4>Oblique MPR</h4>
             <div class="meta-table" id="obliqueInfo">
               <p class="muted small">No volume built.</p>

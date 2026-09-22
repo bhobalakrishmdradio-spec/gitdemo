@@ -285,6 +285,7 @@ details.settings-panel[open] summary { margin-bottom: 12px; }
 .txn-amount { font-weight: 700; font-size: 0.95rem; }
 .txn-amount.income { color: var(--income); }
 .txn-amount.expense { color: var(--expense); }
+.txn-amount.transfer { color: var(--primary); }
 
 .filters {
   display: flex;
@@ -440,18 +441,62 @@ details.settings-panel[open] summary { margin-bottom: 12px; }
 .type-toggle { flex-direction: row; gap: 8px; }
 .type-btn {
   flex: 1;
-  padding: 10px;
+  padding: 10px 6px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface-2);
   cursor: pointer;
   font-weight: 600;
   color: var(--text-muted);
+  font-size: 0.88rem;
 }
 .type-btn.active[data-type="expense"] { background: var(--expense); color: #fff; border-color: var(--expense); }
 .type-btn.active[data-type="income"] { background: var(--income); color: #fff; border-color: var(--income); }
+.type-btn.active[data-type="transfer"] { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+.field-error { color: var(--expense); font-size: 0.78rem; margin: 2px 0 0; }
+.field-error[hidden] { display: none; }
 
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+
+/* ---------- Accounts / Categories management ---------- */
+.account-balance-list { display: flex; flex-direction: column; gap: 8px; }
+.account-balance-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 0.9rem;
+}
+.account-balance-row .acct-name { font-weight: 600; }
+.account-balance-row .acct-type { color: var(--text-muted); font-size: 0.78rem; margin-left: 6px; }
+.account-balance-row .acct-balance { font-weight: 700; }
+
+.manage-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.manage-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 0.88rem; flex-wrap: wrap;
+}
+.manage-row.archived { opacity: 0.55; }
+.manage-row .manage-name { font-weight: 600; }
+.manage-row .manage-meta { color: var(--text-muted); font-size: 0.78rem; }
+.manage-row .manage-actions { display: flex; gap: 8px; margin-left: auto; }
+.manage-row .manage-actions button {
+  background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+  cursor: pointer; color: var(--text-muted); font-size: 0.78rem;
+}
+.manage-row .manage-actions button:hover { border-color: var(--primary); color: var(--primary); }
+.manage-row input.manage-edit-input {
+  padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  width: 110px; font-size: 0.85rem;
+}
+
+.inline-add-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.inline-add-form input, .inline-add-form select {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.85rem;
+}
+.inline-add-form input[type="text"] { flex: 1; min-width: 140px; }
+
+.restore-summary { list-style: none; padding: 0; margin: 0 0 16px; font-size: 0.88rem; }
+.restore-summary li { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.restore-summary li:last-child { border-bottom: none; }
 
 /* ---------- App Lock screen ---------- */
 .lock-screen {

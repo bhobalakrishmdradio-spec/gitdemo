@@ -3,37 +3,171 @@
 /* =========================================================
    MyFinances — a fully client-side personal finance tracker
    All data lives in localStorage. No backend, no build step.
+   Schema v2: multiple accounts, transfers, integer-paise money,
+   per-month budgets, English/Tamil UI.
    ========================================================= */
 
-/* ---------- Category catalog ---------- */
-const CATEGORIES = {
-  income: [
-    { key: 'salary', label: 'Salary', icon: '💼', color: '#16a34a' },
-    { key: 'freelance', label: 'Freelance', icon: '🧑‍💻', color: '#22c55e' },
-    { key: 'investment', label: 'Investment', icon: '📈', color: '#059669' },
-    { key: 'gift', label: 'Gift', icon: '🎁', color: '#10b981' },
-    { key: 'other_income', label: 'Other Income', icon: '➕', color: '#34d399' },
-  ],
-  expense: [
-    { key: 'food', label: 'Food & Dining', icon: '🍔', color: '#f97316' },
-    { key: 'rent', label: 'Rent & Housing', icon: '🏠', color: '#6366f1' },
-    { key: 'utilities', label: 'Utilities', icon: '💡', color: '#eab308' },
-    { key: 'transportation', label: 'Transportation', icon: '🚗', color: '#0ea5e9' },
-    { key: 'entertainment', label: 'Entertainment', icon: '🎬', color: '#ec4899' },
-    { key: 'shopping', label: 'Shopping', icon: '🛍️', color: '#a855f7' },
-    { key: 'health', label: 'Health & Fitness', icon: '💊', color: '#ef4444' },
-    { key: 'education', label: 'Education', icon: '📚', color: '#14b8a6' },
-    { key: 'insurance', label: 'Insurance', icon: '🛡️', color: '#64748b' },
-    { key: 'other_expense', label: 'Other', icon: '📦', color: '#9ca3af' },
-  ],
+const SCHEMA_VERSION = 2;
+const STORAGE_KEY = 'myfinances_state_v1';
+const PREFS_KEY = 'myfinances_prefs_v1';
+const LOCK_META_KEY = 'myfinances_lock_meta_v1';
+const LOCK_CHECK_PLAINTEXT = 'myfinances-lock-v1';
+const PRE_V2_BACKUP_KEY = 'myfinances_state_v1_pre_v2_backup';
+
+const PAYMENT_METHODS = [
+  { id: 'cash', labelKey: 'pay.cash' },
+  { id: 'upi', labelKey: 'pay.upi' },
+  { id: 'card', labelKey: 'pay.card' },
+  { id: 'bank_transfer', labelKey: 'pay.bankTransfer' },
+  { id: 'other', labelKey: 'pay.other' },
+];
+
+/* ---------- Translations ---------- */
+const TRANSLATIONS = {
+  en: {
+    'nav.dashboard': '📊 Dashboard', 'nav.transactions': '📒 Transactions', 'nav.budgets': '🎯 Budgets', 'nav.settings': '⚙️ Settings',
+    'nav.dashboardTitle': 'Dashboard', 'nav.transactionsTitle': 'Transactions', 'nav.budgetsTitle': 'Budgets', 'nav.settingsTitle': 'Settings',
+    'lock.now': '🔒 Lock now',
+    'txn.add': '+ Add Transaction', 'txn.editTitle': 'Edit Transaction',
+    'txn.income': 'Income', 'txn.expense': 'Expense', 'txn.transfer': 'Transfer',
+    'txn.allTypes': 'All Types', 'txn.allAccounts': 'All Accounts', 'txn.allCategories': 'All Categories',
+    'txn.search': 'Search description...', 'txn.clear': 'Clear',
+    'txn.date': 'Date', 'txn.description': 'Description', 'txn.account': 'Account', 'txn.category': 'Category',
+    'txn.type': 'Type', 'txn.amount': 'Amount', 'txn.empty': 'No transactions found. Add your first one!',
+    'txn.fromAccount': 'From account', 'txn.toAccount': 'To account', 'txn.paymentMethod': 'Payment method',
+    'txn.notes': 'Notes (optional)', 'txn.amountError': 'Enter an amount with at most 2 decimal places',
+    'backup.later': 'Remind me later', 'backup.exportNow': 'Export now',
+    'dash.totalBalance': 'Total Balance', 'dash.incomeMonth': 'Income (this month)', 'dash.expenseMonth': 'Expenses (this month)',
+    'dash.savingsRate': 'Savings Rate', 'dash.accounts': 'Accounts', 'dash.manage': 'Manage →',
+    'dash.spendingByCategory': 'Spending by Category', 'dash.monthlyTrend': 'Monthly Trend',
+    'dash.recentTxns': 'Recent Transactions', 'dash.viewAll': 'View all →',
+    'budget.title': 'Monthly Budgets by Category',
+    'budget.subtitle': 'Set a monthly spending limit per expense category for the selected month — each month keeps its own limits.',
+    'budget.noBudget': 'No budget set', 'budget.overBy': 'Over budget by',
+    'settings.preferences': 'Preferences', 'settings.language': 'Language', 'settings.currency': 'Currency',
+    'settings.currencyValue': 'Indian Rupee (₹) — amounts are stored in paise',
+    'settings.accounts': 'Accounts',
+    'settings.accountsSubtitle': "Cash or bank accounts you track. Each has its own opening balance; archiving keeps its history but hides it from new entries.",
+    'settings.accountName': 'Account name', 'settings.openingBalance': 'Opening balance', 'settings.addAccount': '+ Add account',
+    'settings.cash': 'Cash', 'settings.bank': 'Bank',
+    'settings.categories': 'Categories',
+    'settings.categoriesSubtitle': 'Manage income and expense categories. Archiving keeps past transactions intact but hides the category from new entries.',
+    'settings.categoryName': 'Category name', 'settings.addCategory': '+ Add category',
+    'settings.dataManagement': 'Data Management',
+    'settings.dataSubtitle': 'All your data is stored locally in this browser (localStorage) — nothing is sent to a server.',
+    'settings.exportJson': '⬇️ Export Data (JSON)', 'settings.exportCsv': '⬇️ Export as CSV',
+    'settings.importJson': '⬆️ Import Data (JSON)', 'settings.resetAll': '🗑️ Reset All Data',
+    'settings.appLock': 'App Lock',
+    'settings.appLockSubtitle': 'Require a PIN to open MyFinances, and encrypt your data at rest on this device.',
+    'settings.autoLockAfter': 'Auto-lock after', 'settings.autoLockNever': 'Never (manual lock only)',
+    'settings.backupReminders': 'Backup Reminders',
+    'settings.backupSubtitle': "Get a reminder banner on the dashboard when it's time to export a fresh backup.",
+    'settings.remindMe': 'Remind me', 'settings.off': 'Off', 'settings.every3days': 'Every 3 days',
+    'settings.weekly': 'Weekly', 'settings.every2weeks': 'Every 2 weeks', 'settings.monthly': 'Monthly',
+    'settings.sampleData': 'Sample Data',
+    'settings.sampleSubtitle': 'New here? Load a few example transactions to see how MyFinances works.',
+    'settings.loadSample': 'Load Sample Data',
+    'common.cancel': 'Cancel', 'common.save': 'Save Transaction',
+    'restore.title': 'Restore from backup?',
+    'restore.subtitle': "This will replace your current data. A recovery copy of what's on this device now will be kept until you close the app.",
+    'restore.confirm': 'Replace my data', 'restore.accounts': 'Accounts', 'restore.categories': 'Categories',
+    'restore.transactions': 'Transactions', 'restore.budgets': 'Budgets', 'restore.dateRange': 'Date range',
+    'pay.cash': 'Cash', 'pay.upi': 'UPI', 'pay.card': 'Card', 'pay.bankTransfer': 'Bank transfer', 'pay.other': 'Other',
+    'toast.txnAdded': 'Transaction added', 'toast.txnUpdated': 'Transaction updated', 'toast.txnDeleted': 'Transaction deleted',
+    'toast.undo': 'Undo', 'toast.fillRequired': 'Please fill in all required fields',
+    'toast.amountInvalid': 'Enter a valid amount (at most 2 decimal places)',
+    'toast.transferSameAccount': 'From and To accounts must be different',
+    'toast.needTwoAccounts': 'Add a second account first to make a transfer',
+    'toast.needOneAccount': 'You need at least one active account',
+    'toast.needOneCategory': 'You need at least one active category of this type',
+    'toast.acctAdded': 'Account added', 'toast.acctArchived': 'Account archived', 'toast.acctRestored': 'Account restored',
+    'toast.catAdded': 'Category added', 'toast.catArchived': 'Category archived', 'toast.catRestored': 'Category restored',
+    'toast.budgetUpdated': 'Budget updated', 'toast.dataExported': 'Data exported', 'toast.csvExported': 'CSV exported',
+    'toast.noTxnsToExport': 'No transactions to export yet', 'toast.dataImported': 'Data restored successfully',
+    'toast.dataCleared': 'All data cleared', 'toast.sampleLoaded': 'Sample data loaded',
+    'toast.storageBlocked': "Couldn't save - your browser is blocking local storage",
+    'toast.invalidBackup': "That doesn't look like a MyFinances backup file",
+  },
+  ta: {
+    'nav.dashboard': '📊 முகப்பு', 'nav.transactions': '📒 பரிவர்த்தனைகள்', 'nav.budgets': '🎯 பட்ஜெட்', 'nav.settings': '⚙️ அமைப்புகள்',
+    'nav.dashboardTitle': 'முகப்பு', 'nav.transactionsTitle': 'பரிவர்த்தனைகள்', 'nav.budgetsTitle': 'பட்ஜெட்', 'nav.settingsTitle': 'அமைப்புகள்',
+    'lock.now': '🔒 இப்போது பூட்டு',
+    'txn.add': '+ பரிவர்த்தனை சேர்', 'txn.editTitle': 'பரிவர்த்தனையைத் திருத்து',
+    'txn.income': 'வரவு', 'txn.expense': 'செலவு', 'txn.transfer': 'பரிமாற்றம்',
+    'txn.allTypes': 'அனைத்து வகைகளும்', 'txn.allAccounts': 'அனைத்து கணக்குகளும்', 'txn.allCategories': 'அனைத்து வகைப்பாடுகளும்',
+    'txn.search': 'விவரத்தைத் தேடு...', 'txn.clear': 'அழி',
+    'txn.date': 'தேதி', 'txn.description': 'விவரம்', 'txn.account': 'கணக்கு', 'txn.category': 'வகை',
+    'txn.type': 'வகைப்பாடு', 'txn.amount': 'தொகை', 'txn.empty': 'பரிவர்த்தனைகள் இல்லை. உங்கள் முதல் பரிவர்த்தனையைச் சேர்க்கவும்!',
+    'txn.fromAccount': 'இருந்து கணக்கு', 'txn.toAccount': 'செல்லும் கணக்கு', 'txn.paymentMethod': 'கட்டண முறை',
+    'txn.notes': 'குறிப்புகள் (விருப்பம்)', 'txn.amountError': 'அதிகபட்சம் 2 தசம இடங்களுடன் தொகையை உள்ளிடவும்',
+    'backup.later': 'பின்னர் நினைவூட்டு', 'backup.exportNow': 'இப்போது ஏற்றுமதி செய்',
+    'dash.totalBalance': 'மொத்த இருப்பு', 'dash.incomeMonth': 'வரவு (இந்த மாதம்)', 'dash.expenseMonth': 'செலவு (இந்த மாதம்)',
+    'dash.savingsRate': 'சேமிப்பு விகிதம்', 'dash.accounts': 'கணக்குகள்', 'dash.manage': 'நிர்வகி →',
+    'dash.spendingByCategory': 'வகை வாரியான செலவு', 'dash.monthlyTrend': 'மாதாந்திர போக்கு',
+    'dash.recentTxns': 'சமீபத்திய பரிவர்த்தனைகள்', 'dash.viewAll': 'அனைத்தையும் காண்க →',
+    'budget.title': 'வகை வாரியான மாத பட்ஜெட்',
+    'budget.subtitle': 'தேர்ந்தெடுக்கப்பட்ட மாதத்திற்கு ஒவ்வொரு வகைக்கும் செலவு வரம்பை அமைக்கவும் — ஒவ்வொரு மாதமும் தனித்தனி வரம்புகளைக் கொண்டிருக்கும்.',
+    'budget.noBudget': 'பட்ஜெட் அமைக்கப்படவில்லை', 'budget.overBy': 'பட்ஜெட்டை மீறியது',
+    'settings.preferences': 'விருப்பத்தேர்வுகள்', 'settings.language': 'மொழி', 'settings.currency': 'நாணயம்',
+    'settings.currencyValue': 'இந்திய ரூபாய் (₹) — தொகைகள் பைசாவில் சேமிக்கப்படுகின்றன',
+    'settings.accounts': 'கணக்குகள்',
+    'settings.accountsSubtitle': 'நீங்கள் கண்காணிக்கும் பண/வங்கிக் கணக்குகள். ஒவ்வொன்றுக்கும் அதன் சொந்த தொடக்க இருப்பு உண்டு; காப்பகப்படுத்துவது வரலாற்றை வைத்திருக்கும், புதிய உள்ளீடுகளில் இருந்து மறைக்கும்.',
+    'settings.accountName': 'கணக்கு பெயர்', 'settings.openingBalance': 'தொடக்க இருப்பு', 'settings.addAccount': '+ கணக்கு சேர்',
+    'settings.cash': 'பணம்', 'settings.bank': 'வங்கி',
+    'settings.categories': 'வகைகள்',
+    'settings.categoriesSubtitle': 'வரவு மற்றும் செலவு வகைகளை நிர்வகிக்கவும். காப்பகப்படுத்துவது பழைய பரிவர்த்தனைகளை பாதிக்காது, புதிய உள்ளீடுகளில் இருந்து மட்டும் மறைக்கும்.',
+    'settings.categoryName': 'வகை பெயர்', 'settings.addCategory': '+ வகை சேர்',
+    'settings.dataManagement': 'தரவு மேலாண்மை',
+    'settings.dataSubtitle': 'உங்கள் தரவு அனைத்தும் இந்த உலாவியில் (localStorage) உள்ளூரில் சேமிக்கப்படுகிறது — எதுவும் சர்வருக்கு அனுப்பப்படாது.',
+    'settings.exportJson': '⬇️ தரவை ஏற்றுமதி செய் (JSON)', 'settings.exportCsv': '⬇️ CSV ஆக ஏற்றுமதி செய்',
+    'settings.importJson': '⬆️ தரவை இறக்குமதி செய் (JSON)', 'settings.resetAll': '🗑️ அனைத்து தரவையும் அழி',
+    'settings.appLock': 'பயன்பாட்டு பூட்டு',
+    'settings.appLockSubtitle': 'MyFinances-ஐ திறக்க PIN தேவைப்படுத்தி, இந்த சாதனத்தில் உங்கள் தரவை குறியாக்கம் செய்யும்.',
+    'settings.autoLockAfter': 'இதற்குப் பிறகு தானாக பூட்டு', 'settings.autoLockNever': 'ஒருபோதும் இல்லை (கைமுறை பூட்டு மட்டும்)',
+    'settings.backupReminders': 'காப்புப்பிரதி நினைவூட்டல்கள்',
+    'settings.backupSubtitle': 'புதிய காப்புப்பிரதியை ஏற்றுமதி செய்ய வேண்டிய நேரத்தில் டாஷ்போர்டில் நினைவூட்டல் பேனரைப் பெறுங்கள்.',
+    'settings.remindMe': 'நினைவூட்டு', 'settings.off': 'நிறுத்தப்பட்டது', 'settings.every3days': 'ஒவ்வொரு 3 நாட்களும்',
+    'settings.weekly': 'வாரந்தோறும்', 'settings.every2weeks': 'ஒவ்வொரு 2 வாரங்களும்', 'settings.monthly': 'மாதந்தோறும்',
+    'settings.sampleData': 'மாதிரி தரவு',
+    'settings.sampleSubtitle': 'புதியவரா? MyFinances எப்படி செயல்படுகிறது என்று பார்க்க சில மாதிரி பரிவர்த்தனைகளை ஏற்றவும்.',
+    'settings.loadSample': 'மாதிரி தரவை ஏற்று',
+    'common.cancel': 'ரத்துசெய்', 'common.save': 'பரிவர்த்தனையை சேமி',
+    'restore.title': 'காப்புப்பிரதியிலிருந்து மீட்டமைக்கவா?',
+    'restore.subtitle': 'இது உங்கள் தற்போதைய தரவை மாற்றும். இந்த சாதனத்தில் இப்போது உள்ளதன் மீட்பு நகல் பயன்பாடு மூடப்படும் வரை வைக்கப்படும்.',
+    'restore.confirm': 'எனது தரவை மாற்று', 'restore.accounts': 'கணக்குகள்', 'restore.categories': 'வகைகள்',
+    'restore.transactions': 'பரிவர்த்தனைகள்', 'restore.budgets': 'பட்ஜெட்கள்', 'restore.dateRange': 'தேதி வரம்பு',
+    'pay.cash': 'பணம்', 'pay.upi': 'UPI', 'pay.card': 'அட்டை', 'pay.bankTransfer': 'வங்கி பரிமாற்றம்', 'pay.other': 'மற்றவை',
+    'toast.txnAdded': 'பரிவர்த்தனை சேர்க்கப்பட்டது', 'toast.txnUpdated': 'பரிவர்த்தனை புதுப்பிக்கப்பட்டது',
+    'toast.txnDeleted': 'பரிவர்த்தனை நீக்கப்பட்டது',
+    'toast.undo': 'செயல்தவிர்', 'toast.fillRequired': 'தேவையான அனைத்து புலங்களையும் நிரப்பவும்',
+    'toast.amountInvalid': 'சரியான தொகையை உள்ளிடவும் (அதிகபட்சம் 2 தசம இடங்கள்)',
+    'toast.transferSameAccount': 'இருந்து மற்றும் செல்லும் கணக்குகள் வேறுபட்டதாக இருக்க வேண்டும்',
+    'toast.needTwoAccounts': 'பரிமாற்றம் செய்ய முதலில் இரண்டாவது கணக்கைச் சேர்க்கவும்',
+    'toast.needOneAccount': 'குறைந்தது ஒரு செயலில் உள்ள கணக்கு தேவை',
+    'toast.needOneCategory': 'இந்த வகையில் குறைந்தது ஒரு செயலில் உள்ள வகை தேவை',
+    'toast.acctAdded': 'கணக்கு சேர்க்கப்பட்டது', 'toast.acctArchived': 'கணக்கு காப்பகப்படுத்தப்பட்டது',
+    'toast.acctRestored': 'கணக்கு மீட்டெடுக்கப்பட்டது',
+    'toast.catAdded': 'வகை சேர்க்கப்பட்டது', 'toast.catArchived': 'வகை காப்பகப்படுத்தப்பட்டது',
+    'toast.catRestored': 'வகை மீட்டெடுக்கப்பட்டது',
+    'toast.budgetUpdated': 'பட்ஜெட் புதுப்பிக்கப்பட்டது', 'toast.dataExported': 'தரவு ஏற்றுமதி செய்யப்பட்டது',
+    'toast.csvExported': 'CSV ஏற்றுமதி செய்யப்பட்டது',
+    'toast.noTxnsToExport': 'இன்னும் ஏற்றுமதி செய்ய பரிவர்த்தனைகள் இல்லை', 'toast.dataImported': 'தரவு வெற்றிகரமாக மீட்டமைக்கப்பட்டது',
+    'toast.dataCleared': 'அனைத்து தரவும் அழிக்கப்பட்டது', 'toast.sampleLoaded': 'மாதிரி தரவு ஏற்றப்பட்டது',
+    'toast.storageBlocked': 'சேமிக்க முடியவில்லை - உங்கள் உலாவி உள்ளூர் சேமிப்பகத்தைத் தடுக்கிறது',
+    'toast.invalidBackup': 'இது MyFinances காப்புப்பிரதி கோப்பு போல் தெரியவில்லை',
+  },
 };
 
-const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£', INR: '₹', JPY: '¥', CAD: '$', AUD: '$' };
+function i18n(key) {
+  const lang = (typeof state !== 'undefined' && state && state.settings && state.settings.language) || 'en';
+  const dict = TRANSLATIONS[lang] || TRANSLATIONS.en;
+  return dict[key] ?? TRANSLATIONS.en[key] ?? key;
+}
 
-const STORAGE_KEY = 'myfinances_state_v1';
-const PREFS_KEY = 'myfinances_prefs_v1';       // plaintext, non-sensitive (theme only) - readable before unlock
-const LOCK_META_KEY = 'myfinances_lock_meta_v1'; // plaintext meta (salt, PIN-check ciphertext) - no financial data
-const LOCK_CHECK_PLAINTEXT = 'myfinances-lock-v1';
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = i18n(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => { el.placeholder = i18n(el.dataset.i18nPlaceholder); });
+}
 
 /* ---------- App Lock: crypto helpers (Web Crypto API) ---------- */
 function cryptoAvailable() {
@@ -119,106 +253,53 @@ function saveLockMeta(meta) {
     localStorage.setItem(LOCK_META_KEY, JSON.stringify(meta));
   } catch (e) {
     console.error('Save lock meta failed', e);
-    showToast("Couldn't save - your browser is blocking local storage");
+    showToast(i18n('toast.storageBlocked'));
   }
 }
 
 let lockMeta = loadLockMeta();
-let encryptionKey = null;     // in-memory only; never persisted
-let isLocked = false;         // true while the lock screen is covering the app
-let pendingEncryptedBlob = null; // { cipher, iv } read at boot, decrypted once the PIN is entered
+let encryptionKey = null;
+let isLocked = false;
+let pendingEncryptedBlob = null;
 let autoLockTimer = null;
 
-/* ---------- State ---------- */
-let state = loadState();
-if (isLocked) {
-  // The theme lives in a small plaintext prefs entry so the lock screen
-  // itself can theme correctly before the PIN has decrypted anything else.
-  const prefs = loadPrefs();
-  if (prefs.theme) state.settings.theme = prefs.theme;
+/* ---------- Money: integer paise, Indian grouping ---------- */
+function parseRupeesToPaise(str) {
+  const s = String(str).trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const parts = s.split('.');
+  const rupees = parseInt(parts[0], 10);
+  const paiseStr = (parts[1] || '').padEnd(2, '0');
+  return rupees * 100 + parseInt(paiseStr, 10);
 }
 
-function defaultState() {
-  return {
-    transactions: [],
-    budgets: {},           // { categoryKey: monthlyLimit }
-    settings: {
-      currency: 'USD',
-      theme: 'light',
-      lastExportAt: null,        // timestamp (ms) of the last successful export
-      reminderDays: 7,           // 0 = reminders off
-      reminderSnoozedUntil: null, // timestamp (ms); banner hidden until then
-    },
-  };
+function paiseToRupeesString(paise) {
+  const abs = Math.abs(paise || 0);
+  const rupees = Math.floor(abs / 100);
+  const paisePart = String(abs % 100).padStart(2, '0');
+  return `${rupees}.${paisePart}`;
 }
 
-function normalizeState(parsed) {
-  return {
-    transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-    budgets: parsed.budgets && typeof parsed.budgets === 'object' ? parsed.budgets : {},
-    settings: Object.assign(defaultState().settings, parsed.settings || {}),
-  };
+function indianGroup(n) {
+  const s = String(n);
+  if (s.length <= 3) return s;
+  const last3 = s.slice(-3);
+  const rest = s.slice(0, -3);
+  const grouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+  return `${grouped},${last3}`;
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.encrypted) {
-      // Locked: can't decrypt without the PIN yet. Stash the ciphertext and
-      // hand back an empty shell; the lock screen fills this in on unlock.
-      pendingEncryptedBlob = { cipher: parsed.cipher, iv: parsed.iv };
-      isLocked = true;
-      return defaultState();
-    }
-    return normalizeState(parsed);
-  } catch (e) {
-    console.error('Failed to load saved data, starting fresh.', e);
-    return defaultState();
-  }
+function formatINR(paise) {
+  const sign = paise < 0 ? '-' : '';
+  const abs = Math.abs(paise || 0);
+  const rupees = Math.floor(abs / 100);
+  const paisePart = String(abs % 100).padStart(2, '0');
+  return `${sign}₹${indianGroup(rupees)}.${paisePart}`;
 }
 
-function saveState() {
-  // Never let a storage failure (e.g. Safari Private Browsing, which throws
-  // on every localStorage.setItem, or a full quota) propagate out of here:
-  // the caller has already updated in-memory `state` and needs to keep going
-  // (close the modal, refresh the view) even if persistence itself fails.
-  if (lockMeta.enabled && encryptionKey) {
-    // Encrypted persistence is necessarily async (Web Crypto has no sync API).
-    // The in-memory `state` is already updated by the caller, so the UI stays
-    // correct immediately; this just needs to land in storage shortly after.
-    encryptWithKey(encryptionKey, { transactions: state.transactions, budgets: state.budgets, settings: state.settings })
-      .then((blob) => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ encrypted: true, cipher: blob.cipher, iv: blob.iv }));
-      })
-      .catch((err) => {
-        console.error('Encrypted save failed', err);
-        showToast("Couldn't save - your browser is blocking local storage");
-      });
-  } else {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      console.error('Save failed', err);
-      showToast("Couldn't save - your browser is blocking local storage");
-    }
-  }
-}
-
-/* ---------- Helpers ---------- */
+/* ---------- State: accounts, categories, transactions, budgets ---------- */
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-function formatCurrency(amount) {
-  const symbol = CURRENCY_SYMBOLS[state.settings.currency] || '$';
-  const sign = amount < 0 ? '-' : '';
-  return `${sign}${symbol}${Math.abs(amount).toFixed(2)}`;
-}
-
-function monthKey(dateStr) {
-  return dateStr.slice(0, 7); // "YYYY-MM"
 }
 
 function todayStr() {
@@ -229,12 +310,172 @@ function currentMonthKey() {
   return todayStr().slice(0, 7);
 }
 
-function categoryInfo(key) {
-  return (
-    CATEGORIES.income.find((c) => c.key === key) ||
-    CATEGORIES.expense.find((c) => c.key === key) ||
-    { key, label: key, icon: '❓', color: '#9ca3af' }
-  );
+function seedCategories() {
+  return [
+    { id: 'salary', name: 'Salary', type: 'income', icon: '💼', color: '#16a34a', archived: false },
+    { id: 'freelance', name: 'Freelance', type: 'income', icon: '🧑‍💻', color: '#22c55e', archived: false },
+    { id: 'investment', name: 'Investment', type: 'income', icon: '📈', color: '#059669', archived: false },
+    { id: 'gift', name: 'Gift', type: 'income', icon: '🎁', color: '#10b981', archived: false },
+    { id: 'other_income', name: 'Other Income', type: 'income', icon: '➕', color: '#34d399', archived: false },
+    { id: 'food', name: 'Food & Dining', type: 'expense', icon: '🍔', color: '#f97316', archived: false },
+    { id: 'rent', name: 'Rent & Housing', type: 'expense', icon: '🏠', color: '#6366f1', archived: false },
+    { id: 'utilities', name: 'Utilities', type: 'expense', icon: '💡', color: '#eab308', archived: false },
+    { id: 'transportation', name: 'Transportation', type: 'expense', icon: '🚗', color: '#0ea5e9', archived: false },
+    { id: 'entertainment', name: 'Entertainment', type: 'expense', icon: '🎬', color: '#ec4899', archived: false },
+    { id: 'shopping', name: 'Shopping', type: 'expense', icon: '🛍️', color: '#a855f7', archived: false },
+    { id: 'health', name: 'Health & Fitness', type: 'expense', icon: '💊', color: '#ef4444', archived: false },
+    { id: 'education', name: 'Education', type: 'expense', icon: '📚', color: '#14b8a6', archived: false },
+    { id: 'insurance', name: 'Insurance', type: 'expense', icon: '🛡️', color: '#64748b', archived: false },
+    { id: 'other_expense', name: 'Other', type: 'expense', icon: '📦', color: '#9ca3af', archived: false },
+  ];
+}
+
+function defaultState() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    accounts: [{ id: 'cash', name: 'Cash', type: 'cash', currency: 'INR', openingBalancePaise: 0, openingDate: todayStr(), archived: false }],
+    categories: seedCategories(),
+    transactions: [],
+    budgets: [],
+    settings: {
+      theme: 'light',
+      language: 'en',
+      lastExportAt: null,
+      reminderDays: 7,
+      reminderSnoozedUntil: null,
+    },
+  };
+}
+
+function normalizeState(parsed) {
+  const base = defaultState();
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    accounts: Array.isArray(parsed.accounts) && parsed.accounts.length ? parsed.accounts : base.accounts,
+    categories: Array.isArray(parsed.categories) && parsed.categories.length ? parsed.categories : base.categories,
+    transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+    budgets: Array.isArray(parsed.budgets) ? parsed.budgets : [],
+    settings: Object.assign(base.settings, parsed.settings || {}),
+  };
+}
+
+// Migrates the old single-account, float-dollar, unversioned schema to v2.
+// Never mutates `parsed`; always returns a brand-new state object.
+function migrateFromV1(parsed) {
+  const oldTxns = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+  const oldBudgets = parsed.budgets && typeof parsed.budgets === 'object' && !Array.isArray(parsed.budgets) ? parsed.budgets : {};
+  const oldSettings = parsed.settings || {};
+
+  let earliestDate = null;
+  oldTxns.forEach((t) => { if (t.date && (!earliestDate || t.date < earliestDate)) earliestDate = t.date; });
+
+  const account = { id: 'cash', name: 'Cash', type: 'cash', currency: 'INR', openingBalancePaise: 0, openingDate: earliestDate || todayStr(), archived: false };
+  const categories = seedCategories();
+  const validCategoryIds = new Set(categories.map((c) => c.id));
+
+  const transactions = oldTxns.map((t) => {
+    const type = t.type === 'income' ? 'income' : 'expense';
+    let categoryId = t.category;
+    if (!validCategoryIds.has(categoryId)) categoryId = type === 'income' ? 'other_income' : 'other_expense';
+    return {
+      id: t.id || uid(),
+      type,
+      amountPaise: Math.max(0, Math.round((Number(t.amount) || 0) * 100)),
+      date: t.date || todayStr(),
+      accountId: 'cash',
+      categoryId,
+      paymentMethod: 'cash',
+      description: t.description || '',
+      notes: t.notes || '',
+      receiptImage: t.receiptImage,
+      createdAt: t.createdAt || Date.now(),
+      updatedAt: t.createdAt || Date.now(),
+    };
+  });
+
+  const mKey = currentMonthKey();
+  const budgets = Object.entries(oldBudgets)
+    .filter(([, amt]) => typeof amt === 'number' && amt > 0)
+    .map(([catId, amt]) => ({
+      id: uid(),
+      categoryId: validCategoryIds.has(catId) ? catId : 'other_expense',
+      month: mKey,
+      limitPaise: Math.round(amt * 100),
+    }));
+
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    accounts: [account],
+    categories,
+    transactions,
+    budgets,
+    settings: {
+      theme: oldSettings.theme === 'dark' ? 'dark' : 'light',
+      language: 'en',
+      lastExportAt: oldSettings.lastExportAt || null,
+      reminderDays: typeof oldSettings.reminderDays === 'number' ? oldSettings.reminderDays : 7,
+      reminderSnoozedUntil: oldSettings.reminderSnoozedUntil || null,
+    },
+  };
+}
+
+function coerceLoadedState(parsed) {
+  if (!parsed || parsed.schemaVersion === SCHEMA_VERSION) return normalizeState(parsed || {});
+  return migrateFromV1(parsed);
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.encrypted) {
+      pendingEncryptedBlob = { cipher: parsed.cipher, iv: parsed.iv };
+      isLocked = true;
+      return defaultState();
+    }
+    if (parsed && parsed.schemaVersion !== SCHEMA_VERSION) {
+      // Migrating: keep an untouched copy of the pre-migration data as a safety net.
+      try { localStorage.setItem(PRE_V2_BACKUP_KEY, raw); } catch (e) { /* best effort */ }
+    }
+    return coerceLoadedState(parsed);
+  } catch (e) {
+    console.error('Failed to load saved data, starting fresh.', e);
+    return defaultState();
+  }
+}
+
+function saveState() {
+  // Never let a storage failure propagate out of here: the caller has already
+  // updated in-memory `state` and needs to keep going even if persistence fails.
+  if (lockMeta.enabled && encryptionKey) {
+    encryptWithKey(encryptionKey, state)
+      .then((blob) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ encrypted: true, cipher: blob.cipher, iv: blob.iv }));
+      })
+      .catch((err) => {
+        console.error('Encrypted save failed', err);
+        showToast(i18n('toast.storageBlocked'));
+      });
+  } else {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.error('Save failed', err);
+      showToast(i18n('toast.storageBlocked'));
+    }
+  }
+}
+
+let state = loadState();
+if (isLocked) {
+  const prefs = loadPrefs();
+  if (prefs.theme) state.settings.theme = prefs.theme;
+}
+
+/* ---------- Helpers ---------- */
+function monthKey(dateStr) {
+  return dateStr.slice(0, 7);
 }
 
 function formatDate(dateStr) {
@@ -245,6 +486,54 @@ function formatDate(dateStr) {
 function monthLabel(key) {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function escapeHTML(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+
+function accountInfo(id) {
+  return state.accounts.find((a) => a.id === id) || { id, name: id || '—', type: 'cash', archived: true };
+}
+
+function categoryInfo(id) {
+  return state.categories.find((c) => c.id === id) || { id, name: id || '—', type: 'expense', icon: '❓', color: '#9ca3af', archived: true };
+}
+
+function paymentMethodLabel(id) {
+  const m = PAYMENT_METHODS.find((p) => p.id === id);
+  return m ? i18n(m.labelKey) : (id || '');
+}
+
+function activeAccounts() {
+  return state.accounts.filter((a) => !a.archived);
+}
+
+function activeCategories(type) {
+  return state.categories.filter((c) => c.type === type && !c.archived);
+}
+
+// Balance = opening balance + income - expense + incoming transfers - outgoing transfers,
+// computed from transactions rather than an independently editable total.
+function accountBalancePaise(accountId) {
+  const acct = state.accounts.find((a) => a.id === accountId);
+  if (!acct) return 0;
+  let paise = acct.openingBalancePaise;
+  state.transactions.forEach((t) => {
+    if (t.type === 'income' && t.accountId === accountId) paise += t.amountPaise;
+    else if (t.type === 'expense' && t.accountId === accountId) paise -= t.amountPaise;
+    else if (t.type === 'transfer') {
+      if (t.fromAccountId === accountId) paise -= t.amountPaise;
+      if (t.toAccountId === accountId) paise += t.amountPaise;
+    }
+  });
+  return paise;
+}
+
+function totalBalancePaise() {
+  return activeAccounts().reduce((s, a) => s + accountBalancePaise(a.id), 0);
 }
 
 function showToast(msg, opts) {
@@ -282,7 +571,7 @@ function closePhotoLightbox() {
 
 /* ---------- Navigation ---------- */
 const views = ['dashboard', 'transactions', 'budgets', 'settings'];
-const viewTitles = { dashboard: 'Dashboard', transactions: 'Transactions', budgets: 'Budgets', settings: 'Settings' };
+const viewTitleKeys = { dashboard: 'nav.dashboardTitle', transactions: 'nav.transactionsTitle', budgets: 'nav.budgetsTitle', settings: 'nav.settingsTitle' };
 
 function switchView(view) {
   views.forEach((v) => {
@@ -291,11 +580,12 @@ function switchView(view) {
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.view === view);
   });
-  document.getElementById('viewTitle').textContent = viewTitles[view];
+  document.getElementById('viewTitle').textContent = i18n(viewTitleKeys[view]);
   renderBackupReminder();
   if (view === 'dashboard') renderDashboard();
-  if (view === 'transactions') renderTransactionsView();
+  if (view === 'transactions') { populateAccountFilter(); populateCategoryFilter(); renderTransactionsView(); }
   if (view === 'budgets') renderBudgetsView();
+  if (view === 'settings') { renderAccountManageList(); renderCategoryManageList(); }
 }
 
 /* ---------- Backup reminder ---------- */
@@ -330,7 +620,7 @@ function renderBackupReminder() {
 }
 
 function snoozeBackupReminder() {
-  state.settings.reminderSnoozedUntil = Date.now() + 2 * 86400000; // 2 days
+  state.settings.reminderSnoozedUntil = Date.now() + 2 * 86400000;
   saveState();
   renderBackupReminder();
   showToast("We'll remind you again in a couple of days");
@@ -340,6 +630,7 @@ function snoozeBackupReminder() {
 function renderDashboard() {
   const month = document.getElementById('chartMonthSelect').value || currentMonthKey();
   renderStatCards();
+  renderAccountBalances();
   renderCategoryChart(month);
   renderTrendChart();
   renderRecentTransactions();
@@ -349,17 +640,29 @@ function renderDashboard() {
 function renderStatCards() {
   const mKey = currentMonthKey();
   const monthTxns = state.transactions.filter((t) => monthKey(t.date) === mKey);
-  const income = monthTxns.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const expense = monthTxns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const totalBalance = state.transactions.reduce(
-    (s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0
-  );
-  const savingsRate = income > 0 ? Math.round(((income - expense) / income) * 100) : 0;
+  const incomeP = monthTxns.filter((t) => t.type === 'income').reduce((s, t) => s + t.amountPaise, 0);
+  const expenseP = monthTxns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0);
+  const totalP = totalBalancePaise();
+  const savingsRate = incomeP > 0 ? Math.round(((incomeP - expenseP) / incomeP) * 100) : 0;
 
-  document.getElementById('statBalance').textContent = formatCurrency(totalBalance);
-  document.getElementById('statIncome').textContent = formatCurrency(income);
-  document.getElementById('statExpense').textContent = formatCurrency(expense);
+  document.getElementById('statBalance').textContent = formatINR(totalP);
+  document.getElementById('statIncome').textContent = formatINR(incomeP);
+  document.getElementById('statExpense').textContent = formatINR(expenseP);
   document.getElementById('statSavingsRate').textContent = `${savingsRate}%`;
+}
+
+function renderAccountBalances() {
+  const container = document.getElementById('accountBalanceList');
+  const accounts = activeAccounts();
+  if (accounts.length === 0) {
+    container.innerHTML = `<p class="empty-state">${escapeHTML(i18n('settings.accountsSubtitle'))}</p>`;
+    return;
+  }
+  container.innerHTML = accounts.map((a) => `
+    <div class="account-balance-row">
+      <span><span class="acct-name">${escapeHTML(a.name)}</span><span class="acct-type">${a.type === 'cash' ? i18n('settings.cash') : i18n('settings.bank')}</span></span>
+      <span class="acct-balance">${formatINR(accountBalancePaise(a.id))}</span>
+    </div>`).join('');
 }
 
 function populateMonthSelect() {
@@ -371,7 +674,7 @@ function populateMonthSelect() {
   select.value = months.includes(prevValue) ? prevValue : currentMonthKey();
 }
 
-/* ---------- Canvas: category pie chart ---------- */
+/* ---------- Canvas: category pie chart (expenses only; transfers excluded) ---------- */
 function renderCategoryChart(mKey) {
   const canvas = document.getElementById('categoryChart');
   const ctx = canvas.getContext('2d');
@@ -379,7 +682,7 @@ function renderCategoryChart(mKey) {
 
   const expenses = state.transactions.filter((t) => t.type === 'expense' && monthKey(t.date) === mKey);
   const totals = {};
-  expenses.forEach((t) => { totals[t.category] = (totals[t.category] || 0) + t.amount; });
+  expenses.forEach((t) => { totals[t.categoryId] = (totals[t.categoryId] || 0) + t.amountPaise; });
   const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
   const legend = document.getElementById('chartLegend');
 
@@ -398,8 +701,8 @@ function renderCategoryChart(mKey) {
   const radius = Math.min(cx, cy) - 20;
   let startAngle = -Math.PI / 2;
 
-  entries.forEach(([catKey, val]) => {
-    const info = categoryInfo(catKey);
+  entries.forEach(([catId, val]) => {
+    const info = categoryInfo(catId);
     const sliceAngle = (val / total) * Math.PI * 2;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
@@ -410,7 +713,6 @@ function renderCategoryChart(mKey) {
     startAngle += sliceAngle;
   });
 
-  // Donut hole
   const bg = getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff';
   ctx.beginPath();
   ctx.arc(cx, cy, radius * 0.55, 0, Math.PI * 2);
@@ -421,19 +723,19 @@ function renderCategoryChart(mKey) {
   ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(formatCurrency(total), cx, cy);
+  ctx.fillText(formatINR(total), cx, cy);
 
-  legend.innerHTML = entries.map(([catKey, val]) => {
-    const info = categoryInfo(catKey);
+  legend.innerHTML = entries.map(([catId, val]) => {
+    const info = categoryInfo(catId);
     const pct = ((val / total) * 100).toFixed(1);
     return `<li>
-      <span class="legend-name"><span class="swatch" style="background:${info.color}"></span>${info.icon} ${info.label}</span>
-      <span>${formatCurrency(val)} (${pct}%)</span>
+      <span class="legend-name"><span class="swatch" style="background:${info.color}"></span>${info.icon} ${escapeHTML(info.name)}</span>
+      <span>${formatINR(val)} (${pct}%)</span>
     </li>`;
   }).join('');
 }
 
-/* ---------- Canvas: monthly trend (last 6 months) ---------- */
+/* ---------- Canvas: monthly trend (last 6 months; transfers excluded) ---------- */
 function renderTrendChart() {
   const canvas = document.getElementById('trendChart');
   const ctx = canvas.getContext('2d');
@@ -450,8 +752,8 @@ function renderTrendChart() {
     const txns = state.transactions.filter((t) => monthKey(t.date) === mKey);
     return {
       mKey,
-      income: txns.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0),
-      expense: txns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
+      income: txns.filter((t) => t.type === 'income').reduce((s, t) => s + t.amountPaise, 0),
+      expense: txns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0),
     };
   });
 
@@ -467,7 +769,6 @@ function renderTrendChart() {
   const mutedColor = (getComputedStyle(document.body).getPropertyValue('--text-muted') || '#666').trim();
   const borderColor = (getComputedStyle(document.body).getPropertyValue('--border') || '#ddd').trim();
 
-  // Baseline
   ctx.strokeStyle = borderColor;
   ctx.beginPath();
   ctx.moveTo(padding, canvas.height - padding);
@@ -507,46 +808,71 @@ function renderRecentTransactions() {
   wireRowActions(container);
 }
 
+function receiptMarkerHTML(t) {
+  return t.receiptImage ? `<button type="button" class="receipt-marker" data-photo="${t.receiptImage}" title="View receipt photo">📎</button>` : '';
+}
+
 function txnRowHTML(t) {
-  const info = categoryInfo(t.category);
-  const sign = t.type === 'income' ? '+' : '−';
+  let metaLine, sign, amtClass;
+  if (t.type === 'transfer') {
+    const fromA = accountInfo(t.fromAccountId);
+    const toA = accountInfo(t.toAccountId);
+    metaLine = `${escapeHTML(fromA.name)} → ${escapeHTML(toA.name)} · ${formatDate(t.date)}`;
+    sign = '';
+    amtClass = 'transfer';
+  } else {
+    const info = categoryInfo(t.categoryId);
+    const acct = accountInfo(t.accountId);
+    metaLine = `${info.icon} ${escapeHTML(info.name)} · ${escapeHTML(acct.name)} · ${formatDate(t.date)}`;
+    sign = t.type === 'income' ? '+' : '−';
+    amtClass = t.type;
+  }
   return `<div class="txn-row" data-id="${t.id}">
     <div class="txn-info">
-      <span class="txn-desc">${info.icon} ${escapeHTML(t.description)}${t.receiptImage ? `<button type="button" class="receipt-marker" data-photo="${t.receiptImage}" title="View receipt photo">📎</button>` : ''}</span>
-      <span class="txn-meta">${info.label} · ${formatDate(t.date)}</span>
+      <span class="txn-desc">${escapeHTML(t.description)}${receiptMarkerHTML(t)}</span>
+      <span class="txn-meta">${metaLine}</span>
     </div>
-    <div class="txn-amount ${t.type}">${sign} ${formatCurrency(t.amount)}</div>
+    <div class="txn-amount ${amtClass}">${sign} ${formatINR(t.amountPaise)}</div>
   </div>`;
 }
 
-function escapeHTML(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+/* ---------- Transactions view (full table) ---------- */
+function populateAccountFilter() {
+  const select = document.getElementById('filterAccount');
+  const prevValue = select.value;
+  const options = [`<option value="all">${escapeHTML(i18n('txn.allAccounts'))}</option>`]
+    .concat(state.accounts.map((a) => `<option value="${a.id}">${escapeHTML(a.name)}${a.archived ? ' (archived)' : ''}</option>`));
+  select.innerHTML = options.join('');
+  select.value = [...select.options].some((o) => o.value === prevValue) ? prevValue : 'all';
 }
 
-/* ---------- Transactions view (full table) ---------- */
 function populateCategoryFilter() {
   const select = document.getElementById('filterCategory');
-  const options = ['<option value="all">All Categories</option>'];
-  options.push('<optgroup label="Income">');
-  CATEGORIES.income.forEach((c) => options.push(`<option value="${c.key}">${c.icon} ${c.label}</option>`));
-  options.push('</optgroup><optgroup label="Expense">');
-  CATEGORIES.expense.forEach((c) => options.push(`<option value="${c.key}">${c.icon} ${c.label}</option>`));
+  const prevValue = select.value;
+  const income = state.categories.filter((c) => c.type === 'income');
+  const expense = state.categories.filter((c) => c.type === 'expense');
+  const options = [`<option value="all">${escapeHTML(i18n('txn.allCategories'))}</option>`];
+  options.push(`<optgroup label="${escapeHTML(i18n('txn.income'))}">`);
+  income.forEach((c) => options.push(`<option value="${c.id}">${c.icon} ${escapeHTML(c.name)}${c.archived ? ' (archived)' : ''}</option>`));
+  options.push(`</optgroup><optgroup label="${escapeHTML(i18n('txn.expense'))}">`);
+  expense.forEach((c) => options.push(`<option value="${c.id}">${c.icon} ${escapeHTML(c.name)}${c.archived ? ' (archived)' : ''}</option>`));
   options.push('</optgroup>');
   select.innerHTML = options.join('');
+  select.value = [...select.options].some((o) => o.value === prevValue) ? prevValue : 'all';
 }
 
 function getFilteredTransactions() {
   const search = document.getElementById('searchInput').value.trim().toLowerCase();
   const type = document.getElementById('filterType').value;
+  const account = document.getElementById('filterAccount').value;
   const category = document.getElementById('filterCategory').value;
   const month = document.getElementById('filterMonth').value;
 
   return state.transactions
     .filter((t) => (search ? t.description.toLowerCase().includes(search) : true))
     .filter((t) => (type === 'all' ? true : t.type === type))
-    .filter((t) => (category === 'all' ? true : t.category === category))
+    .filter((t) => (account === 'all' ? true : (t.accountId === account || t.fromAccountId === account || t.toAccountId === account)))
+    .filter((t) => (category === 'all' ? true : t.categoryId === category))
     .filter((t) => (month ? monthKey(t.date) === month : true))
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
 }
@@ -558,14 +884,28 @@ function renderTransactionsView() {
 
   emptyState.hidden = list.length !== 0;
   tbody.innerHTML = list.map((t) => {
-    const info = categoryInfo(t.category);
-    const sign = t.type === 'income' ? '+' : '−';
+    let categoryCell, accountCell, sign, amtClass, typeLabel;
+    if (t.type === 'transfer') {
+      categoryCell = '—';
+      accountCell = `${escapeHTML(accountInfo(t.fromAccountId).name)} → ${escapeHTML(accountInfo(t.toAccountId).name)}`;
+      sign = '';
+      amtClass = 'transfer';
+      typeLabel = i18n('txn.transfer');
+    } else {
+      const info = categoryInfo(t.categoryId);
+      categoryCell = `<span class="cat-badge" style="color:${info.color};background:${info.color}26;">${info.icon} ${escapeHTML(info.name)}</span>`;
+      accountCell = escapeHTML(accountInfo(t.accountId).name);
+      sign = t.type === 'income' ? '+' : '−';
+      amtClass = t.type;
+      typeLabel = t.type === 'income' ? i18n('txn.income') : i18n('txn.expense');
+    }
     return `<tr data-id="${t.id}">
       <td>${formatDate(t.date)}</td>
-      <td>${escapeHTML(t.description)}${t.receiptImage ? `<button type="button" class="receipt-marker" data-photo="${t.receiptImage}" title="View receipt photo">📎</button>` : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
-      <td><span class="cat-badge" style="color:${info.color};background:${info.color}26;">${info.icon} ${info.label}</span></td>
-      <td>${t.type === 'income' ? 'Income' : 'Expense'}</td>
-      <td class="right ${t.type === 'income' ? 'txn-amount income' : 'txn-amount expense'}">${sign} ${formatCurrency(t.amount)}</td>
+      <td>${escapeHTML(t.description)}${receiptMarkerHTML(t)}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
+      <td>${accountCell}</td>
+      <td>${categoryCell}</td>
+      <td>${typeLabel}</td>
+      <td class="right txn-amount ${amtClass}">${sign} ${formatINR(t.amountPaise)}</td>
       <td>
         <div class="row-actions">
           <button data-action="edit" title="Edit">✏️</button>
@@ -593,8 +933,8 @@ function wireRowActions(container) {
       const [removed] = state.transactions.splice(idx, 1);
       saveState();
       refreshCurrentView();
-      showToast('Transaction deleted', {
-        actionLabel: 'Undo',
+      showToast(i18n('toast.txnDeleted'), {
+        actionLabel: i18n('toast.undo'),
         onAction: () => {
           state.transactions.splice(idx, 0, removed);
           saveState();
@@ -603,7 +943,6 @@ function wireRowActions(container) {
       });
     });
   });
-  // Clicking a dashboard txn-row opens edit too
   container.querySelectorAll('.txn-row').forEach((row) => {
     row.style.cursor = 'pointer';
     row.addEventListener('click', () => {
@@ -613,13 +952,13 @@ function wireRowActions(container) {
   });
   container.querySelectorAll('.receipt-marker').forEach((el) => {
     el.addEventListener('click', (e) => {
-      e.stopPropagation(); // view the photo without also opening the edit modal
+      e.stopPropagation();
       openPhotoLightbox(el.dataset.photo);
     });
   });
 }
 
-/* ---------- Budgets view ---------- */
+/* ---------- Budgets view (one limit per category per month) ---------- */
 function populateBudgetMonthSelect() {
   const select = document.getElementById('budgetMonthSelect');
   const months = Array.from(new Set(state.transactions.map((t) => monthKey(t.date)))).sort().reverse();
@@ -629,6 +968,10 @@ function populateBudgetMonthSelect() {
   select.value = months.includes(prevValue) ? prevValue : currentMonthKey();
 }
 
+function findBudget(categoryId, month) {
+  return state.budgets.find((b) => b.categoryId === categoryId && b.month === month);
+}
+
 function renderBudgetsView() {
   populateBudgetMonthSelect();
   const container = document.getElementById('budgetList');
@@ -636,40 +979,52 @@ function renderBudgetsView() {
   const spentByCategory = {};
   state.transactions
     .filter((t) => t.type === 'expense' && monthKey(t.date) === mKey)
-    .forEach((t) => { spentByCategory[t.category] = (spentByCategory[t.category] || 0) + t.amount; });
+    .forEach((t) => { spentByCategory[t.categoryId] = (spentByCategory[t.categoryId] || 0) + t.amountPaise; });
 
-  container.innerHTML = CATEGORIES.expense.map((cat) => {
-    const spent = spentByCategory[cat.key] || 0;
-    const budget = state.budgets[cat.key] || 0;
-    const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
-    const barClass = budget > 0 && spent > budget ? 'over' : (pct >= 80 ? 'warn' : '');
-    return `<div class="budget-item" data-cat="${cat.key}">
+  const cats = activeCategories('expense');
+  container.innerHTML = cats.map((cat) => {
+    const spentP = spentByCategory[cat.id] || 0;
+    const budget = findBudget(cat.id, mKey);
+    const limitP = budget ? budget.limitPaise : 0;
+    const hasBudget = !!budget;
+    const pct = limitP > 0 ? Math.min(100, Math.round((spentP / limitP) * 100)) : 0;
+    const barClass = limitP > 0 && spentP > limitP ? 'over' : (pct >= 80 ? 'warn' : '');
+    const statusLine = !hasBudget
+      ? `<div class="muted">${i18n('budget.noBudget')}</div>`
+      : (limitP > 0 && spentP > limitP ? `<div class="muted" style="color:var(--expense)">${i18n('budget.overBy')} ${formatINR(spentP - limitP)}</div>` : '');
+    return `<div class="budget-item" data-cat="${cat.id}">
       <div class="budget-item-top">
-        <span class="cat">${cat.icon} ${cat.label}</span>
+        <span class="cat">${cat.icon} ${escapeHTML(cat.name)}</span>
         <span>
-          ${formatCurrency(spent)} /
-          <input type="number" class="budget-input" min="0" step="1" value="${budget || ''}" placeholder="No limit" data-cat="${cat.key}" />
+          ${formatINR(spentP)} /
+          <input type="text" inputmode="decimal" class="budget-input" placeholder="${escapeHTML(i18n('budget.noBudget'))}" value="${hasBudget ? paiseToRupeesString(limitP) : ''}" data-cat="${cat.id}" />
         </span>
       </div>
-      <div class="budget-bar-track">
-        <div class="budget-bar-fill ${barClass}" style="width:${budget > 0 ? pct : 0}%"></div>
-      </div>
-      ${budget > 0 && spent > budget ? `<div class="muted" style="color:var(--expense)">Over budget by ${formatCurrency(spent - budget)}</div>` : ''}
+      <div class="budget-bar-track"><div class="budget-bar-fill ${barClass}" style="width:${hasBudget ? pct : 0}%"></div></div>
+      ${statusLine}
     </div>`;
   }).join('');
 
   container.querySelectorAll('.budget-input').forEach((input) => {
     input.addEventListener('change', (e) => {
-      const cat = e.target.dataset.cat;
-      const val = parseFloat(e.target.value);
-      if (!isNaN(val) && val > 0) {
-        state.budgets[cat] = val;
+      const catId = e.target.dataset.cat;
+      const raw = e.target.value.trim();
+      const existing = findBudget(catId, mKey);
+      if (!raw) {
+        if (existing) state.budgets = state.budgets.filter((b) => b !== existing);
       } else {
-        delete state.budgets[cat];
+        const paise = parseRupeesToPaise(raw);
+        if (paise === null || paise <= 0) {
+          showToast(i18n('toast.amountInvalid'));
+          renderBudgetsView();
+          return;
+        }
+        if (existing) existing.limitPaise = paise;
+        else state.budgets.push({ id: uid(), categoryId: catId, month: mKey, limitPaise: paise });
       }
       saveState();
       renderBudgetsView();
-      showToast('Budget updated');
+      showToast(i18n('toast.budgetUpdated'));
     });
   });
 }
@@ -677,9 +1032,30 @@ function renderBudgetsView() {
 /* ---------- Modal: add/edit transaction ---------- */
 let currentTxnType = 'expense';
 
-function populateCategorySelect(type) {
+function populateAccountSelects(txn) {
+  const referenced = [];
+  if (txn) ['accountId', 'fromAccountId', 'toAccountId'].forEach((k) => { if (txn[k]) referenced.push(txn[k]); });
+  const byId = new Map();
+  activeAccounts().forEach((a) => byId.set(a.id, a));
+  referenced.forEach((id) => { if (!byId.has(id)) { const a = state.accounts.find((x) => x.id === id); if (a) byId.set(id, a); } });
+  const accounts = [...byId.values()];
+  const opts = accounts.map((a) => `<option value="${a.id}">${escapeHTML(a.name)}${a.archived ? ' (archived)' : ''}</option>`).join('');
+  ['txnAccount', 'txnFromAccount', 'txnToAccount'].forEach((id) => { document.getElementById(id).innerHTML = opts; });
+}
+
+function populatePaymentMethodSelect() {
+  const select = document.getElementById('txnPaymentMethod');
+  select.innerHTML = PAYMENT_METHODS.map((p) => `<option value="${p.id}">${escapeHTML(i18n(p.labelKey))}</option>`).join('');
+}
+
+function populateCategorySelect(type, includeCategoryId) {
+  let cats = activeCategories(type);
+  if (includeCategoryId && !cats.find((c) => c.id === includeCategoryId)) {
+    const c = state.categories.find((x) => x.id === includeCategoryId);
+    if (c) cats = [c, ...cats];
+  }
   const select = document.getElementById('txnCategory');
-  select.innerHTML = CATEGORIES[type].map((c) => `<option value="${c.key}" style="color:${c.color};">${c.icon} ${c.label}</option>`).join('');
+  select.innerHTML = cats.map((c) => `<option value="${c.id}" style="color:${c.color};">${c.icon} ${escapeHTML(c.name)}</option>`).join('');
   updateCategoryColorDot();
 }
 
@@ -690,22 +1066,52 @@ function updateCategoryColorDot() {
   dot.style.background = info.color;
 }
 
+function setTypeButtons(type, includeCategoryId) {
+  currentTxnType = type;
+  document.getElementById('typeExpenseBtn').classList.toggle('active', type === 'expense');
+  document.getElementById('typeIncomeBtn').classList.toggle('active', type === 'income');
+  document.getElementById('typeTransferBtn').classList.toggle('active', type === 'transfer');
+  const isTransfer = type === 'transfer';
+  document.getElementById('txnAccountRow').hidden = isTransfer;
+  document.getElementById('txnCategoryRow').hidden = isTransfer;
+  document.getElementById('txnPaymentMethodRow').hidden = isTransfer;
+  document.getElementById('txnTransferRow').hidden = !isTransfer;
+  document.getElementById('txnAccount').required = !isTransfer;
+  document.getElementById('txnCategory').required = !isTransfer;
+  if (!isTransfer) populateCategorySelect(type, includeCategoryId);
+}
+
 function openTransactionModal(txn) {
   const overlay = document.getElementById('modalOverlay');
   const form = document.getElementById('txnForm');
   form.reset();
 
-  currentTxnType = txn ? txn.type : 'expense';
-  setTypeButtons(currentTxnType);
-  populateCategorySelect(currentTxnType);
+  populateAccountSelects(txn);
+  populatePaymentMethodSelect();
 
-  document.getElementById('modalTitle').textContent = txn ? 'Edit Transaction' : 'Add Transaction';
+  const type = txn ? txn.type : 'expense';
+  setTypeButtons(type, txn ? txn.categoryId : null);
+
+  document.getElementById('modalTitle').textContent = txn ? i18n('txn.editTitle') : i18n('txn.add');
   document.getElementById('txnId').value = txn ? txn.id : '';
   document.getElementById('txnDescription').value = txn ? txn.description : '';
-  document.getElementById('txnAmount').value = txn ? txn.amount : '';
+  document.getElementById('txnAmount').value = txn ? paiseToRupeesString(txn.amountPaise) : '';
   document.getElementById('txnDate').value = txn ? txn.date : todayStr();
   document.getElementById('txnNotes').value = txn ? (txn.notes || '') : '';
-  if (txn) document.getElementById('txnCategory').value = txn.category;
+  document.getElementById('txnAmountError').hidden = true;
+
+  if (txn && txn.type === 'transfer') {
+    document.getElementById('txnFromAccount').value = txn.fromAccountId;
+    document.getElementById('txnToAccount').value = txn.toAccountId;
+  } else if (txn) {
+    document.getElementById('txnAccount').value = txn.accountId;
+    document.getElementById('txnCategory').value = txn.categoryId;
+    document.getElementById('txnPaymentMethod').value = txn.paymentMethod || 'cash';
+  } else {
+    const firstAcct = activeAccounts()[0];
+    if (firstAcct) document.getElementById('txnAccount').value = firstAcct.id;
+    document.getElementById('txnPaymentMethod').value = 'cash';
+  }
   updateCategoryColorDot();
 
   pendingReceiptImage = txn && txn.receiptImage ? txn.receiptImage : null;
@@ -720,43 +1126,57 @@ function closeTransactionModal() {
   document.getElementById('modalOverlay').hidden = true;
 }
 
-function setTypeButtons(type) {
-  currentTxnType = type;
-  document.getElementById('typeExpenseBtn').classList.toggle('active', type === 'expense');
-  document.getElementById('typeIncomeBtn').classList.toggle('active', type === 'income');
-  populateCategorySelect(type);
-}
-
 function handleTransactionSubmit(e) {
   e.preventDefault();
   const id = document.getElementById('txnId').value;
   const description = document.getElementById('txnDescription').value.trim();
-  const amount = parseFloat(document.getElementById('txnAmount').value);
+  const amountStr = document.getElementById('txnAmount').value.trim();
+  const amountPaise = parseRupeesToPaise(amountStr);
   const date = document.getElementById('txnDate').value;
-  const category = document.getElementById('txnCategory').value;
   const notes = document.getElementById('txnNotes').value.trim();
+  const errEl = document.getElementById('txnAmountError');
 
-  if (!description || isNaN(amount) || amount <= 0 || !date || !category) {
-    showToast('Please fill in all required fields');
+  if (amountPaise === null || amountPaise <= 0) {
+    errEl.hidden = false;
+    showToast(i18n('toast.amountInvalid'));
+    return;
+  }
+  errEl.hidden = true;
+
+  if (!description || !date) {
+    showToast(i18n('toast.fillRequired'));
     return;
   }
 
+  let extra;
+  if (currentTxnType === 'transfer') {
+    const fromAccountId = document.getElementById('txnFromAccount').value;
+    const toAccountId = document.getElementById('txnToAccount').value;
+    if (!fromAccountId || !toAccountId) { showToast(i18n('toast.fillRequired')); return; }
+    if (fromAccountId === toAccountId) { showToast(i18n('toast.transferSameAccount')); return; }
+    extra = { fromAccountId, toAccountId };
+  } else {
+    const accountId = document.getElementById('txnAccount').value;
+    const categoryId = document.getElementById('txnCategory').value;
+    const paymentMethod = document.getElementById('txnPaymentMethod').value;
+    if (!accountId || !categoryId) { showToast(i18n('toast.fillRequired')); return; }
+    extra = { accountId, categoryId, paymentMethod };
+  }
+
+  const now = Date.now();
   if (id) {
     const txn = state.transactions.find((t) => t.id === id);
-    Object.assign(txn, { description, amount, date, category, notes, type: currentTxnType });
+    delete txn.accountId; delete txn.categoryId; delete txn.paymentMethod;
+    delete txn.fromAccountId; delete txn.toAccountId;
+    Object.assign(txn, { type: currentTxnType, description, amountPaise, date, notes, updatedAt: now }, extra);
     if (pendingReceiptImage) txn.receiptImage = pendingReceiptImage;
     else delete txn.receiptImage;
-    showToast('Transaction updated');
+    showToast(i18n('toast.txnUpdated'));
   } else {
-    const newTxn = {
-      id: uid(),
-      type: currentTxnType,
-      description, amount, date, category, notes,
-      createdAt: Date.now(),
-    };
+    const newTxn = Object.assign({ id: uid(), type: currentTxnType, description, amountPaise, date, notes, createdAt: now, updatedAt: now }, extra);
     if (pendingReceiptImage) newTxn.receiptImage = pendingReceiptImage;
     state.transactions.push(newTxn);
-    showToast('Transaction added');
+    showToast(i18n('toast.txnAdded'));
   }
 
   saveState();
@@ -771,7 +1191,7 @@ function refreshCurrentView() {
 }
 
 /* ---------- Receipt photo: attach a photo to a transaction ---------- */
-let pendingReceiptImage = null; // compressed dataURL, stored on the transaction when saved
+let pendingReceiptImage = null;
 
 function compressImageFile(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
@@ -833,6 +1253,126 @@ async function handleReceiptFileSelected(e) {
 function removeReceiptPhoto() {
   pendingReceiptImage = null;
   renderReceiptPreview();
+}
+
+/* ---------- Accounts management (Settings) ---------- */
+function renderAccountManageList() {
+  const container = document.getElementById('accountList');
+  if (!container) return;
+  container.innerHTML = state.accounts.map((a) => `
+    <div class="manage-row ${a.archived ? 'archived' : ''}" data-id="${a.id}">
+      <span>
+        <span class="manage-name">${escapeHTML(a.name)}</span><br/>
+        <span class="manage-meta">${a.type === 'cash' ? i18n('settings.cash') : i18n('settings.bank')} · ${formatINR(accountBalancePaise(a.id))}${a.archived ? ' · archived' : ''}</span>
+      </span>
+      <span class="manage-actions">
+        <button type="button" data-action="${a.archived ? 'unarchive' : 'archive'}">${a.archived ? '↩' : '🗄'}</button>
+      </span>
+    </div>`).join('');
+
+  container.querySelectorAll('[data-action="archive"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.closest('[data-id]').dataset.id;
+      if (activeAccounts().length <= 1) { showToast(i18n('toast.needOneAccount')); return; }
+      const acct = state.accounts.find((a) => a.id === id);
+      if (!acct) return;
+      acct.archived = true;
+      saveState();
+      renderAccountManageList();
+      populateAccountFilter();
+      showToast(i18n('toast.acctArchived'));
+    });
+  });
+  container.querySelectorAll('[data-action="unarchive"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.closest('[data-id]').dataset.id;
+      const acct = state.accounts.find((a) => a.id === id);
+      if (!acct) return;
+      acct.archived = false;
+      saveState();
+      renderAccountManageList();
+      populateAccountFilter();
+      showToast(i18n('toast.acctRestored'));
+    });
+  });
+}
+
+function handleAddAccountSubmit(e) {
+  e.preventDefault();
+  const name = document.getElementById('newAccountName').value.trim();
+  const type = document.getElementById('newAccountType').value;
+  const openingStr = document.getElementById('newAccountOpeningBalance').value.trim();
+  if (!name) { showToast(i18n('toast.fillRequired')); return; }
+  let openingBalancePaise = 0;
+  if (openingStr) {
+    const parsed = parseRupeesToPaise(openingStr);
+    if (parsed === null) { showToast(i18n('toast.amountInvalid')); return; }
+    openingBalancePaise = parsed;
+  }
+  state.accounts.push({ id: uid(), name, type, currency: 'INR', openingBalancePaise, openingDate: todayStr(), archived: false });
+  saveState();
+  document.getElementById('addAccountForm').reset();
+  renderAccountManageList();
+  populateAccountFilter();
+  showToast(i18n('toast.acctAdded'));
+}
+
+/* ---------- Categories management (Settings) ---------- */
+function renderCategoryManageList() {
+  const container = document.getElementById('categoryList');
+  if (!container) return;
+  container.innerHTML = state.categories.map((c) => `
+    <div class="manage-row ${c.archived ? 'archived' : ''}" data-id="${c.id}">
+      <span>
+        <span class="manage-name">${c.icon} ${escapeHTML(c.name)}</span><br/>
+        <span class="manage-meta">${c.type === 'income' ? i18n('txn.income') : i18n('txn.expense')}${c.archived ? ' · archived' : ''}</span>
+      </span>
+      <span class="manage-actions">
+        <button type="button" data-action="${c.archived ? 'unarchive' : 'archive'}">${c.archived ? '↩' : '🗄'}</button>
+      </span>
+    </div>`).join('');
+
+  container.querySelectorAll('[data-action="archive"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.closest('[data-id]').dataset.id;
+      const cat = state.categories.find((c) => c.id === id);
+      if (!cat) return;
+      const sameTypeActive = state.categories.filter((c) => c.type === cat.type && !c.archived);
+      if (sameTypeActive.length <= 1) { showToast(i18n('toast.needOneCategory')); return; }
+      cat.archived = true;
+      saveState();
+      renderCategoryManageList();
+      populateCategoryFilter();
+      showToast(i18n('toast.catArchived'));
+    });
+  });
+  container.querySelectorAll('[data-action="unarchive"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.closest('[data-id]').dataset.id;
+      const cat = state.categories.find((c) => c.id === id);
+      if (!cat) return;
+      cat.archived = false;
+      saveState();
+      renderCategoryManageList();
+      populateCategoryFilter();
+      showToast(i18n('toast.catRestored'));
+    });
+  });
+}
+
+function handleAddCategorySubmit(e) {
+  e.preventDefault();
+  const name = document.getElementById('newCategoryName').value.trim();
+  const type = document.getElementById('newCategoryType').value;
+  if (!name) { showToast(i18n('toast.fillRequired')); return; }
+  const palette = ['#6366f1', '#0ea5e9', '#14b8a6', '#84cc16', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444'];
+  const color = palette[state.categories.length % palette.length];
+  state.categories.push({ id: uid(), name, type, icon: type === 'income' ? '➕' : '🏷️', color, archived: false });
+  saveState();
+  document.getElementById('addCategoryForm').reset();
+  renderCategoryManageList();
+  populateCategoryFilter();
+  showToast(i18n('toast.catAdded'));
 }
 
 /* ---------- App Lock: UI flow ---------- */
@@ -900,23 +1440,17 @@ async function enableAppLock() {
     label1: 'New PIN',
     label2: 'Confirm PIN',
   });
-  if (!pin) return; // cancelled
+  if (!pin) return;
 
   const saltBytes = crypto.getRandomValues(new Uint8Array(16));
   const saltB64 = bufToB64(saltBytes.buffer);
   const key = await deriveKeyFromPin(pin, saltB64);
   const check = await encryptWithKey(key, { v: LOCK_CHECK_PLAINTEXT });
 
-  lockMeta = {
-    enabled: true,
-    salt: saltB64,
-    checkCipher: check.cipher,
-    checkIv: check.iv,
-    autoLockMinutes: 5,
-  };
+  lockMeta = { enabled: true, salt: saltB64, checkCipher: check.cipher, checkIv: check.iv, autoLockMinutes: 5 };
   saveLockMeta(lockMeta);
   encryptionKey = key;
-  saveState(); // re-persists current state encrypted under the new key
+  saveState();
   updateAppLockUI();
   resetAutoLockTimer();
   showToast('App Lock turned on');
@@ -929,7 +1463,7 @@ async function disableAppLock() {
     singleInput: true,
     label1: 'Current PIN',
   });
-  if (!pin) return; // cancelled
+  if (!pin) return;
 
   try {
     const key = await deriveKeyFromPin(pin, lockMeta.salt);
@@ -944,7 +1478,7 @@ async function disableAppLock() {
   saveLockMeta(lockMeta);
   encryptionKey = null;
   clearTimeout(autoLockTimer);
-  saveState(); // now writes plaintext, since lockMeta.enabled is false
+  saveState();
   updateAppLockUI();
   showToast('App Lock turned off');
 }
@@ -963,11 +1497,9 @@ async function attemptUnlock(pin) {
     const check = await decryptWithKey(key, lockMeta.checkCipher, lockMeta.checkIv);
     if (check.v !== LOCK_CHECK_PLAINTEXT) throw new Error('bad pin');
 
-    // Correct PIN: decrypt the real data (freshest copy on disk, in case
-    // another unlock/lock cycle wrote to it since boot).
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     const blob = raw.encrypted ? raw : pendingEncryptedBlob;
-    state = blob ? normalizeState(await decryptWithKey(key, blob.cipher, blob.iv)) : defaultState();
+    state = blob ? coerceLoadedState(await decryptWithKey(key, blob.cipher, blob.iv)) : defaultState();
 
     encryptionKey = key;
     isLocked = false;
@@ -975,7 +1507,8 @@ async function attemptUnlock(pin) {
     document.getElementById('lockScreen').hidden = true;
     document.getElementById('lockPinInput').value = '';
     applyTheme(state.settings.theme);
-    document.getElementById('currencySelect').value = state.settings.currency;
+    document.getElementById('languageSelect').value = state.settings.language;
+    applyTranslations();
     document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
     updateAppLockUI();
     refreshCurrentView();
@@ -992,7 +1525,6 @@ function engageLock() {
   if (!lockMeta.enabled || isLocked) return;
   encryptionKey = null;
   isLocked = true;
-  // Blank sensitive in-memory data so it isn't sitting in the DOM/state while locked.
   state = defaultState();
   clearTimeout(autoLockTimer);
   document.getElementById('lockScreen').hidden = false;
@@ -1017,6 +1549,7 @@ function forgotPin() {
   if (!confirm('This erases all MyFinances data on this device - there is no way to recover an encrypted backup without the PIN. Continue?')) return;
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(LOCK_META_KEY);
+  localStorage.removeItem(PRE_V2_BACKUP_KEY);
   location.reload();
 }
 
@@ -1032,7 +1565,7 @@ function updateAppLockUI() {
   document.getElementById('autoLockRow').hidden = !on;
   if (on) document.getElementById('autoLockSelect').value = String(lockMeta.autoLockMinutes);
   document.getElementById('lockNowBtn').hidden = !on;
-  if (on) btn.closest('details.settings-panel').open = true; // keep an active feature's panel expanded, not tucked away
+  if (on) btn.closest('details.settings-panel').open = true;
 }
 
 /* ---------- Voice dictation (Description field) ---------- */
@@ -1054,7 +1587,7 @@ function resetDictationButton() {
 
 function toggleDictation() {
   if (dictationRecognition) {
-    dictationRecognition.stop(); // onend fires -> resetDictationButton
+    dictationRecognition.stop();
     return;
   }
 
@@ -1110,7 +1643,7 @@ function toggleDictation() {
   }
 }
 
-/* ---------- Import / Export / Reset / Sample data ---------- */
+/* ---------- Export / Import / Restore / Reset / Sample data ---------- */
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1126,7 +1659,7 @@ function exportData() {
   state.settings.reminderSnoozedUntil = null;
   saveState();
   renderBackupReminder();
-  showToast('Data exported');
+  showToast(i18n('toast.dataExported'));
 }
 
 function csvEscape(value) {
@@ -1135,21 +1668,42 @@ function csvEscape(value) {
   return str;
 }
 
+// Guards free-text fields against spreadsheet formula injection (a cell
+// starting with = + - @ can execute as a formula when opened in a
+// spreadsheet app), then applies normal CSV quoting.
+function csvSafeText(value) {
+  let str = String(value == null ? '' : value);
+  if (/^[=+\-@\t\r]/.test(str)) str = "'" + str;
+  return csvEscape(str);
+}
+
 function buildCsv() {
-  const header = ['Date', 'Description', 'Category', 'Type', 'Amount', 'Notes'];
+  const header = ['Date', 'Type', 'Account', 'From Account', 'To Account', 'Category', 'Payment Method', 'Description', 'Amount (INR)', 'Notes'];
   const rows = [...state.transactions]
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt)
     .map((t) => {
-      const info = categoryInfo(t.category);
-      const amount = t.type === 'income' ? t.amount : -t.amount;
-      return [t.date, t.description, info.label, t.type === 'income' ? 'Income' : 'Expense', amount.toFixed(2), t.notes || ''];
+      if (t.type === 'transfer') {
+        return [
+          csvEscape(t.date), csvEscape('Transfer'), csvEscape(''),
+          csvSafeText(accountInfo(t.fromAccountId).name), csvSafeText(accountInfo(t.toAccountId).name),
+          csvEscape(''), csvEscape(''), csvSafeText(t.description), csvEscape((t.amountPaise / 100).toFixed(2)), csvSafeText(t.notes || ''),
+        ].join(',');
+      }
+      const info = categoryInfo(t.categoryId);
+      const signedRupees = (t.type === 'income' ? t.amountPaise : -t.amountPaise) / 100;
+      return [
+        csvEscape(t.date), csvEscape(t.type === 'income' ? 'Income' : 'Expense'), csvSafeText(accountInfo(t.accountId).name),
+        csvEscape(''), csvEscape(''), csvSafeText(info.name), csvEscape(paymentMethodLabel(t.paymentMethod)),
+        csvSafeText(t.description), csvEscape(signedRupees.toFixed(2)), csvSafeText(t.notes || ''),
+      ].join(',');
     });
-  return [header, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
+  const headerRow = header.map(csvEscape).join(',');
+  return [headerRow, ...rows].join('\r\n');
 }
 
 function exportCsvData() {
   if (state.transactions.length === 0) {
-    showToast('No transactions to export yet');
+    showToast(i18n('toast.noTxnsToExport'));
     return;
   }
   const blob = new Blob([buildCsv()], { type: 'text/csv' });
@@ -1161,66 +1715,121 @@ function exportCsvData() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('CSV exported');
+  showToast(i18n('toast.csvExported'));
 }
+
+let pendingRestoreState = null;
+let preRestoreBackup = null; // kept in memory only, for this session, as a recovery copy
 
 function importData(file) {
   const reader = new FileReader();
   reader.onload = () => {
+    let parsed;
     try {
-      const parsed = JSON.parse(reader.result);
-      if (!Array.isArray(parsed.transactions)) throw new Error('Invalid file format');
-      state = {
-        transactions: parsed.transactions,
-        budgets: parsed.budgets || {},
-        settings: Object.assign(defaultState().settings, parsed.settings || {}),
-      };
-      saveState();
-      applyTheme(state.settings.theme);
-      document.getElementById('currencySelect').value = state.settings.currency;
-      refreshCurrentView();
-      showToast('Data imported successfully');
-    } catch (err) {
-      alert('Could not import file: ' + err.message);
+      parsed = JSON.parse(reader.result);
+    } catch (e) {
+      showToast(i18n('toast.invalidBackup'));
+      return;
     }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.transactions)) {
+      showToast(i18n('toast.invalidBackup'));
+      return;
+    }
+    const candidate = coerceLoadedState(parsed);
+    pendingRestoreState = candidate;
+    showRestoreSummary(candidate);
   };
+  reader.onerror = () => showToast(i18n('toast.invalidBackup'));
   reader.readAsText(file);
 }
 
+function showRestoreSummary(candidate) {
+  const dates = candidate.transactions.map((t) => t.date).filter(Boolean).sort();
+  const range = dates.length ? `${formatDate(dates[0])} – ${formatDate(dates[dates.length - 1])}` : '—';
+  const summary = document.getElementById('restoreSummary');
+  summary.innerHTML = [
+    [i18n('restore.accounts'), candidate.accounts.length],
+    [i18n('restore.categories'), candidate.categories.length],
+    [i18n('restore.transactions'), candidate.transactions.length],
+    [i18n('restore.budgets'), candidate.budgets.length],
+    [i18n('restore.dateRange'), range],
+  ].map(([label, val]) => `<li><span>${escapeHTML(label)}</span><span>${escapeHTML(String(val))}</span></li>`).join('');
+  document.getElementById('restoreModalOverlay').hidden = false;
+}
+
+function closeRestoreModal() {
+  document.getElementById('restoreModalOverlay').hidden = true;
+  pendingRestoreState = null;
+}
+
+function confirmRestore() {
+  if (!pendingRestoreState) return;
+  preRestoreBackup = state; // atomic swap: only commit once the new state is fully built
+  state = pendingRestoreState;
+  pendingRestoreState = null;
+  saveState();
+  document.getElementById('restoreModalOverlay').hidden = true;
+  applyTheme(state.settings.theme);
+  document.getElementById('languageSelect').value = state.settings.language;
+  applyTranslations();
+  document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
+  refreshCurrentView();
+  showToast(i18n('toast.dataImported'));
+}
+
 function resetAllData() {
-  if (!confirm('This will permanently delete all transactions and budgets, and turn off App Lock. Continue?')) return;
+  if (!confirm('This will permanently delete all accounts, transactions, and budgets, and turn off App Lock. Continue?')) return;
   lockMeta = { enabled: false, salt: null, checkCipher: null, checkIv: null, autoLockMinutes: 5 };
   saveLockMeta(lockMeta);
   encryptionKey = null;
   clearTimeout(autoLockTimer);
   state = defaultState();
   saveState();
+  localStorage.removeItem(PRE_V2_BACKUP_KEY);
   updateAppLockUI();
   refreshCurrentView();
-  showToast('All data cleared');
+  showToast(i18n('toast.dataCleared'));
 }
 
 function loadSampleData() {
   const mKey = currentMonthKey();
   const [y, m] = mKey.split('-').map(Number);
   const d = (day) => `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const rupees = (n) => Math.round(n * 100);
+
+  if (!state.accounts.find((a) => a.id === 'bank_sample')) {
+    state.accounts.push({ id: 'bank_sample', name: 'HDFC Bank', type: 'bank', currency: 'INR', openingBalancePaise: rupees(5000), openingDate: d(1), archived: false });
+  }
+
   const samples = [
-    { type: 'income', category: 'salary', description: 'Monthly Salary', amount: 4200, date: d(1) },
-    { type: 'expense', category: 'rent', description: 'Apartment Rent', amount: 1400, date: d(2) },
-    { type: 'expense', category: 'food', description: 'Grocery Shopping', amount: 95.4, date: d(3) },
-    { type: 'expense', category: 'utilities', description: 'Electricity Bill', amount: 62.1, date: d(5) },
-    { type: 'expense', category: 'transportation', description: 'Gas Fill-up', amount: 48, date: d(6) },
-    { type: 'expense', category: 'entertainment', description: 'Movie Night', amount: 32, date: d(8) },
-    { type: 'income', category: 'freelance', description: 'Freelance Web Project', amount: 650, date: d(9) },
-    { type: 'expense', category: 'food', description: 'Restaurant Dinner', amount: 54.75, date: d(10) },
-    { type: 'expense', category: 'shopping', description: 'New Shoes', amount: 89.99, date: d(12) },
-    { type: 'expense', category: 'health', description: 'Gym Membership', amount: 40, date: d(13) },
+    { type: 'income', categoryId: 'salary', accountId: 'cash', paymentMethod: 'bank_transfer', description: 'Monthly Salary', amountPaise: rupees(42000), date: d(1) },
+    { type: 'expense', categoryId: 'rent', accountId: 'cash', paymentMethod: 'bank_transfer', description: 'Apartment Rent', amountPaise: rupees(14000), date: d(2) },
+    { type: 'expense', categoryId: 'food', accountId: 'cash', paymentMethod: 'upi', description: 'Grocery Shopping', amountPaise: rupees(954), date: d(3) },
+    { type: 'expense', categoryId: 'utilities', accountId: 'cash', paymentMethod: 'upi', description: 'Electricity Bill', amountPaise: rupees(621), date: d(5) },
+    { type: 'expense', categoryId: 'transportation', accountId: 'cash', paymentMethod: 'cash', description: 'Fuel', amountPaise: rupees(480), date: d(6) },
+    { type: 'expense', categoryId: 'entertainment', accountId: 'cash', paymentMethod: 'card', description: 'Movie Night', amountPaise: rupees(320), date: d(8) },
+    { type: 'income', categoryId: 'freelance', accountId: 'bank_sample', paymentMethod: 'bank_transfer', description: 'Freelance Web Project', amountPaise: rupees(6500), date: d(9) },
+    { type: 'expense', categoryId: 'food', accountId: 'cash', paymentMethod: 'card', description: 'Restaurant Dinner', amountPaise: rupees(547), date: d(10) },
+    { type: 'expense', categoryId: 'shopping', accountId: 'bank_sample', paymentMethod: 'card', description: 'New Shoes', amountPaise: rupees(899), date: d(12) },
+    { type: 'expense', categoryId: 'health', accountId: 'cash', paymentMethod: 'upi', description: 'Gym Membership', amountPaise: rupees(400), date: d(13) },
   ];
-  samples.forEach((s) => state.transactions.push({ id: uid(), notes: '', createdAt: Date.now(), ...s }));
-  state.budgets = { food: 400, entertainment: 100, shopping: 150, transportation: 120 };
+  const now = Date.now();
+  samples.forEach((s) => state.transactions.push(Object.assign({ id: uid(), notes: '', createdAt: now, updatedAt: now }, s)));
+
+  state.transactions.push({
+    id: uid(), type: 'transfer', fromAccountId: 'cash', toAccountId: 'bank_sample',
+    amountPaise: rupees(3000), date: d(7), description: 'Move savings to bank', notes: '', createdAt: now, updatedAt: now,
+  });
+
+  const limits = { food: 4000, entertainment: 1000, shopping: 1500, transportation: 1200 };
+  Object.entries(limits).forEach(([catId, amt]) => {
+    state.budgets = state.budgets.filter((b) => !(b.categoryId === catId && b.month === mKey));
+    state.budgets.push({ id: uid(), categoryId: catId, month: mKey, limitPaise: rupees(amt) });
+  });
+
   saveState();
   refreshCurrentView();
-  showToast('Sample data loaded');
+  showToast(i18n('toast.sampleLoaded'));
 }
 
 /* ---------- Theme ---------- */
@@ -1233,22 +1842,22 @@ function applyTheme(theme) {
 function toggleTheme() {
   state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark';
   applyTheme(state.settings.theme);
-  savePrefs({ theme: state.settings.theme }); // plaintext copy so the lock screen can theme itself pre-unlock
+  savePrefs({ theme: state.settings.theme });
   saveState();
-  refreshCurrentView(); // charts read CSS colors, so redraw
+  refreshCurrentView();
 }
 
 /* ---------- Wire up events ---------- */
 function init() {
+  applyTranslations();
   applyTheme(state.settings.theme);
   updateAppLockUI();
   if (isLocked) {
     document.getElementById('lockScreen').hidden = false;
     setTimeout(() => document.getElementById('lockPinInput').focus(), 50);
   }
-  document.getElementById('currencySelect').value = state.settings.currency;
+  document.getElementById('languageSelect').value = state.settings.language;
   document.getElementById('reminderFrequencySelect').value = String(state.settings.reminderDays);
-  populateCategoryFilter();
   document.getElementById('txnDate').value = todayStr();
 
   document.querySelectorAll('.nav-btn').forEach((btn) => {
@@ -1259,6 +1868,13 @@ function init() {
   });
 
   document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+  document.getElementById('languageSelect').addEventListener('change', (e) => {
+    state.settings.language = e.target.value;
+    saveState();
+    applyTranslations();
+    refreshCurrentView();
+  });
+
   document.getElementById('quickAddBtn').addEventListener('click', () => openTransactionModal(null));
   document.getElementById('modalClose').addEventListener('click', closeTransactionModal);
   document.getElementById('modalCancel').addEventListener('click', closeTransactionModal);
@@ -1269,6 +1885,10 @@ function init() {
   document.getElementById('txnCategory').addEventListener('change', updateCategoryColorDot);
   document.getElementById('typeExpenseBtn').addEventListener('click', () => setTypeButtons('expense'));
   document.getElementById('typeIncomeBtn').addEventListener('click', () => setTypeButtons('income'));
+  document.getElementById('typeTransferBtn').addEventListener('click', () => {
+    if (activeAccounts().length < 2) { showToast(i18n('toast.needTwoAccounts')); return; }
+    setTypeButtons('transfer');
+  });
   document.getElementById('voiceDictateBtn').addEventListener('click', toggleDictation);
   document.getElementById('receiptAttachBtn').addEventListener('click', () => document.getElementById('receiptFileInput').click());
   document.getElementById('receiptFileInput').addEventListener('change', handleReceiptFileSelected);
@@ -1277,12 +1897,13 @@ function init() {
   document.getElementById('photoLightboxClose').addEventListener('click', closePhotoLightbox);
   document.getElementById('photoLightbox').addEventListener('click', (e) => { if (e.target.id === 'photoLightbox') closePhotoLightbox(); });
 
-  ['searchInput', 'filterType', 'filterCategory', 'filterMonth'].forEach((id) => {
+  ['searchInput', 'filterType', 'filterAccount', 'filterCategory', 'filterMonth'].forEach((id) => {
     document.getElementById(id).addEventListener('input', renderTransactionsView);
   });
   document.getElementById('clearFilters').addEventListener('click', () => {
     document.getElementById('searchInput').value = '';
     document.getElementById('filterType').value = 'all';
+    document.getElementById('filterAccount').value = 'all';
     document.getElementById('filterCategory').value = 'all';
     document.getElementById('filterMonth').value = '';
     renderTransactionsView();
@@ -1294,11 +1915,8 @@ function init() {
 
   document.getElementById('budgetMonthSelect').addEventListener('change', renderBudgetsView);
 
-  document.getElementById('currencySelect').addEventListener('change', (e) => {
-    state.settings.currency = e.target.value;
-    saveState();
-    refreshCurrentView();
-  });
+  document.getElementById('addAccountForm').addEventListener('submit', handleAddAccountSubmit);
+  document.getElementById('addCategoryForm').addEventListener('submit', handleAddCategorySubmit);
 
   document.getElementById('exportBtn').addEventListener('click', exportData);
   document.getElementById('exportCsvBtn').addEventListener('click', exportCsvData);
@@ -1306,6 +1924,10 @@ function init() {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = '';
   });
+  document.getElementById('restoreCancelBtn').addEventListener('click', closeRestoreModal);
+  document.getElementById('restoreModalClose').addEventListener('click', closeRestoreModal);
+  document.getElementById('restoreConfirmBtn').addEventListener('click', confirmRestore);
+  document.getElementById('restoreModalOverlay').addEventListener('click', (e) => { if (e.target.id === 'restoreModalOverlay') closeRestoreModal(); });
   document.getElementById('resetBtn').addEventListener('click', resetAllData);
   document.getElementById('loadSampleBtn').addEventListener('click', loadSampleData);
 
@@ -1350,6 +1972,7 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!document.getElementById('photoLightbox').hidden) closePhotoLightbox();
+    else if (!document.getElementById('restoreModalOverlay').hidden) closeRestoreModal();
     else if (!document.getElementById('modalOverlay').hidden) closeTransactionModal();
     else if (!document.getElementById('pinModalOverlay').hidden) closePinModal(null);
   });

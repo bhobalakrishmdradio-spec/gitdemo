@@ -15,13 +15,13 @@
         <span class="brand-name">MyFinances</span>
       </div>
       <nav class="nav">
-        <button class="nav-btn active" data-view="dashboard">📊 Dashboard</button>
-        <button class="nav-btn" data-view="transactions">📒 Transactions</button>
-        <button class="nav-btn" data-view="budgets">🎯 Budgets</button>
-        <button class="nav-btn" data-view="settings">⚙️ Settings</button>
+        <button class="nav-btn active" data-view="dashboard" data-i18n="nav.dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-view="transactions" data-i18n="nav.transactions">📒 Transactions</button>
+        <button class="nav-btn" data-view="budgets" data-i18n="nav.budgets">🎯 Budgets</button>
+        <button class="nav-btn" data-view="settings" data-i18n="nav.settings">⚙️ Settings</button>
       </nav>
       <div class="sidebar-footer">
-        <button id="lockNowBtn" class="ghost-btn lock-now-btn" hidden>🔒 Lock now</button>
+        <button id="lockNowBtn" class="ghost-btn lock-now-btn" hidden data-i18n="lock.now">🔒 Lock now</button>
         <button id="themeToggle" class="ghost-btn" title="Toggle light/dark theme">🌙 Dark mode</button>
       </div>
     </aside>
@@ -29,15 +29,15 @@
     <!-- Main content -->
     <main class="main">
       <header class="topbar">
-        <h1 id="viewTitle">Dashboard</h1>
-        <button class="primary-btn" id="quickAddBtn">+ Add Transaction</button>
+        <h1 id="viewTitle" data-i18n="nav.dashboard">Dashboard</h1>
+        <button class="primary-btn" id="quickAddBtn" data-i18n="txn.add">+ Add Transaction</button>
       </header>
 
       <div id="backupReminder" class="reminder-banner" hidden>
         <span id="backupReminderText"></span>
         <div class="reminder-actions">
-          <button class="ghost-btn" id="backupRemindLaterBtn">Remind me later</button>
-          <button class="primary-btn" id="backupExportNowBtn">Export now</button>
+          <button class="ghost-btn" id="backupRemindLaterBtn" data-i18n="backup.later">Remind me later</button>
+          <button class="primary-btn" id="backupExportNowBtn" data-i18n="backup.exportNow">Export now</button>
         </div>
       </div>
 
@@ -45,27 +45,35 @@
       <section id="view-dashboard" class="view active">
         <div class="cards">
           <div class="card card-balance">
-            <div class="card-label">Total Balance</div>
-            <div class="card-value" id="statBalance">$0.00</div>
+            <div class="card-label" data-i18n="dash.totalBalance">Total Balance</div>
+            <div class="card-value" id="statBalance">₹0.00</div>
           </div>
           <div class="card card-income">
-            <div class="card-label">Income (this month)</div>
-            <div class="card-value" id="statIncome">$0.00</div>
+            <div class="card-label" data-i18n="dash.incomeMonth">Income (this month)</div>
+            <div class="card-value" id="statIncome">₹0.00</div>
           </div>
           <div class="card card-expense">
-            <div class="card-label">Expenses (this month)</div>
-            <div class="card-value" id="statExpense">$0.00</div>
+            <div class="card-label" data-i18n="dash.expenseMonth">Expenses (this month)</div>
+            <div class="card-value" id="statExpense">₹0.00</div>
           </div>
           <div class="card card-savings">
-            <div class="card-label">Savings Rate</div>
+            <div class="card-label" data-i18n="dash.savingsRate">Savings Rate</div>
             <div class="card-value" id="statSavingsRate">0%</div>
           </div>
+        </div>
+
+        <div class="panel" id="accountBalancesPanel">
+          <div class="panel-header">
+            <h2 data-i18n="dash.accounts">Accounts</h2>
+            <button class="link-btn" data-goto="settings" data-i18n="dash.manage">Manage →</button>
+          </div>
+          <div id="accountBalanceList" class="account-balance-list"></div>
         </div>
 
         <div class="dashboard-grid">
           <div class="panel">
             <div class="panel-header">
-              <h2>Spending by Category</h2>
+              <h2 data-i18n="dash.spendingByCategory">Spending by Category</h2>
               <select id="chartMonthSelect"></select>
             </div>
             <canvas id="categoryChart" width="360" height="260"></canvas>
@@ -74,7 +82,7 @@
 
           <div class="panel">
             <div class="panel-header">
-              <h2>Monthly Trend</h2>
+              <h2 data-i18n="dash.monthlyTrend">Monthly Trend</h2>
             </div>
             <canvas id="trendChart" width="500" height="260"></canvas>
           </div>
@@ -82,8 +90,8 @@
 
         <div class="panel">
           <div class="panel-header">
-            <h2>Recent Transactions</h2>
-            <button class="link-btn" data-goto="transactions">View all →</button>
+            <h2 data-i18n="dash.recentTxns">Recent Transactions</h2>
+            <button class="link-btn" data-goto="transactions" data-i18n="dash.viewAll">View all →</button>
           </div>
           <div id="recentList" class="txn-list"></div>
         </div>
@@ -93,33 +101,38 @@
       <section id="view-transactions" class="view">
         <div class="panel">
           <div class="filters">
-            <input type="text" id="searchInput" placeholder="🔍 Search description..." />
+            <input type="text" id="searchInput" placeholder="🔍 Search description..." data-i18n-placeholder="txn.search" />
             <select id="filterType">
-              <option value="all">All Types</option>
-              <option value="income">Income</option>
-              <option value="expense">Expense</option>
+              <option value="all" data-i18n="txn.allTypes">All Types</option>
+              <option value="income" data-i18n="txn.income">Income</option>
+              <option value="expense" data-i18n="txn.expense">Expense</option>
+              <option value="transfer" data-i18n="txn.transfer">Transfer</option>
+            </select>
+            <select id="filterAccount">
+              <option value="all" data-i18n="txn.allAccounts">All Accounts</option>
             </select>
             <select id="filterCategory">
-              <option value="all">All Categories</option>
+              <option value="all" data-i18n="txn.allCategories">All Categories</option>
             </select>
             <input type="month" id="filterMonth" />
-            <button class="ghost-btn" id="clearFilters">Clear</button>
+            <button class="ghost-btn" id="clearFilters" data-i18n="txn.clear">Clear</button>
           </div>
           <div class="table-wrap">
             <table class="txn-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Description</th>
-                  <th>Category</th>
-                  <th>Type</th>
-                  <th class="right">Amount</th>
+                  <th data-i18n="txn.date">Date</th>
+                  <th data-i18n="txn.description">Description</th>
+                  <th data-i18n="txn.account">Account</th>
+                  <th data-i18n="txn.category">Category</th>
+                  <th data-i18n="txn.type">Type</th>
+                  <th class="right" data-i18n="txn.amount">Amount</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="txnTableBody"></tbody>
             </table>
-            <p id="emptyState" class="empty-state" hidden>No transactions found. Add your first one!</p>
+            <p id="emptyState" class="empty-state" hidden data-i18n="txn.empty">No transactions found. Add your first one!</p>
           </div>
         </div>
       </section>
@@ -128,10 +141,10 @@
       <section id="view-budgets" class="view">
         <div class="panel">
           <div class="panel-header">
-            <h2>Monthly Budgets by Category</h2>
+            <h2 data-i18n="budget.title">Monthly Budgets by Category</h2>
             <select id="budgetMonthSelect"></select>
           </div>
-          <p class="muted">Set a monthly spending limit per expense category, then review any month against it — pick a month above.</p>
+          <p class="muted" data-i18n="budget.subtitle">Set a monthly spending limit per expense category for the selected month — each month keeps its own limits.</p>
           <div id="budgetList" class="budget-list"></div>
         </div>
       </section>
@@ -139,75 +152,103 @@
       <!-- SETTINGS VIEW -->
       <section id="view-settings" class="view">
         <details class="panel settings-panel">
-          <summary>Preferences</summary>
+          <summary data-i18n="settings.preferences">Preferences</summary>
           <div class="settings-row">
-            <label for="currencySelect">Currency</label>
-            <select id="currencySelect">
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="GBP">GBP (£)</option>
-              <option value="INR">INR (₹)</option>
-              <option value="JPY">JPY (¥)</option>
-              <option value="CAD">CAD ($)</option>
-              <option value="AUD">AUD ($)</option>
+            <label for="languageSelect" data-i18n="settings.language">Language</label>
+            <select id="languageSelect">
+              <option value="en">English</option>
+              <option value="ta">தமிழ் (Tamil)</option>
             </select>
+          </div>
+          <div class="settings-row">
+            <label data-i18n="settings.currency">Currency</label>
+            <span class="muted" data-i18n="settings.currencyValue">Indian Rupee (₹) — amounts are stored in paise</span>
           </div>
         </details>
 
         <details class="panel settings-panel" open>
-          <summary>Data Management</summary>
-          <p class="muted">All your data is stored locally in this browser (localStorage) — nothing is sent to a server.</p>
+          <summary data-i18n="settings.accounts">Accounts</summary>
+          <p class="muted" data-i18n="settings.accountsSubtitle">Cash or bank accounts you track. Each has its own opening balance; archiving keeps its history but hides it from new entries.</p>
+          <div id="accountList" class="manage-list"></div>
+          <form id="addAccountForm" class="inline-add-form">
+            <input type="text" id="newAccountName" placeholder="Account name" data-i18n-placeholder="settings.accountName" required />
+            <select id="newAccountType">
+              <option value="cash" data-i18n="settings.cash">Cash</option>
+              <option value="bank" data-i18n="settings.bank">Bank</option>
+            </select>
+            <input type="text" inputmode="decimal" id="newAccountOpeningBalance" placeholder="Opening balance" data-i18n-placeholder="settings.openingBalance" />
+            <button type="submit" class="ghost-btn" data-i18n="settings.addAccount">+ Add account</button>
+          </form>
+        </details>
+
+        <details class="panel settings-panel">
+          <summary data-i18n="settings.categories">Categories</summary>
+          <p class="muted" data-i18n="settings.categoriesSubtitle">Manage income and expense categories. Archiving keeps past transactions intact but hides the category from new entries.</p>
+          <div id="categoryList" class="manage-list"></div>
+          <form id="addCategoryForm" class="inline-add-form">
+            <input type="text" id="newCategoryName" placeholder="Category name" data-i18n-placeholder="settings.categoryName" required />
+            <select id="newCategoryType">
+              <option value="expense" data-i18n="txn.expense">Expense</option>
+              <option value="income" data-i18n="txn.income">Income</option>
+            </select>
+            <button type="submit" class="ghost-btn" data-i18n="settings.addCategory">+ Add category</button>
+          </form>
+        </details>
+
+        <details class="panel settings-panel">
+          <summary data-i18n="settings.dataManagement">Data Management</summary>
+          <p class="muted" data-i18n="settings.dataSubtitle">All your data is stored locally in this browser (localStorage) — nothing is sent to a server.</p>
           <p class="muted" id="lastBackupLabel">You haven't exported a backup yet.</p>
           <div class="settings-actions">
-            <button class="ghost-btn" id="exportBtn">⬇️ Export Data (JSON)</button>
-            <button class="ghost-btn" id="exportCsvBtn">⬇️ Export as CSV</button>
+            <button class="ghost-btn" id="exportBtn" data-i18n="settings.exportJson">⬇️ Export Data (JSON)</button>
+            <button class="ghost-btn" id="exportCsvBtn" data-i18n="settings.exportCsv">⬇️ Export as CSV</button>
             <label class="ghost-btn file-btn">
-              ⬆️ Import Data (JSON)
+              <span data-i18n="settings.importJson">⬆️ Import Data (JSON)</span>
               <input type="file" id="importInput" accept="application/json" hidden />
             </label>
-            <button class="danger-btn" id="resetBtn">🗑️ Reset All Data</button>
+            <button class="danger-btn" id="resetBtn" data-i18n="settings.resetAll">🗑️ Reset All Data</button>
           </div>
         </details>
 
         <details class="panel settings-panel">
-          <summary>App Lock</summary>
-          <p class="muted">Require a PIN to open MyFinances, and encrypt your data at rest on this device.</p>
+          <summary data-i18n="settings.appLock">App Lock</summary>
+          <p class="muted" data-i18n="settings.appLockSubtitle">Require a PIN to open MyFinances, and encrypt your data at rest on this device.</p>
           <button id="appLockToggle" class="theme-switch" aria-pressed="false" style="padding-left:0;">
             <span class="switch-track"><span class="switch-thumb"></span></span>
             <span class="switch-label" id="appLockToggleLabel">App Lock off</span>
           </button>
           <div class="settings-row" id="autoLockRow" hidden>
-            <label for="autoLockSelect">Auto-lock after</label>
+            <label for="autoLockSelect" data-i18n="settings.autoLockAfter">Auto-lock after</label>
             <select id="autoLockSelect">
               <option value="1">1 minute</option>
               <option value="5">5 minutes</option>
               <option value="15">15 minutes</option>
               <option value="30">30 minutes</option>
-              <option value="0">Never (manual lock only)</option>
+              <option value="0" data-i18n="settings.autoLockNever">Never (manual lock only)</option>
             </select>
           </div>
           <p class="muted" id="appLockStatusLabel" style="margin-top:8px;">Turn on to protect MyFinances with a PIN.</p>
         </details>
 
         <details class="panel settings-panel">
-          <summary>Backup Reminders</summary>
-          <p class="muted">Get a reminder banner on the dashboard when it's time to export a fresh backup.</p>
+          <summary data-i18n="settings.backupReminders">Backup Reminders</summary>
+          <p class="muted" data-i18n="settings.backupSubtitle">Get a reminder banner on the dashboard when it's time to export a fresh backup.</p>
           <div class="settings-row">
-            <label for="reminderFrequencySelect">Remind me</label>
+            <label for="reminderFrequencySelect" data-i18n="settings.remindMe">Remind me</label>
             <select id="reminderFrequencySelect">
-              <option value="0">Off</option>
-              <option value="3">Every 3 days</option>
-              <option value="7">Weekly</option>
-              <option value="14">Every 2 weeks</option>
-              <option value="30">Monthly</option>
+              <option value="0" data-i18n="settings.off">Off</option>
+              <option value="3" data-i18n="settings.every3days">Every 3 days</option>
+              <option value="7" data-i18n="settings.weekly">Weekly</option>
+              <option value="14" data-i18n="settings.every2weeks">Every 2 weeks</option>
+              <option value="30" data-i18n="settings.monthly">Monthly</option>
             </select>
           </div>
         </details>
 
         <details class="panel settings-panel">
-          <summary>Sample Data</summary>
-          <p class="muted">New here? Load a few example transactions to see how MyFinances works.</p>
-          <button class="ghost-btn" id="loadSampleBtn">Load Sample Data</button>
+          <summary data-i18n="settings.sampleData">Sample Data</summary>
+          <p class="muted" data-i18n="settings.sampleSubtitle">New here? Load a few example transactions to see how MyFinances works.</p>
+          <button class="ghost-btn" id="loadSampleBtn" data-i18n="settings.loadSample">Load Sample Data</button>
         </details>
       </section>
     </main>
@@ -217,17 +258,37 @@
   <div id="modalOverlay" class="modal-overlay" hidden>
     <div class="modal">
       <div class="modal-header">
-        <h2 id="modalTitle">Add Transaction</h2>
+        <h2 id="modalTitle" data-i18n="txn.add">Add Transaction</h2>
         <button class="icon-btn" id="modalClose">✕</button>
       </div>
       <form id="txnForm">
         <input type="hidden" id="txnId" />
         <div class="form-row type-toggle">
-          <button type="button" class="type-btn active" data-type="expense" id="typeExpenseBtn">💸 Expense</button>
-          <button type="button" class="type-btn" data-type="income" id="typeIncomeBtn">💵 Income</button>
+          <button type="button" class="type-btn active" data-type="expense" id="typeExpenseBtn">💸 <span data-i18n="txn.expense">Expense</span></button>
+          <button type="button" class="type-btn" data-type="income" id="typeIncomeBtn">💵 <span data-i18n="txn.income">Income</span></button>
+          <button type="button" class="type-btn" data-type="transfer" id="typeTransferBtn">🔁 <span data-i18n="txn.transfer">Transfer</span></button>
         </div>
+
+        <!-- Income/Expense fields -->
+        <div class="form-row" id="txnAccountRow">
+          <label for="txnAccount" data-i18n="txn.account">Account</label>
+          <select id="txnAccount" required></select>
+        </div>
+
+        <!-- Transfer-only fields -->
+        <div class="form-row two-col" id="txnTransferRow" hidden>
+          <div>
+            <label for="txnFromAccount" data-i18n="txn.fromAccount">From account</label>
+            <select id="txnFromAccount"></select>
+          </div>
+          <div>
+            <label for="txnToAccount" data-i18n="txn.toAccount">To account</label>
+            <select id="txnToAccount"></select>
+          </div>
+        </div>
+
         <div class="form-row">
-          <label for="txnDescription">Description</label>
+          <label for="txnDescription" data-i18n="txn.description">Description</label>
           <div class="input-with-btn">
             <input type="text" id="txnDescription" required placeholder="e.g. Grocery shopping" />
             <button type="button" class="mic-btn" id="voiceDictateBtn" title="Dictate description" aria-label="Dictate description">🎤</button>
@@ -235,23 +296,31 @@
         </div>
         <div class="form-row two-col">
           <div>
-            <label for="txnAmount">Amount</label>
-            <input type="number" id="txnAmount" step="0.01" min="0.01" required placeholder="0.00" />
+            <label for="txnAmount" data-i18n="txn.amount">Amount (₹)</label>
+            <input type="text" inputmode="decimal" id="txnAmount" required placeholder="0.00" />
+            <p class="field-error" id="txnAmountError" hidden data-i18n="txn.amountError">Enter an amount with at most 2 decimal places</p>
           </div>
           <div>
-            <label for="txnDate">Date</label>
+            <label for="txnDate" data-i18n="txn.date">Date</label>
             <input type="date" id="txnDate" required />
           </div>
         </div>
-        <div class="form-row">
-          <label for="txnCategory">Category</label>
+
+        <!-- Income/Expense-only fields -->
+        <div class="form-row" id="txnCategoryRow">
+          <label for="txnCategory" data-i18n="txn.category">Category</label>
           <div class="category-select-row">
             <span class="cat-color-dot" id="categoryColorDot"></span>
             <select id="txnCategory" required></select>
           </div>
         </div>
+        <div class="form-row" id="txnPaymentMethodRow">
+          <label for="txnPaymentMethod" data-i18n="txn.paymentMethod">Payment method</label>
+          <select id="txnPaymentMethod"></select>
+        </div>
+
         <div class="form-row">
-          <label for="txnNotes">Notes (optional)</label>
+          <label for="txnNotes" data-i18n="txn.notes">Notes (optional)</label>
           <textarea id="txnNotes" rows="2" placeholder="Any extra details..."></textarea>
         </div>
         <div class="form-row">
@@ -267,8 +336,8 @@
           </div>
         </div>
         <div class="form-actions">
-          <button type="button" class="ghost-btn" id="modalCancel">Cancel</button>
-          <button type="submit" class="primary-btn">Save Transaction</button>
+          <button type="button" class="ghost-btn" id="modalCancel" data-i18n="common.cancel">Cancel</button>
+          <button type="submit" class="primary-btn" data-i18n="common.save">Save Transaction</button>
         </div>
       </form>
     </div>
@@ -321,6 +390,22 @@
   <div id="photoLightbox" class="photo-lightbox" hidden>
     <button type="button" id="photoLightboxClose" class="photo-lightbox-close" aria-label="Close">✕</button>
     <img id="photoLightboxImg" alt="Receipt photo" />
+  </div>
+
+  <!-- Restore confirmation modal: shows a summary before replacing existing data -->
+  <div id="restoreModalOverlay" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 data-i18n="restore.title">Restore from backup?</h2>
+        <button class="icon-btn" id="restoreModalClose">✕</button>
+      </div>
+      <p class="muted" data-i18n="restore.subtitle">This will replace your current data. A recovery copy of what's on this device now will be kept until you close the app.</p>
+      <ul id="restoreSummary" class="restore-summary"></ul>
+      <div class="form-actions">
+        <button type="button" class="ghost-btn" id="restoreCancelBtn" data-i18n="common.cancel">Cancel</button>
+        <button type="button" class="danger-btn" id="restoreConfirmBtn" data-i18n="restore.confirm">Replace my data</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden>

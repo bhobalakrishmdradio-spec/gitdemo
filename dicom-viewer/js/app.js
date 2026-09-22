@@ -12,6 +12,7 @@
   var V = window.CTVolume;
   var VR = window.CTVolumeRenderer;
   var MEAS = window.CTMeasure;
+  var CODECS = window.CTCodecs;
 
   /* ---------------------------------------------------------------------
    * Constants
@@ -541,7 +542,8 @@
     var dataSet = dicomParser.parseDicom(byteArray);
 
     var transferSyntax = str(dataSet, "x00020010", "1.2.840.10008.1.2.1");
-    var syntaxKind = UNCOMPRESSED_TRANSFER_SYNTAXES[transferSyntax];
+    var syntaxKind = UNCOMPRESSED_TRANSFER_SYNTAXES[transferSyntax] ||
+      (CODECS.codecFor(transferSyntax) ? "encapsulated" : null);
 
     var rows = uint16(dataSet, "x00280010", 0);
     var columns = uint16(dataSet, "x00280011", 0);
@@ -588,6 +590,9 @@
       rows: rows,
       columns: columns,
       bitsAllocated: uint16(dataSet, "x00280100", 16),
+      // Bits Stored decides how many of the decoded bits are real samples,
+      // which matters once a codec hands back values modulo 2**16.
+      bitsStored: uint16(dataSet, "x00280101", uint16(dataSet, "x00280100", 16)),
       pixelRepresentation: uint16(dataSet, "x00280103", 0),
       samplesPerPixel: uint16(dataSet, "x00280002", 1),
       photometric: str(dataSet, "x00280004", "MONOCHROME2"),
@@ -630,39 +635,14 @@
     var cached = instance._frameCache[frameIndex];
     if (cached) return cached;
 
-    if (!instance.syntaxKind) {
-      throw new Error(
-        "Unsupported transfer syntax (" + instance.transferSyntax + "). " +
-        "This viewer supports uncompressed DICOM only. Re-export as " +
-        "Explicit/Implicit VR Little Endian, or convert with dcm2niix/GDCM first."
-      );
-    }
+    if (!instance.syntaxKind) throw new Error(unsupportedSyntaxMessage(instance.transferSyntax));
     if (!instance.pixelDataElement) throw new Error("File has no Pixel Data element.");
 
     var rows = instance.rows, cols = instance.columns;
     var samplesPerPixel = instance.samplesPerPixel;
-    var bytesPerSample = instance.bitsAllocated <= 8 ? 1 : 2;
-    var pixelsPerFrame = rows * cols * samplesPerPixel;
-    var bytesPerFrame = pixelsPerFrame * bytesPerSample;
-
-    var baseOffset = instance.pixelDataElement.dataOffset + frameIndex * bytesPerFrame;
-    var buffer = instance.byteArray.buffer;
-    var byteOffset = instance.byteArray.byteOffset + baseOffset;
-
-    var raw;
-    if (bytesPerSample === 1) {
-      raw = new Uint8Array(buffer, byteOffset, pixelsPerFrame);
-    } else if (instance.syntaxKind === "explicit-big-endian") {
-      // Rare (retired in modern DICOM) — byte-swap explicitly.
-      var swapped = new Uint16Array(pixelsPerFrame);
-      var dv = new DataView(buffer, byteOffset, pixelsPerFrame * 2);
-      for (var i = 0; i < pixelsPerFrame; i++) swapped[i] = dv.getUint16(i * 2, false);
-      raw = instance.pixelRepresentation === 1 ? new Int16Array(swapped.buffer) : swapped;
-    } else if (instance.pixelRepresentation === 1) {
-      raw = new Int16Array(buffer, byteOffset, pixelsPerFrame);
-    } else {
-      raw = new Uint16Array(buffer, byteOffset, pixelsPerFrame);
-    }
+    var raw = instance.syntaxKind === "encapsulated"
+      ? decodeCompressedFrame(instance, frameIndex)
+      : readNativeFrame(instance, frameIndex);
 
     var out = new Float32Array(rows * cols);
     var slope = instance.rescaleSlope, intercept = instance.rescaleIntercept;
@@ -684,6 +664,67 @@
     var result = { values: out, min: min, max: max };
     instance._frameCache[frameIndex] = result;
     return result;
+  }
+
+  /** Pixel samples straight out of an uncompressed Pixel Data element. */
+  function readNativeFrame(instance, frameIndex) {
+    var samplesPerPixel = instance.samplesPerPixel;
+    var bytesPerSample = instance.bitsAllocated <= 8 ? 1 : 2;
+    var pixelsPerFrame = instance.rows * instance.columns * samplesPerPixel;
+    var bytesPerFrame = pixelsPerFrame * bytesPerSample;
+
+    var baseOffset = instance.pixelDataElement.dataOffset + frameIndex * bytesPerFrame;
+    var buffer = instance.byteArray.buffer;
+    var byteOffset = instance.byteArray.byteOffset + baseOffset;
+
+    if (bytesPerSample === 1) return new Uint8Array(buffer, byteOffset, pixelsPerFrame);
+    if (instance.syntaxKind === "explicit-big-endian") {
+      // Rare (retired in modern DICOM) — byte-swap explicitly.
+      var swapped = new Uint16Array(pixelsPerFrame);
+      var dv = new DataView(buffer, byteOffset, pixelsPerFrame * 2);
+      for (var i = 0; i < pixelsPerFrame; i++) swapped[i] = dv.getUint16(i * 2, false);
+      return instance.pixelRepresentation === 1 ? new Int16Array(swapped.buffer) : swapped;
+    }
+    if (instance.pixelRepresentation === 1) return new Int16Array(buffer, byteOffset, pixelsPerFrame);
+    return new Uint16Array(buffer, byteOffset, pixelsPerFrame);
+  }
+
+  /**
+   * Pull one frame out of encapsulated (compressed) Pixel Data and decode it.
+   *
+   * Compressed frames are carried as fragments after a Basic Offset Table.
+   * When that table is present it says where each frame starts; when it is
+   * absent the common case is one fragment per frame, which is what the
+   * fallback assumes.
+   */
+  function decodeCompressedFrame(instance, frameIndex) {
+    var element = instance.pixelDataElement;
+    var bytes;
+    try {
+      bytes = element.basicOffsetTable && element.basicOffsetTable.length
+        ? dicomParser.readEncapsulatedImageFrame(instance.dataSet, element, frameIndex)
+        : dicomParser.readEncapsulatedPixelDataFromFragments(instance.dataSet, element, frameIndex);
+    } catch (err) {
+      throw new Error("Could not read compressed frame " + (frameIndex + 1) + ": " + err.message);
+    }
+    return CODECS.decodeFrame(instance.transferSyntax, bytes, {
+      rows: instance.rows,
+      columns: instance.columns,
+      samplesPerPixel: instance.samplesPerPixel,
+      bitsAllocated: instance.bitsAllocated,
+      bitsStored: instance.bitsStored,
+      pixelRepresentation: instance.pixelRepresentation,
+    });
+  }
+
+  /** Name the transfer syntax and say what to do about it. */
+  function unsupportedSyntaxMessage(transferSyntax) {
+    var name = CODECS.describeSyntax(transferSyntax);
+    var what = name ? name + " (" + transferSyntax + ")" : "transfer syntax " + transferSyntax;
+    return "This file uses " + what + ", which this viewer cannot decode. " +
+      "It reads uncompressed DICOM, RLE Lossless and JPEG Lossless. " +
+      "Re-export the study as uncompressed, or convert it first with " +
+      "dcmdjpeg (DCMTK), gdcmconv --raw, or dcm2niix.";
   }
 
   /** Decode helper shaped for the volume builder. */

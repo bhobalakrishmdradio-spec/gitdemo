@@ -192,13 +192,17 @@ reconstructed.
 
 ## What it does and doesn't support
 
-- Supports uncompressed pixel data: **Implicit VR Little Endian**, **Explicit
-  VR Little Endian**, and **Explicit VR Big Endian** transfer syntaxes — this
-  covers the majority of CT exports.
-- Does **not** decode compressed transfer syntaxes (JPEG Baseline/Lossless,
-  JPEG 2000, RLE). If a file uses one, the viewer says so instead of failing
-  silently — re-export as uncompressed, or convert it first with a tool such
-  as `dcmdjpeg`/GDCM/dcm2niix.
+- **Reads, uncompressed:** Implicit VR Little Endian, Explicit VR Little
+  Endian, Explicit VR Big Endian.
+- **Decodes, compressed:** **RLE Lossless** (`…1.2.5`) and **JPEG Lossless**,
+  both the plain and first-order-prediction forms (`…1.2.4.57`, `…1.2.4.70`).
+  These are the schemes most scanners and PACS use for archived CT. Both are
+  mathematically lossless, so the Hounsfield Units are exactly the scanner's —
+  see the verification table below.
+- **Does not decode:** lossy JPEG, JPEG-LS, JPEG 2000, and the deflated and
+  video syntaxes. A file using one of these is **named** in the error, with
+  the conversion command to run (`dcmdjpeg`, `gdcmconv --raw`, `dcm2niix`),
+  rather than failing as a generic "unsupported".
 - Reslicing covers the three orthogonal planes and **arbitrary oblique**
   planes. **Curved-planar** reformats (following a vessel centreline) are not
   implemented.
@@ -231,6 +235,7 @@ dicom-viewer/
   index.html                    # Workstation layout
   css/styles.css                # Dark radiology-console theme
   js/app.js                     # Parsing, UI, pane grid, MPR viewports, interaction
+  js/codecs.js                  # RLE and JPEG Lossless pixel decoders
   js/volume.js                  # Volume build, orthogonal + oblique reslicing, slab/MIP, bone mask
   js/measure.js                 # Distance / angle / ROI math and calibration
   js/vr.js                      # WebGL2 raymarching volume renderer
@@ -280,6 +285,22 @@ a plane tilted to match it must see the true circle:
 | Diameter across / along the tilt, corrected | 36 / 36 mm | 36 / 35 mm |
 | Reported tilt of each companion plane | 30.00° | 30.00° |
 | Crosshair mm → slice indices → mm | round-trips | exact |
+
+### Compressed pixel data
+
+The decoders are checked two ways. Each JPEG Lossless fixture is decoded by
+[pylibjpeg-libjpeg](https://github.com/pydicom/pylibjpeg-libjpeg) — an
+independent C implementation — before being used, so the JavaScript decoder
+is only ever compared against a bitstream a third party already agrees on.
+RLE fixtures come from pydicom's own encoder.
+
+| Quantity | Expected | Measured |
+| --- | --- | --- |
+| 13 codec fixtures (8/12/16-bit, signed, 1×N and N×1 shapes) | every sample exact | 0 differences |
+| Same CT series as uncompressed vs. RLE | identical volume | identical, voxel for voxel |
+| Same CT series as uncompressed vs. JPEG Lossless | identical volume | identical, voxel for voxel |
+| ROI over a 300 HU lesion (σ=8 noise), decoded from JPEG | 300 HU | 299.1 ± 8.7 HU |
+| Corrupt or truncated streams | reported | raised, never silently wrong |
 
 ## Privacy
 

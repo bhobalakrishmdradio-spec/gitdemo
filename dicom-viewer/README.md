@@ -17,10 +17,19 @@ radiologist's report and your official imaging system for clinical decisions.
   (drag-and-drop onto the window also works, including whole folders).
 - **Automatic series grouping** — instances are grouped by Series Instance
   UID and sorted by slice position / instance number.
-- **Window/Level** — left-drag on any plane (horizontal = width, vertical =
-  level), manual numeric entry, or one-click presets: Lung, Bone, Brain, Soft
-  Tissue, Abdomen, Mediastinum, Angio. Each image's Rescale Slope/Intercept is
+- **Window/Level** — left-drag on any plane: **right** widens the window,
+  **left** narrows it, **down** darkens and **up** brightens. There is also
+  manual numeric entry and one-click presets: Lung, Bone, Brain, Soft Tissue,
+  Abdomen, Mediastinum, Angio. Each image's Rescale Slope/Intercept is
   applied, so values are windowed in real Hounsfield Units.
+
+  The drag is **scale-invariant**: the width moves multiplicatively (160 px
+  doubles or halves it, wherever you start) and the level steps in proportion
+  to the current width (250 px shifts it by one whole window). A fixed step
+  per pixel cannot serve both ends of CT — the same step that is barely
+  visible on a lung window (W1500) throws a brain window (W80) past its own
+  width in a twitch — so the gesture feels identical on every preset, and the
+  width cannot be slammed to zero by one long drag.
 - **Invert, zoom, pan, crosshair**, and a per-viewport slice scrubber.
 
 ### Multiplanar reconstruction (MPR)
@@ -211,7 +220,7 @@ reconstructed.
 | `I` | Invert grayscale |
 | `R` | Reset views |
 
-Mouse: left-drag = window/level · wheel = change slice · Shift+wheel = zoom ·
+Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
 two planes (oblique MPR)** · double-click = expand a pane and back.
 

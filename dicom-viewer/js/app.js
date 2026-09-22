@@ -40,6 +40,20 @@
   var VR_WINDOW_LOW = -1024;
   var VR_WINDOW_HIGH = 3071;
 
+  /* Window/level drag response.
+   *
+   * A fixed number of HU per pixel cannot work across the windows CT
+   * actually uses: the same step that is barely perceptible on a lung window
+   * (W1500) swings a brain window (W80) past its own width in a twitch. So
+   * the width moves multiplicatively and the level steps in proportion to
+   * the current width, which makes the gesture scale-invariant — it feels
+   * identical wherever you start.
+   */
+  var WL_WIDTH_DOUBLE_PX = 160;   // drag this far right to double the width
+  var WL_LEVEL_SPAN_PX = 250;     // drag this far down to shift level by one width
+  var WL_MIN_WIDTH = 1;
+  var WL_MAX_WIDTH = 20000;
+
   /* Viewport layouts.
    *
    * A layout is a grid plus the planes its panes start out showing. Panes are
@@ -2551,7 +2565,11 @@
     }
 
     if (drag.mode === "wl") {
-      var ww = Math.max(1, drag.ww + dx * 2), wc = drag.wc - dy * 2;
+      // Seeded from the window at mousedown, so the gesture never drifts.
+      var ww = Math.max(WL_MIN_WIDTH, Math.min(WL_MAX_WIDTH,
+        drag.ww * Math.pow(2, dx / WL_WIDTH_DOUBLE_PX)));
+      // Down darkens, up brightens — the convention every mainstream viewer uses.
+      var wc = drag.wc + (dy * drag.ww) / WL_LEVEL_SPAN_PX;
       var cell = state.cells[drag.cell];
       if (cell && cell.wl) {
         // This pane has its own window, so keep the drag local to it.

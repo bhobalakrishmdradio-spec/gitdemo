@@ -36,6 +36,7 @@ const TRANSLATIONS = {
     'txn.type': 'Type', 'txn.amount': 'Amount', 'txn.empty': 'No transactions found. Add your first one!',
     'txn.fromAccount': 'From account', 'txn.toAccount': 'To account', 'txn.paymentMethod': 'Payment method',
     'txn.notes': 'Notes (optional)', 'txn.amountError': 'Enter an amount with at most 2 decimal places',
+    'txn.upiId': 'UPI ID (optional)', 'txn.scanScreenshot': 'Scan UPI screenshot', 'txn.showDetectedText': 'Show detected text',
     'backup.later': 'Remind me later', 'backup.exportNow': 'Export now',
     'dash.totalBalance': 'Total Balance', 'dash.incomeMonth': 'Income (this month)', 'dash.expenseMonth': 'Expenses (this month)',
     'dash.savingsRate': 'Savings Rate', 'dash.accounts': 'Accounts', 'dash.manage': 'Manage →',
@@ -87,6 +88,11 @@ const TRANSLATIONS = {
     'toast.dataCleared': 'All data cleared', 'toast.sampleLoaded': 'Sample data loaded',
     'toast.storageBlocked': "Couldn't save - your browser is blocking local storage",
     'toast.invalidBackup': "That doesn't look like a MyFinances backup file",
+    'toast.ocrReading': 'Reading screenshot… this can take a few seconds',
+    'toast.ocrDone': "Detected what we could — please check before saving",
+    'toast.ocrNoneFound': "Couldn't confidently detect anything - check the text below or enter details manually",
+    'toast.ocrLoadFailed': "Couldn't load the screenshot reader (needs an internet connection the first time) - enter details manually",
+    'toast.ocrFailed': "Couldn't read that screenshot - enter details manually",
   },
   ta: {
     'nav.dashboard': '📊 முகப்பு', 'nav.transactions': '📒 பரிவர்த்தனைகள்', 'nav.budgets': '🎯 பட்ஜெட்', 'nav.settings': '⚙️ அமைப்புகள்',
@@ -100,6 +106,7 @@ const TRANSLATIONS = {
     'txn.type': 'வகைப்பாடு', 'txn.amount': 'தொகை', 'txn.empty': 'பரிவர்த்தனைகள் இல்லை. உங்கள் முதல் பரிவர்த்தனையைச் சேர்க்கவும்!',
     'txn.fromAccount': 'இருந்து கணக்கு', 'txn.toAccount': 'செல்லும் கணக்கு', 'txn.paymentMethod': 'கட்டண முறை',
     'txn.notes': 'குறிப்புகள் (விருப்பம்)', 'txn.amountError': 'அதிகபட்சம் 2 தசம இடங்களுடன் தொகையை உள்ளிடவும்',
+    'txn.upiId': 'UPI ஐடி (விருப்பம்)', 'txn.scanScreenshot': 'UPI ஸ்கிரீன்ஷாட்டைப் படி', 'txn.showDetectedText': 'கண்டறியப்பட்ட உரையைக் காட்டு',
     'backup.later': 'பின்னர் நினைவூட்டு', 'backup.exportNow': 'இப்போது ஏற்றுமதி செய்',
     'dash.totalBalance': 'மொத்த இருப்பு', 'dash.incomeMonth': 'வரவு (இந்த மாதம்)', 'dash.expenseMonth': 'செலவு (இந்த மாதம்)',
     'dash.savingsRate': 'சேமிப்பு விகிதம்', 'dash.accounts': 'கணக்குகள்', 'dash.manage': 'நிர்வகி →',
@@ -155,6 +162,11 @@ const TRANSLATIONS = {
     'toast.dataCleared': 'அனைத்து தரவும் அழிக்கப்பட்டது', 'toast.sampleLoaded': 'மாதிரி தரவு ஏற்றப்பட்டது',
     'toast.storageBlocked': 'சேமிக்க முடியவில்லை - உங்கள் உலாவி உள்ளூர் சேமிப்பகத்தைத் தடுக்கிறது',
     'toast.invalidBackup': 'இது MyFinances காப்புப்பிரதி கோப்பு போல் தெரியவில்லை',
+    'toast.ocrReading': 'ஸ்கிரீன்ஷாட் படிக்கப்படுகிறது… சில நொடிகள் ஆகலாம்',
+    'toast.ocrDone': 'முடிந்தவரை கண்டறியப்பட்டது - சேமிக்கும் முன் சரிபார்க்கவும்',
+    'toast.ocrNoneFound': 'உறுதியாக எதையும் கண்டறிய முடியவில்லை - கீழே உள்ள உரையைப் பார்க்கவும் அல்லது கைமுறையாக உள்ளிடவும்',
+    'toast.ocrLoadFailed': 'ஸ்கிரீன்ஷாட் ரீடரை ஏற்ற முடியவில்லை (முதல் முறை இணைய இணைப்பு தேவை) - கைமுறையாக உள்ளிடவும்',
+    'toast.ocrFailed': 'அந்த ஸ்கிரீன்ஷாட்டைப் படிக்க முடியவில்லை - கைமுறையாக உள்ளிடவும்',
   },
 };
 
@@ -823,7 +835,7 @@ function txnRowHTML(t) {
   } else {
     const info = categoryInfo(t.categoryId);
     const acct = accountInfo(t.accountId);
-    metaLine = `${info.icon} ${escapeHTML(info.name)} · ${escapeHTML(acct.name)} · ${formatDate(t.date)}`;
+    metaLine = `${info.icon} ${escapeHTML(info.name)} · ${escapeHTML(acct.name)} · ${formatDate(t.date)}${t.upiId ? ` · ${escapeHTML(t.upiId)}` : ''}`;
     sign = t.type === 'income' ? '+' : '−';
     amtClass = t.type;
   }
@@ -901,7 +913,7 @@ function renderTransactionsView() {
     }
     return `<tr data-id="${t.id}">
       <td>${formatDate(t.date)}</td>
-      <td>${escapeHTML(t.description)}${receiptMarkerHTML(t)}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
+      <td>${escapeHTML(t.description)}${receiptMarkerHTML(t)}${t.upiId ? `<div class="txn-meta">${escapeHTML(t.upiId)}</div>` : ''}${t.notes ? `<div class="txn-meta">${escapeHTML(t.notes)}</div>` : ''}</td>
       <td>${accountCell}</td>
       <td>${categoryCell}</td>
       <td>${typeLabel}</td>
@@ -1048,6 +1060,11 @@ function populatePaymentMethodSelect() {
   select.innerHTML = PAYMENT_METHODS.map((p) => `<option value="${p.id}">${escapeHTML(i18n(p.labelKey))}</option>`).join('');
 }
 
+function updateUpiIdRowVisibility() {
+  const method = document.getElementById('txnPaymentMethod').value;
+  document.getElementById('txnUpiIdRow').hidden = method !== 'upi';
+}
+
 function populateCategorySelect(type, includeCategoryId) {
   let cats = activeCategories(type);
   if (includeCategoryId && !cats.find((c) => c.id === includeCategoryId)) {
@@ -1100,6 +1117,8 @@ function openTransactionModal(txn) {
   document.getElementById('txnNotes').value = txn ? (txn.notes || '') : '';
   document.getElementById('txnAmountError').hidden = true;
 
+  document.getElementById('txnUpiId').value = txn ? (txn.upiId || '') : '';
+
   if (txn && txn.type === 'transfer') {
     document.getElementById('txnFromAccount').value = txn.fromAccountId;
     document.getElementById('txnToAccount').value = txn.toAccountId;
@@ -1113,8 +1132,12 @@ function openTransactionModal(txn) {
     document.getElementById('txnPaymentMethod').value = 'cash';
   }
   updateCategoryColorDot();
+  updateUpiIdRowVisibility();
 
   pendingReceiptImage = txn && txn.receiptImage ? txn.receiptImage : null;
+  ocrRawText = '';
+  document.getElementById('ocrTextDetails').hidden = true;
+  document.getElementById('receiptStatus').hidden = true;
   renderReceiptPreview();
 
   overlay.hidden = false;
@@ -1161,12 +1184,16 @@ function handleTransactionSubmit(e) {
     const paymentMethod = document.getElementById('txnPaymentMethod').value;
     if (!accountId || !categoryId) { showToast(i18n('toast.fillRequired')); return; }
     extra = { accountId, categoryId, paymentMethod };
+    if (paymentMethod === 'upi') {
+      const upiId = document.getElementById('txnUpiId').value.trim();
+      if (upiId) extra.upiId = upiId;
+    }
   }
 
   const now = Date.now();
   if (id) {
     const txn = state.transactions.find((t) => t.id === id);
-    delete txn.accountId; delete txn.categoryId; delete txn.paymentMethod;
+    delete txn.accountId; delete txn.categoryId; delete txn.paymentMethod; delete txn.upiId;
     delete txn.fromAccountId; delete txn.toAccountId;
     Object.assign(txn, { type: currentTxnType, description, amountPaise, date, notes, updatedAt: now }, extra);
     if (pendingReceiptImage) txn.receiptImage = pendingReceiptImage;
@@ -1223,13 +1250,16 @@ function renderReceiptPreview() {
   const preview = document.getElementById('receiptPreview');
   const thumb = document.getElementById('receiptThumb');
   const attachBtn = document.getElementById('receiptAttachBtn');
+  const scanBtn = document.getElementById('receiptScanBtn');
   if (pendingReceiptImage) {
     thumb.src = pendingReceiptImage;
     preview.hidden = false;
-    attachBtn.textContent = '📷 Replace receipt photo';
+    attachBtn.textContent = '📷 Replace photo';
+    scanBtn.hidden = false;
   } else {
     preview.hidden = true;
     attachBtn.textContent = '📷 Add receipt photo';
+    scanBtn.hidden = true;
   }
 }
 
@@ -1243,6 +1273,9 @@ async function handleReceiptFileSelected(e) {
   }
   try {
     pendingReceiptImage = await compressImageFile(file, 900, 0.72);
+    ocrRawText = '';
+    document.getElementById('ocrTextDetails').hidden = true;
+    document.getElementById('receiptStatus').hidden = true;
     renderReceiptPreview();
   } catch (err) {
     console.error('Receipt compress failed', err);
@@ -1252,7 +1285,87 @@ async function handleReceiptFileSelected(e) {
 
 function removeReceiptPhoto() {
   pendingReceiptImage = null;
+  ocrRawText = '';
+  document.getElementById('ocrTextDetails').hidden = true;
+  document.getElementById('receiptStatus').hidden = true;
   renderReceiptPreview();
+}
+
+/* ---------- UPI screenshot: in-browser OCR (Tesseract.js), fully offline after first load ---------- */
+let ocrRawText = '';
+let tesseractLoadPromise = null;
+
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (tesseractLoadPromise) return tesseractLoadPromise;
+  tesseractLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    script.onload = () => { window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract did not load')); };
+    script.onerror = () => reject(new Error('Could not load the screenshot reader script'));
+    document.head.appendChild(script);
+  });
+  return tesseractLoadPromise;
+}
+
+// Common UPI payment-service-provider handles, used only to prefer a higher-confidence
+// match when a screenshot's OCR text contains more than one name@handle-looking token.
+const UPI_HANDLES = ['ybl', 'okhdfcbank', 'okicici', 'oksbi', 'okaxis', 'paytm', 'ibl', 'axl', 'apl', 'sbi', 'icici', 'hdfcbank', 'axisbank', 'idfcbank', 'upi', 'yesbank', 'kotak'];
+
+function extractUpiFields(text) {
+  const result = { upiId: null, amount: null, description: null };
+
+  const vpaCandidates = text.match(/\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}\b/g) || [];
+  const preferred = vpaCandidates.find((v) => UPI_HANDLES.some((h) => v.toLowerCase().endsWith('@' + h)));
+  if (preferred) result.upiId = preferred;
+  else if (vpaCandidates.length) result.upiId = vpaCandidates[0];
+
+  const amountMatch = text.match(/(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d{1,2})?)/i);
+  if (amountMatch) {
+    const cleaned = amountMatch[1].replace(/,/g, '');
+    if (/^\d+(\.\d{1,2})?$/.test(cleaned)) result.amount = cleaned;
+  }
+
+  const nameMatch = text.match(/(?:Paid to|Payment to|Sent to|Received from|Paid by|From)\s*[:\-]?\s*([A-Za-z][A-Za-z .]{2,40})/i);
+  if (nameMatch) result.description = nameMatch[1].trim();
+
+  return result;
+}
+
+async function scanUpiScreenshot() {
+  if (!pendingReceiptImage) return;
+  const statusEl = document.getElementById('receiptStatus');
+  const scanBtn = document.getElementById('receiptScanBtn');
+  statusEl.hidden = false;
+  statusEl.textContent = i18n('toast.ocrReading');
+  scanBtn.disabled = true;
+
+  try {
+    const Tesseract = await loadTesseract().catch(() => { throw { ocrLoadFailed: true }; });
+    const { data } = await Tesseract.recognize(pendingReceiptImage, 'eng');
+    ocrRawText = data.text || '';
+    document.getElementById('ocrTextRaw').textContent = ocrRawText || '(no text detected)';
+    document.getElementById('ocrTextDetails').hidden = false;
+
+    const fields = extractUpiFields(ocrRawText);
+    let foundAny = false;
+    if (fields.upiId) { document.getElementById('txnUpiId').value = fields.upiId; foundAny = true; }
+    if (fields.amount) { document.getElementById('txnAmount').value = fields.amount; foundAny = true; }
+    if (fields.description) { document.getElementById('txnDescription').value = fields.description.slice(0, 80); foundAny = true; }
+    if (fields.upiId && document.getElementById('txnPaymentMethod').value !== 'upi') {
+      document.getElementById('txnPaymentMethod').value = 'upi';
+      updateUpiIdRowVisibility();
+    }
+
+    statusEl.hidden = true;
+    showToast(foundAny ? i18n('toast.ocrDone') : i18n('toast.ocrNoneFound'));
+  } catch (e) {
+    console.error('UPI screenshot scan failed', e);
+    statusEl.hidden = true;
+    showToast(e && e.ocrLoadFailed ? i18n('toast.ocrLoadFailed') : i18n('toast.ocrFailed'));
+  } finally {
+    scanBtn.disabled = false;
+  }
 }
 
 /* ---------- Accounts management (Settings) ---------- */
@@ -1678,7 +1791,7 @@ function csvSafeText(value) {
 }
 
 function buildCsv() {
-  const header = ['Date', 'Type', 'Account', 'From Account', 'To Account', 'Category', 'Payment Method', 'Description', 'Amount (INR)', 'Notes'];
+  const header = ['Date', 'Type', 'Account', 'From Account', 'To Account', 'Category', 'Payment Method', 'UPI ID', 'Description', 'Amount (INR)', 'Notes'];
   const rows = [...state.transactions]
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt)
     .map((t) => {
@@ -1686,7 +1799,7 @@ function buildCsv() {
         return [
           csvEscape(t.date), csvEscape('Transfer'), csvEscape(''),
           csvSafeText(accountInfo(t.fromAccountId).name), csvSafeText(accountInfo(t.toAccountId).name),
-          csvEscape(''), csvEscape(''), csvSafeText(t.description), csvEscape((t.amountPaise / 100).toFixed(2)), csvSafeText(t.notes || ''),
+          csvEscape(''), csvEscape(''), csvEscape(''), csvSafeText(t.description), csvEscape((t.amountPaise / 100).toFixed(2)), csvSafeText(t.notes || ''),
         ].join(',');
       }
       const info = categoryInfo(t.categoryId);
@@ -1694,7 +1807,7 @@ function buildCsv() {
       return [
         csvEscape(t.date), csvEscape(t.type === 'income' ? 'Income' : 'Expense'), csvSafeText(accountInfo(t.accountId).name),
         csvEscape(''), csvEscape(''), csvSafeText(info.name), csvEscape(paymentMethodLabel(t.paymentMethod)),
-        csvSafeText(t.description), csvEscape(signedRupees.toFixed(2)), csvSafeText(t.notes || ''),
+        csvSafeText(t.upiId || ''), csvSafeText(t.description), csvEscape(signedRupees.toFixed(2)), csvSafeText(t.notes || ''),
       ].join(',');
     });
   const headerRow = header.map(csvEscape).join(',');
@@ -1883,6 +1996,7 @@ function init() {
   });
   document.getElementById('txnForm').addEventListener('submit', handleTransactionSubmit);
   document.getElementById('txnCategory').addEventListener('change', updateCategoryColorDot);
+  document.getElementById('txnPaymentMethod').addEventListener('change', updateUpiIdRowVisibility);
   document.getElementById('typeExpenseBtn').addEventListener('click', () => setTypeButtons('expense'));
   document.getElementById('typeIncomeBtn').addEventListener('click', () => setTypeButtons('income'));
   document.getElementById('typeTransferBtn').addEventListener('click', () => {
@@ -1893,6 +2007,7 @@ function init() {
   document.getElementById('receiptAttachBtn').addEventListener('click', () => document.getElementById('receiptFileInput').click());
   document.getElementById('receiptFileInput').addEventListener('change', handleReceiptFileSelected);
   document.getElementById('receiptRemoveBtn').addEventListener('click', removeReceiptPhoto);
+  document.getElementById('receiptScanBtn').addEventListener('click', scanUpiScreenshot);
   document.getElementById('receiptThumbBtn').addEventListener('click', () => openPhotoLightbox(pendingReceiptImage));
   document.getElementById('photoLightboxClose').addEventListener('click', closePhotoLightbox);
   document.getElementById('photoLightbox').addEventListener('click', (e) => { if (e.target.id === 'photoLightbox') closePhotoLightbox(); });

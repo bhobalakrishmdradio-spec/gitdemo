@@ -318,6 +318,10 @@
           <label for="txnPaymentMethod" data-i18n="txn.paymentMethod">Payment method</label>
           <select id="txnPaymentMethod"></select>
         </div>
+        <div class="form-row" id="txnUpiIdRow" hidden>
+          <label for="txnUpiId" data-i18n="txn.upiId">UPI ID (optional)</label>
+          <input type="text" id="txnUpiId" placeholder="e.g. name@bank" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        </div>
 
         <div class="form-row">
           <label for="txnNotes" data-i18n="txn.notes">Notes (optional)</label>
@@ -326,6 +330,7 @@
         <div class="form-row">
           <div class="receipt-field">
             <button type="button" class="ghost-btn" id="receiptAttachBtn">📷 Add receipt photo</button>
+            <button type="button" class="ghost-btn" id="receiptScanBtn" hidden>🔎 <span data-i18n="txn.scanScreenshot">Scan UPI screenshot</span></button>
             <input type="file" id="receiptFileInput" accept="image/*" hidden />
             <div class="receipt-preview" id="receiptPreview" hidden>
               <button type="button" id="receiptThumbBtn" aria-label="View receipt photo" title="View full-size">
@@ -334,6 +339,11 @@
               <button type="button" class="receipt-remove-btn" id="receiptRemoveBtn" aria-label="Remove photo">✕</button>
             </div>
           </div>
+          <p class="receipt-status" id="receiptStatus" hidden></p>
+          <details class="ocr-text-details" id="ocrTextDetails" hidden>
+            <summary data-i18n="txn.showDetectedText">Show detected text</summary>
+            <pre id="ocrTextRaw" class="ocr-text-raw"></pre>
+          </details>
         </div>
         <div class="form-actions">
           <button type="button" class="ghost-btn" id="modalCancel" data-i18n="common.cancel">Cancel</button>

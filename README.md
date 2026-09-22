@@ -12,7 +12,19 @@ never leaves your device.
   balance; archive an account without losing its history.
 - **Transactions** — income, expense, or transfer between two accounts;
   category, payment method (cash/UPI/card/bank transfer/other), description,
-  optional notes, and an optional receipt photo you can view later.
+  optional notes, and an optional receipt photo you can view later. UPI
+  transactions can save the other party's UPI ID.
+- **Scan a UPI screenshot** — attach a payment screenshot (Google Pay,
+  PhonePe, Paytm, etc.) and tap "Scan UPI screenshot" to try to auto-fill
+  the UPI ID, amount, and sender/recipient name, using on-device OCR
+  ([Tesseract.js](https://github.com/naptha/tesseract.js), loaded from a
+  CDN the first time — needs internet then, works offline after). The
+  screenshot itself is never uploaded anywhere; only the OCR library files
+  are fetched. This is regex-based best-effort text extraction, not AI —
+  it can misread a screenshot, especially across different UPI apps'
+  layouts, so always review the filled-in fields before saving. The raw
+  detected text is shown so you can copy details by hand if it gets it
+  wrong.
 - **Dashboard** — total balance across all accounts, per-account balances,
   monthly income/expenses, savings rate, a category spending donut chart,
   and a 6-month income/expense trend chart.

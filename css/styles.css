@@ -422,6 +422,16 @@ details.settings-panel[open] summary { margin-bottom: 12px; }
 }
 .receipt-marker:hover { opacity: 1; }
 
+.receipt-status { font-size: 0.8rem; color: var(--text-muted); margin: 6px 0 0; }
+.receipt-status[hidden] { display: none; }
+.ocr-text-details { margin-top: 8px; font-size: 0.8rem; }
+.ocr-text-details[hidden] { display: none; }
+.ocr-text-details summary { cursor: pointer; color: var(--text-muted); }
+.ocr-text-raw {
+  white-space: pre-wrap; word-break: break-word; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; margin-top: 6px; max-height: 140px; overflow-y: auto; font-size: 0.78rem;
+}
+
 .photo-lightbox {
   position: fixed; inset: 0; z-index: 300; background: rgba(10, 12, 16, 0.88);
   display: flex; align-items: center; justify-content: center; padding: 24px;

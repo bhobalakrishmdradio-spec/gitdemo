@@ -39,6 +39,7 @@ const TRANSLATIONS = {
     'txn.upiId': 'UPI ID (optional)', 'txn.scanScreenshot': 'Scan UPI screenshot', 'txn.showDetectedText': 'Show detected text',
     'backup.later': 'Remind me later', 'backup.exportNow': 'Export now',
     'dash.totalBalance': 'Total Balance', 'dash.incomeMonth': 'Income (this month)', 'dash.expenseMonth': 'Expenses (this month)',
+    'dash.salaryMonth': 'Salary (this month)', 'dash.otherIncomeMonth': 'Other Income (this month)',
     'dash.savingsRate': 'Savings Rate', 'dash.accounts': 'Accounts', 'dash.manage': 'Manage →',
     'dash.spendingByCategory': 'Spending by Category', 'dash.monthlyTrend': 'Monthly Trend',
     'dash.recentTxns': 'Recent Transactions', 'dash.viewAll': 'View all →',
@@ -109,6 +110,7 @@ const TRANSLATIONS = {
     'txn.upiId': 'UPI ஐடி (விருப்பம்)', 'txn.scanScreenshot': 'UPI ஸ்கிரீன்ஷாட்டைப் படி', 'txn.showDetectedText': 'கண்டறியப்பட்ட உரையைக் காட்டு',
     'backup.later': 'பின்னர் நினைவூட்டு', 'backup.exportNow': 'இப்போது ஏற்றுமதி செய்',
     'dash.totalBalance': 'மொத்த இருப்பு', 'dash.incomeMonth': 'வரவு (இந்த மாதம்)', 'dash.expenseMonth': 'செலவு (இந்த மாதம்)',
+    'dash.salaryMonth': 'சம்பளம் (இந்த மாதம்)', 'dash.otherIncomeMonth': 'மற்ற வரவு (இந்த மாதம்)',
     'dash.savingsRate': 'சேமிப்பு விகிதம்', 'dash.accounts': 'கணக்குகள்', 'dash.manage': 'நிர்வகி →',
     'dash.spendingByCategory': 'வகை வாரியான செலவு', 'dash.monthlyTrend': 'மாதாந்திர போக்கு',
     'dash.recentTxns': 'சமீபத்திய பரிவர்த்தனைகள்', 'dash.viewAll': 'அனைத்தையும் காண்க →',
@@ -652,13 +654,17 @@ function renderDashboard() {
 function renderStatCards() {
   const mKey = currentMonthKey();
   const monthTxns = state.transactions.filter((t) => monthKey(t.date) === mKey);
-  const incomeP = monthTxns.filter((t) => t.type === 'income').reduce((s, t) => s + t.amountPaise, 0);
+  const monthIncome = monthTxns.filter((t) => t.type === 'income');
+  const salaryP = monthIncome.filter((t) => t.categoryId === 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const otherIncomeP = monthIncome.filter((t) => t.categoryId !== 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const incomeP = salaryP + otherIncomeP;
   const expenseP = monthTxns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0);
   const totalP = totalBalancePaise();
   const savingsRate = incomeP > 0 ? Math.round(((incomeP - expenseP) / incomeP) * 100) : 0;
 
   document.getElementById('statBalance').textContent = formatINR(totalP);
-  document.getElementById('statIncome').textContent = formatINR(incomeP);
+  document.getElementById('statSalary').textContent = formatINR(salaryP);
+  document.getElementById('statOtherIncome').textContent = formatINR(otherIncomeP);
   document.getElementById('statExpense').textContent = formatINR(expenseP);
   document.getElementById('statSavingsRate').textContent = `${savingsRate}%`;
 }

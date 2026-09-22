@@ -40,6 +40,25 @@
   var VR_WINDOW_LOW = -1024;
   var VR_WINDOW_HIGH = 3071;
 
+  /* Oblique MPR reslicing frames.
+   *
+   * Each plane carries an orthonormal triple in volume-axis space:
+   *   u — the output's +column direction
+   *   v — the output's +row direction
+   *   n — the direction the plane's slice index advances along
+   *
+   * At rest these are the volume axes, and reslicing takes the fast
+   * axis-aligned path. Rotating the crosshair in one plane rotates the other
+   * two frames about that plane's normal, which tilts their cuts while
+   * leaving the plane you dragged in untouched — the three frames stay
+   * mutually orthogonal, so the slice indices still decompose a single point.
+   */
+  var BASE_FRAMES = {
+    axial: { u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] },
+    coronal: { u: [1, 0, 0], v: [0, 0, 1], n: [0, 1, 0] },
+    sagittal: { u: [0, 1, 0], v: [0, 0, 1], n: [1, 0, 0] },
+  };
+
   /* ---------------------------------------------------------------------
    * State
    * ------------------------------------------------------------------- */
@@ -52,6 +71,7 @@
     volume: null,
     geometryWarnings: [],
     index: { axial: 0, coronal: 0, sagittal: 0 },
+    frames: null,                 // set from BASE_FRAMES on init / reset
     view: {
       axial: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
       coronal: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
@@ -112,6 +132,8 @@
     dom.measureList = byId("measureList");
     dom.clearMeasureBtn = byId("clearMeasureBtn");
     dom.calibrationNote = byId("calibrationNote");
+    dom.obliqueInfo = byId("obliqueInfo");
+    dom.obliqueReset = byId("obliqueResetBtn");
     dom.geometryWarnings = byId("geometryWarnings");
     dom.tagSearch = byId("tagSearch");
     dom.seriesToggleBtn = byId("seriesToggleBtn");
@@ -751,6 +773,7 @@
       clearMeasurements();
       setBusy(false);
       updateVolumeInfo();
+      updateObliqueInfo();
       updateGeometryWarnings();
       updateCalibrationNote();
       syncSliders();
@@ -778,23 +801,202 @@
    * MPR rendering
    * ------------------------------------------------------------------- */
 
+  /* ---------------------------------------------------------------------
+   * Oblique reslicing frames
+   * ------------------------------------------------------------------- */
+
+  function resetFrames() {
+    state.frames = {
+      axial: cloneFrame(BASE_FRAMES.axial),
+      coronal: cloneFrame(BASE_FRAMES.coronal),
+      sagittal: cloneFrame(BASE_FRAMES.sagittal),
+    };
+  }
+
+  function cloneFrame(f) {
+    return { u: f.u.slice(), v: f.v.slice(), n: f.n.slice() };
+  }
+
+  function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+  /** Angle, in degrees, between a plane's current cut and its resting one. */
+  function tiltOf(plane) {
+    var d = Math.abs(dot3(state.frames[plane].n, BASE_FRAMES[plane].n));
+    return (Math.acos(Math.min(1, d)) * 180) / Math.PI;
+  }
+
+  /** True when this plane's own cut has been tilted off the volume axes. */
+  function planeOblique(plane) {
+    var f = state.frames[plane], b = BASE_FRAMES[plane];
+    return Math.abs(dot3(f.n, b.n) - 1) > 1e-9 || Math.abs(dot3(f.u, b.u) - 1) > 1e-9;
+  }
+
+  /** True once any plane has been tilted off its resting orientation. */
+  function obliqueActive() {
+    return MPR_PLANES.some(planeOblique);
+  }
+
+  /**
+   * Rotate the *other* two planes about this plane's normal.
+   *
+   * Leaving the acting plane's own frame alone is what makes the interaction
+   * read correctly: the image you are dragging on holds still while its
+   * crosshair arms — the intersection lines of the companion planes — swing
+   * round, and those companion cuts tilt to follow.
+   */
+  function rotateOblique(plane, theta) {
+    if (!theta) return;
+    var f = state.frames[plane];
+    var axis = V.cross(f.u, f.v);
+    MPR_PLANES.forEach(function (other) {
+      if (other === plane) return;
+      var g = state.frames[other];
+      state.frames[other] = V.orthonormalize({
+        u: V.rotateAbout(g.u, axis, theta),
+        v: V.rotateAbout(g.v, axis, theta),
+        n: V.rotateAbout(g.n, axis, theta),
+      });
+    });
+    planeCache = {};
+  }
+
+  /** Pointer angle about the crosshair, in this plane's own u/v basis. */
+  function obliqueAngleAt(plane, clientX, clientY) {
+    var geom = dom.vp[plane].geom;
+    if (!state.volume || !geom) return null;
+    var p = eventToPlane(plane, clientX, clientY);
+    if (!p) return null;
+    var slab = geom.slab;
+    var a = (p.x - slab.width / 2) * slab.spacingX;
+    var b = (p.y - slab.height / 2) * slab.spacingY;
+    if (!a && !b) return null;
+    return Math.atan2(b, a);
+  }
+
+  function resetOblique() {
+    resetFrames();
+    planeCache = {};
+    renderAll();
+  }
+
+  /* ---------------------------------------------------------------------
+   * Plane <-> world (millimetre) geometry
+   *
+   * The three slice indices address a single point in the volume: each one
+   * measures a distance along its own plane's normal, and those normals stay
+   * mutually orthogonal however the frames are tilted.
+   * ------------------------------------------------------------------- */
+
+  function volumeCenterMm() {
+    var v = state.volume;
+    return [
+      ((v.cols - 1) / 2) * v.spacingX,
+      ((v.rows - 1) / 2) * v.spacingY,
+      ((v.depth - 1) / 2) * v.spacingZ,
+    ];
+  }
+
+  /** Signed distance of a plane's cut from the volume centre, in mm. */
+  function planeOffsetMm(plane) {
+    var count = V.planeCount(state.volume, plane);
+    return (state.index[plane] - (count - 1) / 2) * V.normalSpacing(state.volume, plane);
+  }
+
+  /** The crosshair point — where all three cuts meet — in millimetres. */
+  function crosshairWorld() {
+    var c = volumeCenterMm();
+    MPR_PLANES.forEach(function (plane) {
+      var n = state.frames[plane].n;
+      var off = planeOffsetMm(plane);
+      c[0] += n[0] * off; c[1] += n[1] * off; c[2] += n[2] * off;
+    });
+    return c;
+  }
+
+  /** Inverse of crosshairWorld: nearest slice index on each plane. */
+  function indicesFromWorld(w) {
+    var vc = volumeCenterMm();
+    var d = [w[0] - vc[0], w[1] - vc[1], w[2] - vc[2]];
+    var out = {};
+    MPR_PLANES.forEach(function (plane) {
+      var count = V.planeCount(state.volume, plane);
+      var pitch = V.normalSpacing(state.volume, plane);
+      out[plane] = Math.round(dot3(d, state.frames[plane].n) / pitch + (count - 1) / 2);
+    });
+    return out;
+  }
+
+  /** World centre of a rendered plane. */
+  function planeCenterWorld(plane, slab) {
+    if (slab && slab.oblique) return slab.center;
+    var c = volumeCenterMm();
+    var n = state.frames[plane].n;
+    var off = planeOffsetMm(plane);
+    return [c[0] + n[0] * off, c[1] + n[1] * off, c[2] + n[2] * off];
+  }
+
+  function planeAxesOf(plane, slab) {
+    if (slab && slab.oblique) return { u: slab.axisU, v: slab.axisV };
+    return state.frames[plane];
+  }
+
+  /** Plane column/row -> millimetres. Valid for orthogonal and oblique alike. */
+  function planeToWorld(plane, slab, px, py) {
+    var f = planeAxesOf(plane, slab);
+    var c = planeCenterWorld(plane, slab);
+    var a = (px - slab.width / 2) * slab.spacingX;
+    var b = (py - slab.height / 2) * slab.spacingY;
+    return [
+      c[0] + f.u[0] * a + f.v[0] * b,
+      c[1] + f.u[1] * a + f.v[1] * b,
+      c[2] + f.u[2] * a + f.v[2] * b,
+    ];
+  }
+
+  /** Millimetres -> plane column/row (the in-plane part; exact inverse). */
+  function worldToPlane(plane, slab, w) {
+    var f = planeAxesOf(plane, slab);
+    var c = planeCenterWorld(plane, slab);
+    var d = [w[0] - c[0], w[1] - c[1], w[2] - c[2]];
+    return {
+      x: dot3(d, f.u) / slab.spacingX + slab.width / 2,
+      y: dot3(d, f.v) / slab.spacingY + slab.height / 2,
+    };
+  }
+
   /** Extract a plane, memoised so W/L drags don't re-slice the volume. */
   function getPlaneData(plane) {
+    // Decided per plane: rotating in the axial view tilts coronal and
+    // sagittal but leaves axial square, so axial keeps the fast path and its
+    // full in-plane resolution.
+    var oblique = planeOblique(plane);
+    var frame = state.frames[plane];
     var key = [
       plane, state.index[plane], state.thicknessMm, state.projectionMode,
       state.boneCut ? "cut" + state.boneMaskVersion : "raw",
+      oblique ? frameKey(frame) + "|" + state.index.axial + "," +
+        state.index.coronal + "," + state.index.sagittal : "ortho",
     ].join("|");
 
     var cached = planeCache[plane];
     if (cached && cached.key === key) return cached.result;
 
-    var result = V.extractPlane(state.volume, plane, state.index[plane], {
+    var opts = {
       thicknessMm: state.thicknessMm,
       mode: state.projectionMode,
       boneCut: state.boneCut,
-    });
+    };
+    // The axis-aligned path is a plain blit, so keep using it while the frames
+    // are at rest; only a genuine tilt pays for trilinear resampling.
+    var result = oblique
+      ? V.extractOblique(state.volume, crosshairWorld(), frame.u, frame.v, opts)
+      : V.extractPlane(state.volume, plane, state.index[plane], opts);
     planeCache[plane] = { key: key, result: result };
     return result;
+  }
+
+  function frameKey(f) {
+    return f.u.concat(f.v).map(function (x) { return x.toFixed(6); }).join(",");
   }
 
   function planeVisible(plane) {
@@ -813,6 +1015,7 @@
       if (planeVisible(plane)) renderPlane(plane);
     });
     if (planeVisible("vr")) renderVR();
+    updateObliqueInfo();
     updateMetadata();
   }
 
@@ -935,13 +1138,6 @@
    * Crosshair: shows where the other two planes cut through this one
    * ------------------------------------------------------------------- */
 
-  /** Which volume axes map to this plane's horizontal / vertical axes. */
-  function planeAxes(plane) {
-    if (plane === "axial") return { h: "sagittal", v: "coronal" };
-    if (plane === "coronal") return { h: "sagittal", v: "axial" };
-    return { h: "coronal", v: "axial" };   // sagittal
-  }
-
   /**
    * Overlay layer: crosshair, orientation markers and measurements.
    * Drawn on a separate canvas so it can be refreshed without re-windowing
@@ -959,26 +1155,72 @@
     drawMeasurements(ctx, plane, geom, dpr);
   }
 
+  /**
+   * Each arm is the line where a companion plane cuts this one, solved in
+   * millimetres rather than read off the slice indices — so it stays correct
+   * once the frames are tilted, and reduces to the axis-aligned lines when
+   * they are not.
+   */
+  function crosshairArm(plane, geom, other) {
+    var slab = geom.slab;
+    var f = planeAxesOf(plane, slab);
+    var cp = planeCenterWorld(plane, slab);
+    var cq = planeCenterWorld(other, null);
+    var nq = state.frames[other].n;
+
+    // Points on this plane are cp + u*a + v*b; the companion plane is
+    // (W - cq)·nq = 0. Substituting gives a line A*a + B*b + C = 0 in mm.
+    var A = dot3(f.u, nq), B = dot3(f.v, nq);
+    var C = dot3([cp[0] - cq[0], cp[1] - cq[1], cp[2] - cq[2]], nq);
+    var denom = A * A + B * B;
+    if (denom < 1e-12) return null;          // parallel: no intersection line
+
+    var a0 = (-C * A) / denom, b0 = (-C * B) / denom;
+    var dirA = -B / Math.sqrt(denom), dirB = A / Math.sqrt(denom);
+    var reach = Math.hypot(slab.width * slab.spacingX, slab.height * slab.spacingY);
+
+    return {
+      at: function (t) {
+        var a = a0 + dirA * t * reach, b = b0 + dirB * t * reach;
+        return { x: a / slab.spacingX + slab.width / 2, y: b / slab.spacingY + slab.height / 2 };
+      },
+      centre: { x: a0 / slab.spacingX + slab.width / 2, y: b0 / slab.spacingY + slab.height / 2 },
+    };
+  }
+
   function drawCrosshair(ctx, plane, geom, dpr) {
-    var axes = planeAxes(plane);
     var t = geom.t;
-
-    // Position of the two companion planes expressed in *this* plane's
-    // column/row space, then pushed through the same transform as the image.
-    var px = ((state.index[axes.h] + 0.5) / V.planeCount(state.volume, axes.h)) * t.width;
-    var py = ((state.index[axes.v] + 0.5) / V.planeCount(state.volume, axes.v)) * t.height;
-
-    var vTop = planeToCanvas(t, px, 0), vBot = planeToCanvas(t, px, t.height);
-    var hLeft = planeToCanvas(t, 0, py), hRight = planeToCanvas(t, t.width, py);
+    var others = MPR_PLANES.filter(function (p) { return p !== plane; });
+    var tilted = obliqueActive();
 
     ctx.save();
     ctx.strokeStyle = "rgba(255, 210, 74, 0.75)";
     ctx.lineWidth = Math.max(1, dpr);
     ctx.setLineDash([6 * dpr, 5 * dpr]);
     ctx.beginPath();
-    ctx.moveTo(vTop.x, vTop.y); ctx.lineTo(vBot.x, vBot.y);
-    ctx.moveTo(hLeft.x, hLeft.y); ctx.lineTo(hRight.x, hRight.y);
+    others.forEach(function (other) {
+      var arm = crosshairArm(plane, geom, other);
+      if (!arm) return;
+      var a = planeToCanvas(t, arm.at(-1).x, arm.at(-1).y);
+      var b = planeToCanvas(t, arm.at(1).x, arm.at(1).y);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    });
     ctx.stroke();
+
+    // Rotation handles: only shown once the arms can actually be grabbed,
+    // i.e. when a volume is loaded and the crosshair is live.
+    var arm0 = crosshairArm(plane, geom, others[0]);
+    if (arm0) {
+      ctx.setLineDash([]);
+      ctx.fillStyle = tilted ? "rgba(110, 242, 160, 0.9)" : "rgba(255, 210, 74, 0.55)";
+      [0.72, -0.72].forEach(function (k) {
+        var h = arm0.at(k);
+        var c = planeToCanvas(t, h.x, h.y);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 4 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
     ctx.restore();
   }
 
@@ -1043,29 +1285,49 @@
     var colPos = o[4] > 0 ? "P" : "A";   // increasing row -> patient posterior
     var colNeg = o[4] > 0 ? "A" : "P";
 
-    if (plane === "axial") {
-      return { left: rowNeg, right: rowPos, top: colNeg, bottom: colPos };
+    // Letters for each volume-axis direction, so an arbitrarily tilted frame
+    // can be labelled by projecting its axes onto them.
+    var letters = {
+      px: rowPos, nx: rowNeg,          // +/- volume X
+      py: colPos, ny: colNeg,          // +/- volume Y
+      pz: "F", nz: "H",                // +/- slice order: away from / toward the head
+    };
+
+    function letterFor(vec) {
+      var ax = Math.abs(vec[0]), ay = Math.abs(vec[1]), az = Math.abs(vec[2]);
+      var m = Math.max(ax, ay, az);
+      // Near 45 degrees between two axes no single letter is honest.
+      if (m < 0.75) return "";
+      if (m === ax) return vec[0] > 0 ? letters.px : letters.nx;
+      if (m === ay) return vec[1] > 0 ? letters.py : letters.ny;
+      return vec[2] > 0 ? letters.pz : letters.nz;
     }
-    if (plane === "coronal") {
-      // Horizontal is patient X, vertical is patient Z (slice order).
-      return { left: rowNeg, right: rowPos, top: "H", bottom: "F" };
-    }
-    // Sagittal: horizontal is patient Y, vertical is patient Z.
-    return { left: colNeg, right: colPos, top: "H", bottom: "F" };
+
+    var f = (state.frames && state.frames[plane]) || BASE_FRAMES[plane];
+    var neg = function (v) { return [-v[0], -v[1], -v[2]]; };
+    return {
+      left: letterFor(neg(f.u)), right: letterFor(f.u),
+      top: letterFor(neg(f.v)), bottom: letterFor(f.v),
+    };
   }
 
   /** Map a viewport click to indices on the two companion planes. */
   function crosshairFromPoint(plane, clientX, clientY) {
     if (!state.volume) return;
+    var geom = dom.vp[plane].geom;
+    if (!geom) return;
     var p = eventToPlane(plane, clientX, clientY);
     if (!p) return;
-    var t = dom.vp[plane].geom.t;
-    var fx = p.x / t.width, fy = p.y / t.height;
-    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+    var t = geom.t;
+    if (p.x < 0 || p.x > t.width || p.y < 0 || p.y > t.height) return;
 
-    var axes = planeAxes(plane);
-    setPlaneIndex(axes.h, Math.floor(fx * V.planeCount(state.volume, axes.h)), true);
-    setPlaneIndex(axes.v, Math.floor(fy * V.planeCount(state.volume, axes.v)), true);
+    // Go through millimetres so the click lands correctly on a tilted plane.
+    var world = planeToWorld(plane, geom.slab, p.x, p.y);
+    var want = indicesFromWorld(world);
+    MPR_PLANES.forEach(function (q) {
+      if (q === plane) return;         // clicking in-plane must not move this cut
+      setPlaneIndex(q, want[q], true);
+    });
     renderAll();
     syncSliders();
   }
@@ -1079,22 +1341,44 @@
     var group = getCurrentGroup();
     var inst = group && group.slices.length ? group.slices[0].instance : null;
     var source = inst && inst.hasPixelSpacing ? "PixelSpacing" : null;
-    // Coronal/sagittal also depend on slice spacing being trustworthy.
-    if (source && plane !== "axial" && !state.volume.spacingZReliable) source = null;
+    // Anything that samples across slices — coronal, sagittal, or any oblique
+    // cut — also depends on the slice spacing being trustworthy.
+    var crossesSlices = plane !== "axial" || (slab && slab.oblique);
+    if (source && crossesSlices && !state.volume.spacingZReliable) source = null;
     return MEAS.calibrationOf(slab, source);
+  }
+
+  /**
+   * Identity of the cut currently shown in a plane.
+   *
+   * A measurement is anchored to the slice it was drawn on. While the frames
+   * are at rest that is just the slice index; once a plane is tilted the cut
+   * is defined by its orientation too, so the key carries the frame. Tilting
+   * therefore hides measurements taken on the old cut rather than redrawing
+   * them over different anatomy.
+   */
+  function sliceKeyFor(plane) {
+    if (!planeOblique(plane)) return state.index[plane];
+    return "obl:" + state.index.axial + "," + state.index.coronal + "," +
+      state.index.sagittal + ":" + frameKey(state.frames[plane]);
+  }
+
+  function sliceLabel(m) {
+    return typeof m.sliceIndex === "number" ? String(m.sliceIndex + 1) : "obl";
   }
 
   /** Measurements that belong to the plane/slice currently shown. */
   function measurementsFor(plane) {
+    var key = sliceKeyFor(plane);
     return state.measurements.filter(function (m) {
-      return m.plane === plane && m.sliceIndex === state.index[plane];
+      return m.plane === plane && m.sliceIndex === key;
     });
   }
 
   function drawMeasurements(ctx, plane, geom, dpr) {
     var list = measurementsFor(plane);
     var pending = state.pendingMeasure && state.pendingMeasure.plane === plane &&
-      state.pendingMeasure.sliceIndex === state.index[plane] ? state.pendingMeasure : null;
+      state.pendingMeasure.sliceIndex === sliceKeyFor(plane) ? state.pendingMeasure : null;
     if (!list.length && !pending) return;
 
     var t = geom.t;
@@ -1160,8 +1444,8 @@
     if (!need) return;
 
     var pending = state.pendingMeasure;
-    if (!pending || pending.plane !== plane || pending.sliceIndex !== state.index[plane]) {
-      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, plane, state.index[plane], [p]);
+    if (!pending || pending.plane !== plane || pending.sliceIndex !== sliceKeyFor(plane)) {
+      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, plane, sliceKeyFor(plane), [p]);
       renderPlaneOverlay(plane);
       return;
     }
@@ -1207,7 +1491,7 @@
     var html = "";
     list.forEach(function (m) {
       var slab = planeCache[m.plane] && planeCache[m.plane].result;
-      var res = slab && m.sliceIndex === state.index[m.plane]
+      var res = slab && m.sliceIndex === sliceKeyFor(m.plane)
         ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab))
         : null;
       var value = res ? res.primary + (m.tool === MEAS.TOOLS.ellipse && unit ? " " + unit : "") : "—";
@@ -1218,7 +1502,7 @@
         '<span class="measure-main">' + escapeHtml(value) +
         (res && res.detail ? '<span class="measure-detail">' + escapeHtml(res.detail) + "</span>" : "") +
         "</span>" +
-        '<span class="measure-loc">' + m.plane.slice(0, 3) + " " + (m.sliceIndex + 1) + "</span>" +
+        '<span class="measure-loc">' + m.plane.slice(0, 3) + " " + sliceLabel(m) + "</span>" +
         '<button class="measure-del" data-del="' + m.id + '" title="Delete">×</button>' +
         "</div>";
     });
@@ -1283,8 +1567,10 @@
     var thicknessLabel = slab.samples > 1
       ? fmt(slab.samples * pitch) + "mm " + modeLabel(state.projectionMode)
       : fmt(pitch) + "mm";
+    var tilt = tiltOf(plane);
     vp.br.textContent =
       (state.index[plane] + 1) + " / " + count + "\n" + thicknessLabel +
+      (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
       "\n" + Math.round(state.view[plane].zoom * 100) + "%";
   }
 
@@ -1412,7 +1698,10 @@
         value = null;
       }
       if (value === undefined || value === null) value = "";
-      var haystack = (tag + " " + label + " " + value).toLowerCase();
+      // Include both spellings of the tag: a named element's label is its
+      // keyword, so without this a search for "0028,1053" missed exactly the
+      // tags the panel knows best.
+      var haystack = (tag + " " + tagToDisplay(tag) + " " + label + " " + value).toLowerCase();
       if (haystack.indexOf(query) === -1) return;
       hits++;
       html += metaRow(label + "  " + tagToDisplay(tag), value === "" ? "(binary / empty)" : value);
@@ -1484,6 +1773,8 @@
     MPR_PLANES.forEach(function (plane) {
       state.view[plane] = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
     });
+    resetFrames();
+    planeCache = {};
     if (renderer) {
       renderer.rotX = -1.35;
       renderer.rotY = 0;
@@ -1564,13 +1855,17 @@
       state.currentSeriesUID = null;
       state.volume = null;
       state.index = { axial: 0, coronal: 0, sagittal: 0 };
+      state.measurements = [];
+      state.pendingMeasure = null;
       planeCache = {};
       vrDirty = true;
       if (renderer) renderer.dispose();
       resetView();
       renderSeriesList();
+      renderMeasurementList();
       syncSliders();
       updateVolumeInfo();
+      updateObliqueInfo();
       renderAll();
       setStatus("Ready");
     });
@@ -1587,6 +1882,10 @@
       dom.invertBtn.classList.toggle("active", state.invert);
       renderAll();
     });
+
+    if (dom.obliqueReset) {
+      dom.obliqueReset.addEventListener("click", resetOblique);
+    }
 
     dom.crosshairBtn.addEventListener("click", function () {
       state.crosshair = !state.crosshair;
@@ -1749,6 +2048,11 @@
       if (e.target === vp.slider) return;
       setActivePlane(plane);
       e.preventDefault();
+      if (e.button === 0 && e.altKey) {
+        var a0 = obliqueAngleAt(plane, e.clientX, e.clientY);
+        if (a0 !== null) state.drag = { plane: plane, mode: "oblique", angle: a0 };
+        return;
+      }
       if (e.button === 0 && e.shiftKey) {
         crosshairFromPoint(plane, e.clientX, e.clientY);
         return;
@@ -1819,6 +2123,20 @@
     if (!drag) return;
     var dx = e.clientX - drag.x;
     var dy = e.clientY - drag.y;
+
+    if (drag.mode === "oblique") {
+      var a = obliqueAngleAt(drag.plane, e.clientX, e.clientY);
+      if (a === null) return;
+      // Incremental, so the drag can pass through any number of turns without
+      // the shortest-arc wrap that an absolute angle would suffer.
+      var d = a - drag.angle;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      drag.angle = a;
+      rotateOblique(drag.plane, d);
+      renderAll();
+      return;
+    }
 
     if (drag.mode === "orbit") {
       if (renderer) { renderer.orbit(dx, dy); renderVR(); }
@@ -2006,6 +2324,37 @@
   }
 
   /** Explain what the measurement units are based on. */
+  /** Per-plane tilt readout, so the reslice angle is never implicit. */
+  var obliqueInfoKey = null;
+
+  function updateObliqueInfo() {
+    if (!dom.obliqueInfo) return;
+    // Called on every render, so skip the DOM write unless something moved.
+    var key = !state.volume ? "none" : MPR_PLANES.map(function (p) {
+      return tiltOf(p).toFixed(3);
+    }).join("/");
+    if (key === obliqueInfoKey) return;
+    obliqueInfoKey = key;
+    if (!state.volume) {
+      dom.obliqueInfo.innerHTML = '<p class="muted small">No volume built.</p>';
+      if (dom.obliqueReset) dom.obliqueReset.disabled = true;
+      return;
+    }
+    var tilted = obliqueActive();
+    if (dom.obliqueReset) dom.obliqueReset.disabled = !tilted;
+    if (!tilted) {
+      dom.obliqueInfo.innerHTML =
+        '<p class="muted small">Orthogonal — planes are square to the volume axes.</p>';
+      return;
+    }
+    var rows = MPR_PLANES.map(function (plane) {
+      return '<div class="meta-row"><span class="meta-key">' +
+        plane.charAt(0).toUpperCase() + plane.slice(1) +
+        '</span><span class="meta-val">' + tiltOf(plane).toFixed(1) + "°</span></div>";
+    }).join("");
+    dom.obliqueInfo.innerHTML = rows;
+  }
+
   function updateCalibrationNote() {
     var group = getCurrentGroup();
     if (!group || !group.slices.length) {
@@ -2043,6 +2392,7 @@
    * ------------------------------------------------------------------- */
   function init() {
     cacheDom();
+    resetFrames();
     wireEvents();
 
     window.addEventListener("mousemove", onMouseMove);
@@ -2051,6 +2401,7 @@
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     updateWLInputs();
     updateBoneStatus();
+    updateObliqueInfo();
     renderMeasurementList();
     syncSliders();
     setTool("none");
@@ -2071,6 +2422,15 @@
 
   // Exposed for headless testing.
   window.__ctConsole = {
+    BASE_FRAMES: BASE_FRAMES,
+    rotateOblique: rotateOblique,
+    resetOblique: resetOblique,
+    obliqueActive: obliqueActive,
+    tiltOf: tiltOf,
+    crosshairWorld: crosshairWorld,
+    indicesFromWorld: indicesFromWorld,
+    planeToWorld: planeToWorld,
+    worldToPlane: worldToPlane,
     state: state,
     getPlaneData: getPlaneData,
     renderAll: renderAll,

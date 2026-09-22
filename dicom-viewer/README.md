@@ -32,6 +32,14 @@ radiologist's report and your official imaging system for clinical decisions.
   slices) don't render squashed.
 - **Linked crosshair** — Shift+click in any plane to drive the other two to
   that point.
+- **Oblique MPR** — Alt+drag in any plane to swing its crosshair. The plane
+  you drag in holds still while the other two cuts tilt to follow, so you can
+  line a reformat up with a vessel, a disc space or an angled fracture. The
+  tilt angle of each plane is shown in the viewport and in the Oblique MPR
+  panel, and **Straighten planes** puts everything back square.
+  Oblique cuts are trilinear-sampled at the volume's finest voxel pitch;
+  while the planes are square the fast axis-aligned path is used instead, so
+  you pay for resampling only when you actually tilt something.
 - **Layouts**: 2×2 (three planes + 3D), single axial, three-up MPR, or 3D
   alone. Double-click a viewport to expand it; keys `1`–`4` switch layouts.
 
@@ -96,7 +104,7 @@ educational use:
 | --- | --- |
 | Phase 1 — Import and display | Done: import, Study/Series grouping, real pixel decoding, thumbnails, navigation, window/level, zoom, pan, rotate, flip, invert, reset |
 | Phase 2 — Measurements and comparison | Done: distance, angle, ellipse ROI with statistics; searchable tag panel; PNG export. **Not done:** side-by-side comparison of two different series, persistent archive |
-| Phase 3 — Reconstruction | Done: orthogonal MPR with linked crosshairs, slab projections (Average/MIP/MinIP), volume rendering. **Not done:** oblique MPR |
+| Phase 3 — Reconstruction | Done: orthogonal **and oblique** MPR with linked crosshairs, slab projections (Average/MIP/MinIP), volume rendering. **Not done:** curved-planar reformat |
 | Phase 4 — PACS | Not applicable to a browser build with no network access by design |
 | Phase 5 — Advanced workflows | Not started: fusion, PET/SUV, time-intensity curves, DSA, STL export |
 
@@ -143,8 +151,11 @@ reconstructed.
   JPEG 2000, RLE). If a file uses one, the viewer says so instead of failing
   silently — re-export as uncompressed, or convert it first with a tool such
   as `dcmdjpeg`/GDCM/dcm2niix.
-- Reslicing is **orthogonal** — axial, coronal and sagittal. Oblique and
-  curved-planar reformats are not implemented.
+- Reslicing covers the three orthogonal planes and **arbitrary oblique**
+  planes. **Curved-planar** reformats (following a vessel centreline) are not
+  implemented.
+- Measurements are anchored to the cut they were drawn on, so tilting a plane
+  hides them rather than redrawing them over different anatomy.
 - Assumes an axial acquisition with consistent orientation; gantry tilt and
   per-slice orientation changes are not corrected for.
 - Large series are downsampled in-plane to keep the volume within a memory
@@ -162,7 +173,8 @@ reconstructed.
 | `R` | Reset views |
 
 Mouse: left-drag = window/level · wheel = change slice · Shift+wheel = zoom ·
-right-drag = pan · Shift+click = move crosshair · double-click = expand pane.
+right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
+two planes (oblique MPR)** · double-click = expand pane.
 
 ## Project structure
 
@@ -171,7 +183,7 @@ dicom-viewer/
   index.html                    # Workstation layout
   css/styles.css                # Dark radiology-console theme
   js/app.js                     # Parsing, UI, MPR viewports, interaction
-  js/volume.js                  # Volume build, reslicing, slab/MIP, bone mask
+  js/volume.js                  # Volume build, orthogonal + oblique reslicing, slab/MIP, bone mask
   js/measure.js                 # Distance / angle / ROI math and calibration
   js/vr.js                      # WebGL2 raymarching volume renderer
   js/vendor/dicomParser.min.js  # Third-party DICOM parser (MIT license)
@@ -195,6 +207,31 @@ in-plane, 2 mm slices):
 | ROI area | 78.54 mm² | 78.54 mm² |
 | ROI after changing window | unchanged | unchanged |
 | Plane↔canvas round-trip (all rotations/flips) | 0 px | < 1e-14 px |
+
+Oblique reslicing is checked two ways. Against the orthogonal reslicer, an
+oblique cut taken at identity orientation must reproduce it exactly, and a 90°
+tilt of the axial frame must land on the coronal plane:
+
+| Quantity | Expected | Measured |
+| --- | --- | --- |
+| Oblique at identity vs. axial / coronal / sagittal | identical | 0 difference |
+| Axial frame tilted 90° about +X vs. coronal | identical | 0 difference |
+| Average / MIP / MinIP slab vs. orthogonal slab | identical | 0 difference |
+| Trilinear sample of a linear field | closed form | rel. err < 5e-8 |
+| Frame orthonormality after 2000 rotations | exact | dev. < 3e-16 |
+
+Against physical geometry, a second phantom holds a 36 mm cylinder tilted 30°
+out of the axial plane. An orthogonal axial cut must see a stretched ellipse;
+a plane tilted to match it must see the true circle:
+
+| Quantity | Expected | Measured |
+| --- | --- | --- |
+| Orthogonal axial cross-section | 1175 mm² (ellipse) | 1178 mm² |
+| Cross-section after a 30° tilt | 1018 mm² (circle) | 997 mm² |
+| Diameter across / along the tilt, orthogonal | 36 / 41.6 mm | 36 / 41 mm |
+| Diameter across / along the tilt, corrected | 36 / 36 mm | 36 / 35 mm |
+| Reported tilt of each companion plane | 30.00° | 30.00° |
+| Crosshair mm → slice indices → mm | round-trips | exact |
 
 ## Privacy
 

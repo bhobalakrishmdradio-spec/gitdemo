@@ -31,6 +31,20 @@ radiologist's report and your official imaging system for clinical decisions.
   width in a twitch — so the gesture feels identical on every preset, and the
   width cannot be slammed to zero by one long drag.
 - **Invert, zoom, pan, crosshair**, and a per-pane slice scrubber.
+- **Rotation** — 90° steps either way, or **free rotate** (`◷`): arm it and
+  drag on a pane to turn it to any angle.
+
+### Modality
+
+CT and MR both load, reconstruct and measure. What differs is everything that
+assumes a Hounsfield scale, and the viewer does not pretend otherwise:
+
+| | CT | MR and other non-HU data |
+| --- | --- | --- |
+| Intensities | labelled **HU** | reported as stored values |
+| Window presets | Lung, Bone, Brain, Soft, Abdomen, Mediastinum, Angio | From header, Auto contrast, Full range — derived from the study, since MR signal is not comparable between sequences |
+| Bone cut | available | disabled, with the reason given |
+| 3D presets | HU transfer functions | presets over the volume's own value range |
 
 ### Multiplanar reconstruction (MPR)
 
@@ -50,20 +64,20 @@ radiologist's report and your official imaging system for clinical decisions.
   while the planes are square the fast axis-aligned path is used instead, so
   you pay for resampling only when you actually tilt something.
 - **Layouts**: 2×2 (three planes + 3D), 1×1 single pane, three-up MPR, 3D alone,
-  and the larger grids **1×2**, **2×3** and **4×4**. Double-click a pane to
-  expand it and again to go back; keys `1`–`7` switch layouts. Any grid can
-  be filled with a single plane — see below.
+  and the larger grids **1×2** and **2×3**. Double-click a pane to expand it
+  and again to go back; keys `1`–`6` switch layouts. Any grid can be filled
+  with a single plane — see below.
 
 ### Filling a grid with one plane
 
 The **Mixed planes / All axial / All coronal / All sagittal** selector, beside
 the layout buttons, points every pane at one plane. That is what turns a grid
-into a filmstrip: `4×4` + *All axial* gives sixteen consecutive axial slices
-on screen at once, and one scroll pages all sixteen (see **Stacked scrolling**
+into a filmstrip: `2×3` + *All axial* gives six consecutive axial slices on
+screen at once, and one scroll pages all six (see **Stacked scrolling**
 below). *Mixed planes* restores each layout's own arrangement of the three
 planes plus the 3D view.
 
-The choice follows you between grids, so you can go from `2×3` to `4×4`
+The choice follows you between grids, so you can go from `1×2` to `2×3`
 without losing it. The **MPR** and **3D** layouts are defined by the planes
 they show, so the selector does not apply to them and greys out. Changing a
 single pane by hand puts the selector back to *Mixed planes*, since the grid
@@ -87,24 +101,24 @@ or sixteen copies of the same thing:
 ### Stacked scrolling
 
 Panes showing the same plane sit a fixed number of slices apart, so a grid is
-a **run of consecutive images rather than one image repeated** — the 4×4 grid
-shows fifteen different levels at once. Scrolling *any* pane (wheel, slider or
+a **run of consecutive images rather than one image repeated** — the 2×3 grid
+shows six different levels at once. Scrolling *any* pane (wheel, slider or
 arrow keys) moves the whole run together and keeps the spacing, so one scroll
 advances the entire page of images the way flipping a sheet of film does. The
 three planes keep separate runs: scrolling the axial panes leaves the coronal
 and sagittal ones where they are, and the crosshairs on every other pane
 follow along.
 
-**Tools → Panes → Stack** sets the spacing: *Same slice* (every repeated pane
-on the same image), *Every slice*, or every 2nd, 5th or 10th. The panel says
-how many slices the current grid covers at a time.
+The **Stack** buttons in the toolbar set the spacing: *Same*, or 1, 2, 5 or
+10 slices apart. The Panes panel says how many slices the current grid covers
+at a time.
 
 The 📌 button pins a pane to the slice it is on. A pinned pane ignores
 scrolling, so you can hold a reference level while the rest of the grid moves
 past it; unpinning drops it back into the run where it stands. Each pane's
 slice counter shows its offset (`+3`) or `pinned`.
 
-At 4×4 the panes drop the patient banner and orientation letters rather than
+Small panes drop the patient banner and orientation letters rather than
 covering the image with text.
 
 ### Slice thickness & projection
@@ -126,8 +140,13 @@ covering the image with text.
 ### 3D volume rendering
 
 - GPU raymarching through a WebGL2 3D texture.
-- **Volume Rendering** with clinical transfer-function presets — Bone, Angio,
-  Soft Tissue, Lung, Skin — with gradient-based shading.
+- **Volume Rendering** with clinical transfer-function presets and
+  gradient-based shading. For CT: **Bone VRT** (opaque above cortical
+  density), **Angiographic VRT** (tuned for arterial-phase contrast at
+  250–450 HU, with bone pushed back as a pale backdrop), **Muscle VRT** (the
+  narrow 30–80 HU band, separated from the fat it is wrapped in), plus Soft
+  Tissue, Lung and Skin. For MR, presets expressed as fractions of the
+  volume's own range, since MR signal has no absolute scale.
 - **3D MIP** through the whole volume.
 - Adjustable opacity; drag to rotate, wheel to zoom.
 
@@ -265,7 +284,7 @@ reconstructed.
 | --- | --- |
 | `↑` `↓` / `←` `→` | Previous / next slice — moves the whole stack |
 | `Page Up` / `Page Down` | Jump 10 slices |
-| `1` … `7` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 · 4×4 |
+| `1` … `6` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 |
 | `I` | Invert grayscale |
 | `R` | Reset the view (zoom, pan, rotation, flip) |
 

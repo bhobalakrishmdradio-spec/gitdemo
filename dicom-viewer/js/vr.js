@@ -134,27 +134,57 @@
    * Transfer functions — control points are (HU, r, g, b, alpha)
    * ------------------------------------------------------------------- */
   var TRANSFER_FUNCTIONS = {
+    /* Bone VRT — opaque from cortical density up, everything softer
+       transparent, so the skeleton stands alone. The ramp starts above
+       200 HU: below that is trabecular/calcified soft tissue that would
+       fur the surface. */
     bone: {
-      label: "Bone",
+      label: "Bone VRT",
+      points: [
+        [-1024, 0.00, 0.00, 0.00, 0.00],
+        [  150, 0.00, 0.00, 0.00, 0.00],
+        [  220, 0.62, 0.56, 0.44, 0.06],
+        [  400, 0.86, 0.82, 0.70, 0.55],
+        [  900, 0.96, 0.94, 0.88, 0.88],
+        [ 1800, 1.00, 1.00, 0.97, 0.96],
+        [ 3071, 1.00, 1.00, 1.00, 0.98],
+      ],
+    },
+
+    /* Angiographic VRT — tuned for an arterial-phase study, where
+       opacified lumen sits around 250-450 HU. Contrast is given a warm red
+       and made opaque quickly; bone above ~700 HU stays pale so it reads as
+       a backdrop rather than competing with the vessels. */
+    angio: {
+      label: "Angiographic VRT",
       points: [
         [-1024, 0.00, 0.00, 0.00, 0.00],
         [  140, 0.00, 0.00, 0.00, 0.00],
-        [  250, 0.78, 0.72, 0.58, 0.28],
-        [  600, 0.94, 0.90, 0.80, 0.72],
-        [ 1500, 1.00, 0.99, 0.95, 0.92],
-        [ 3071, 1.00, 1.00, 1.00, 0.96],
+        [  200, 0.70, 0.12, 0.10, 0.14],
+        [  300, 0.90, 0.22, 0.16, 0.62],
+        [  450, 0.98, 0.42, 0.30, 0.86],
+        [  700, 0.99, 0.72, 0.60, 0.80],
+        [ 1400, 0.98, 0.94, 0.88, 0.70],
+        [ 3071, 1.00, 1.00, 1.00, 0.72],
       ],
     },
-    angio: {
-      label: "Angio",
+
+    /* Muscle VRT — the narrow 30-80 HU band where skeletal muscle lives,
+       made visible without the fat below it (-100 to -30) or the bone above.
+       Opacity peaks inside the band and falls away on both sides, which is
+       what separates muscle from the fat it is wrapped in. */
+    muscle: {
+      label: "Muscle VRT",
       points: [
         [-1024, 0.00, 0.00, 0.00, 0.00],
-        [  120, 0.00, 0.00, 0.00, 0.00],
-        [  180, 0.72, 0.16, 0.12, 0.22],
-        [  320, 0.92, 0.32, 0.22, 0.62],
-        [  600, 0.98, 0.78, 0.60, 0.80],
-        [ 1400, 1.00, 0.97, 0.90, 0.92],
-        [ 3071, 1.00, 1.00, 1.00, 0.95],
+        [  -20, 0.00, 0.00, 0.00, 0.00],
+        [   20, 0.62, 0.24, 0.22, 0.16],
+        [   45, 0.80, 0.34, 0.30, 0.62],
+        [   75, 0.88, 0.46, 0.40, 0.70],
+        [  120, 0.86, 0.58, 0.50, 0.40],
+        [  260, 0.84, 0.74, 0.66, 0.16],
+        [  700, 0.92, 0.90, 0.86, 0.30],
+        [ 3071, 1.00, 1.00, 1.00, 0.55],
       ],
     },
     soft: {
@@ -181,6 +211,45 @@
         [ 3071, 1.00, 1.00, 1.00, 0.88],
       ],
     },
+    /* Presets for data with no Hounsfield scale — MR, and anything else
+       whose numbers are arbitrary signal. Their control points are
+       fractions of the volume's own value range rather than HU, because
+       "300" means nothing on an MR image. */
+    mrIntensity: {
+      label: "MR Intensity",
+      normalised: true,
+      points: [
+        [0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.12, 0.00, 0.00, 0.00, 0.00],
+        [0.26, 0.42, 0.30, 0.26, 0.10],
+        [0.45, 0.72, 0.60, 0.52, 0.38],
+        [0.68, 0.92, 0.86, 0.78, 0.62],
+        [1.00, 1.00, 1.00, 1.00, 0.85],
+      ],
+    },
+    mrSurface: {
+      label: "MR Surface",
+      normalised: true,
+      points: [
+        [0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.16, 0.00, 0.00, 0.00, 0.00],
+        [0.22, 0.88, 0.72, 0.62, 0.55],
+        [0.40, 0.94, 0.82, 0.74, 0.80],
+        [1.00, 1.00, 0.94, 0.90, 0.88],
+      ],
+    },
+    mrVessel: {
+      label: "MR Bright Signal",
+      normalised: true,
+      points: [
+        [0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.55, 0.00, 0.00, 0.00, 0.00],
+        [0.68, 0.86, 0.26, 0.20, 0.35],
+        [0.82, 0.98, 0.56, 0.36, 0.78],
+        [1.00, 1.00, 0.92, 0.80, 0.92],
+      ],
+    },
+
     skin: {
       label: "Skin",
       points: [
@@ -205,7 +274,8 @@
     var range = windowHigh - windowLow || 1;
 
     for (var i = 0; i < 256; i++) {
-      var hu = windowLow + (i / 255) * range;
+      // A normalised preset is indexed by position in the range, not by HU.
+      var hu = tf.normalised ? i / 255 : windowLow + (i / 255) * range;
       var p0 = pts[0], p1 = pts[pts.length - 1];
       for (var k = 0; k < pts.length - 1; k++) {
         if (hu >= pts[k][0] && hu <= pts[k + 1][0]) { p0 = pts[k]; p1 = pts[k + 1]; break; }

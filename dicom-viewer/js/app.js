@@ -71,7 +71,6 @@
     vr: { label: "3D", cols: 1, rows: 1, fill: ["vr"], fixed: true },
     "1x2": { label: "1×2", cols: 2, rows: 1, fill: ["axial", "coronal"] },
     "2x3": { label: "2×3", cols: 3, rows: 2, fill: null },
-    "4x4": { label: "4×4", cols: 4, rows: 4, fill: null },
   };
 
   /**
@@ -199,6 +198,7 @@
     vrOpacity: 1,
 
     huProbe: true,              // live value readout under the cursor
+    freeRotate: false,          // drag rotates the pane to any angle
     layout: "quad",
     planeFill: "mix",           // "mix" | "axial" | "coronal" | "sagittal"
 
@@ -236,7 +236,9 @@
     dom.invertBtn = byId("invertBtn");
     dom.flipHBtn = byId("flipHBtn");
     dom.flipVBtn = byId("flipVBtn");
+    dom.rotateLeftBtn = byId("rotateLeftBtn");
     dom.rotateBtn = byId("rotateBtn");
+    dom.freeRotateBtn = byId("freeRotateBtn");
     dom.crosshairBtn = byId("crosshairBtn");
     dom.huBtn = byId("huBtn");
     dom.huReadout = byId("huReadout");
@@ -246,7 +248,7 @@
     dom.measureList = byId("measureList");
     dom.clearMeasureBtn = byId("clearMeasureBtn");
     dom.calibrationNote = byId("calibrationNote");
-    dom.stackStep = byId("stackStep");
+    dom.stackSeg = byId("stackSeg");
     dom.stackNote = byId("stackNote");
     dom.obliqueInfo = byId("obliqueInfo");
     dom.obliqueReset = byId("obliqueResetBtn");
@@ -582,6 +584,26 @@
     var group = getCurrentGroup();
     if (!group || !group.slices.length) return "";
     return huUnitOf(group.slices[0].instance);
+  }
+
+  /** True when the loaded series really is on a Hounsfield scale. */
+  function isHounsfield() {
+    return intensityUnit() === "HU";
+  }
+
+  /**
+   * The value range the 3D texture is packed over.
+   *
+   * CT is packed over the diagnostic HU range so the transfer functions can
+   * be written in Hounsfield Units. MR numbers are arbitrary signal with no
+   * fixed scale, so the volume's own range is used and its presets are
+   * expressed as fractions of it.
+   */
+  function vrRange() {
+    if (isHounsfield() || !state.volume) return [VR_WINDOW_LOW, VR_WINDOW_HIGH];
+    var lo = state.volume.minHU, hi = state.volume.maxHU;
+    if (!isFinite(lo) || !isFinite(hi) || hi <= lo) return [VR_WINDOW_LOW, VR_WINDOW_HIGH];
+    return [lo, hi];
   }
 
   /**
@@ -992,8 +1014,15 @@
     if (state.duplicateCount) parts.push(state.duplicateCount + " duplicate(s) ignored");
     showToast(parts.join(", ") + ".");
 
-    if (!state.currentSeriesUID) selectSeries(firstNewSeriesUID || state.seriesOrder[0]);
-    else renderSeriesList();
+    // Show what was just opened. Loading a study and seeing nothing change
+    // reads as a failure; the previous series is one click away in the panel.
+    if (firstNewSeriesUID && firstNewSeriesUID !== state.currentSeriesUID) {
+      selectSeries(firstNewSeriesUID);
+    } else if (!state.currentSeriesUID) {
+      selectSeries(state.seriesOrder[0]);
+    } else {
+      renderSeriesList();
+    }
   }
 
   /* ---------------------------------------------------------------------
@@ -1160,6 +1189,7 @@
       clearMeasurements();
       setBusy(false);
       updateVolumeInfo();
+      syncModalityControls();
       updateObliqueInfo();
       updateGeometryWarnings();
       updateCalibrationNote();
@@ -1258,6 +1288,17 @@
     var b = (p.y - slab.height / 2) * slab.spacingY;
     if (!a && !b) return null;
     return Math.atan2(b, a);
+  }
+
+  /** Pointer angle about the pane's centre, on screen. */
+  function screenAngleAt(i, clientX, clientY) {
+    var rec = cellEls[i];
+    if (!rec) return null;
+    var r = rec.canvas.getBoundingClientRect();
+    var dx = clientX - (r.x + r.width / 2);
+    var dy = clientY - (r.y + r.height / 2);
+    if (!dx && !dy) return null;
+    return Math.atan2(dy, dx);
   }
 
   function resetOblique() {
@@ -2217,7 +2258,8 @@
     if (!rec) return null;
     try {
       renderer = new VR.Renderer(rec.canvas);
-      renderer.setTransferFunction(state.vrPreset, VR_WINDOW_LOW, VR_WINDOW_HIGH);
+      var rr0 = vrRange();
+      renderer.setTransferFunction(state.vrPreset, rr0[0], rr0[1]);
     } catch (err) {
       renderer = null;
       rec.empty.innerHTML = "3D unavailable<br /><span class='muted small'>" +
@@ -2240,9 +2282,10 @@
     rec.empty.style.display = "none";
 
     if (vrDirty) {
-      var packed = V.packTexture(state.volume, VR_WINDOW_LOW, VR_WINDOW_HIGH, 256, state.boneCut);
+      var range = vrRange();
+      var packed = V.packTexture(state.volume, range[0], range[1], 256, state.boneCut);
       r.setVolume(packed);
-      r.setTransferFunction(state.vrPreset, VR_WINDOW_LOW, VR_WINDOW_HIGH);
+      r.setTransferFunction(state.vrPreset, range[0], range[1]);
       vrDirty = false;
     }
 
@@ -2372,12 +2415,123 @@
   }
 
   function applyPreset(key) {
-    var preset = PRESETS[key];
+    var preset = PRESETS[key] || computedPreset(key);
     if (!preset) return;
     state.windowWidth = preset.ww;
     state.windowCenter = preset.wc;
     updateWLInputs();
     renderAll();
+  }
+
+  /**
+   * Window presets for data with no Hounsfield scale.
+   *
+   * The CT presets are fixed numbers because HU is an absolute scale. MR
+   * signal is not comparable between sequences, let alone between scanners,
+   * so the only honest presets are ones derived from the image itself or
+   * from what the scanner wrote in the header.
+   */
+  function computedPreset(key) {
+    var vol = state.volume;
+    if (!vol) return null;
+    if (key === "header") {
+      var group = getCurrentGroup();
+      var inst = group && group.slices.length ? group.slices[0].instance : null;
+      return inst ? { ww: wwOf(inst), wc: wcOf(inst) } : null;
+    }
+    if (key === "full") {
+      return { ww: Math.max(1, vol.maxHU - vol.minHU), wc: (vol.maxHU + vol.minHU) / 2 };
+    }
+    if (key === "auto") {
+      var p = percentiles(vol, 0.02, 0.98);
+      return p ? { ww: Math.max(1, p[1] - p[0]), wc: (p[0] + p[1]) / 2 } : null;
+    }
+    return null;
+  }
+
+  /** Low/high percentile of the volume, via a coarse histogram. */
+  function percentiles(vol, loFrac, hiFrac) {
+    var lo = vol.minHU, hi = vol.maxHU;
+    if (!isFinite(lo) || !isFinite(hi) || hi <= lo) return null;
+    var bins = 1024;
+    var counts = new Uint32Array(bins);
+    var scale = (bins - 1) / (hi - lo);
+    var data = vol.data;
+    // Every eighth voxel is plenty for a percentile and keeps this instant.
+    var step = data.length > 4e6 ? 8 : 1;
+    var total = 0;
+    for (var i = 0; i < data.length; i += step) {
+      counts[Math.round((data[i] - lo) * scale)]++;
+      total++;
+    }
+    var want = [loFrac * total, hiFrac * total];
+    var out = [lo, hi];
+    var seen = 0, k = 0;
+    for (var b = 0; b < bins && k < 2; b++) {
+      seen += counts[b];
+      while (k < 2 && seen >= want[k]) {
+        out[k] = lo + b / scale;
+        k++;
+      }
+    }
+    return out[1] > out[0] ? out : null;
+  }
+
+  /** Offer the window and 3D presets that make sense for this modality. */
+  function syncModalityControls() {
+    var hu = isHounsfield();
+    var group = getCurrentGroup();
+    var modality = group && group.slices.length ? (group.slices[0].instance.modality || "") : "";
+
+    fillOptions(dom.presetSelect, hu
+      ? [["", "Custom"]].concat(Object.keys(PRESETS).map(function (k) {
+          return [k, PRESETS[k].label + " " + PRESETS[k].ww + "/" + PRESETS[k].wc];
+        }))
+      : [["", "Custom"], ["header", "From header"], ["auto", "Auto contrast"],
+         ["full", "Full range"]]);
+
+    fillOptions(dom.vrPreset, hu
+      ? [["bone", "Bone VRT"], ["angio", "Angiographic VRT"], ["muscle", "Muscle VRT"],
+         ["soft", "Soft Tissue"], ["lung", "Lung"], ["skin", "Skin"]]
+      : [["mrIntensity", "MR Intensity"], ["mrSurface", "MR Surface"],
+         ["mrVessel", "MR Bright Signal"]]);
+
+    var tf = VR.TRANSFER_FUNCTIONS[state.vrPreset];
+    if (!tf || !!tf.normalised === hu) {
+      state.vrPreset = hu ? "bone" : "mrIntensity";
+      vrDirty = true;
+    }
+    dom.vrPreset.value = state.vrPreset;
+
+    // Bone cut is an HU threshold; it means nothing on MR signal.
+    var noBone = !hu && !!state.volume;
+    dom.boneCutToggle.disabled = noBone;
+    dom.boneThreshold.disabled = noBone;
+    if (noBone && state.boneCut) {
+      state.boneCut = false;
+      dom.boneCutToggle.checked = false;
+      vrDirty = true;
+    }
+    if (noBone) {
+      dom.boneCutStatus.textContent =
+        "Bone cut is a Hounsfield threshold, so it applies to CT only." +
+        (modality ? " This series is " + modality + "." : "");
+    } else {
+      updateBoneStatus();
+    }
+  }
+
+  function fillOptions(select, pairs) {
+    if (!select) return;
+    var current = select.value;
+    select.innerHTML = "";
+    pairs.forEach(function (pair) {
+      var o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      select.appendChild(o);
+    });
+    if (pairs.some(function (pair) { return pair[0] === current; })) select.value = current;
   }
 
   function updateWLInputs() {
@@ -2446,14 +2600,11 @@
       renderAll();
     });
 
-    if (dom.stackStep) {
-      dom.stackStep.addEventListener("change", function (e) {
-        state.stackStep = parseInt(e.target.value, 10) || 0;
-        restack();
-        syncCellControls();
-        syncSliders();
-        renderAll();
-        updateStackNote();
+    if (dom.stackSeg) {
+      dom.stackSeg.addEventListener("click", function (e) {
+        var btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        setStackStep(parseInt(btn.dataset.step, 10) || 0);
       });
     }
 
@@ -2469,11 +2620,14 @@
 
     // Rotate / flip act on the active pane, keeping each pane's display
     // state independent as the plan calls for.
-    dom.rotateBtn.addEventListener("click", function () {
-      withActiveMprCell(function (cell, i) {
-        cell.view.rotation = ((cell.view.rotation || 0) + 90) % 360;
-        renderCell(i);
-      });
+    dom.rotateLeftBtn.addEventListener("click", function () { nudgeRotation(-90); });
+    dom.rotateBtn.addEventListener("click", function () { nudgeRotation(90); });
+    dom.freeRotateBtn.addEventListener("click", function () {
+      state.freeRotate = !state.freeRotate;
+      dom.freeRotateBtn.classList.toggle("active", state.freeRotate);
+      setStatus(state.freeRotate
+        ? "Free rotate: drag on a pane to turn it to any angle."
+        : "Ready");
     });
     dom.flipHBtn.addEventListener("click", function () {
       withActiveMprCell(function (cell, i) {
@@ -2618,7 +2772,10 @@
     });
     dom.vrPreset.addEventListener("change", function (e) {
       state.vrPreset = e.target.value;
-      if (renderer) renderer.setTransferFunction(state.vrPreset, VR_WINDOW_LOW, VR_WINDOW_HIGH);
+      if (renderer) {
+        var rr = vrRange();
+        renderer.setTransferFunction(state.vrPreset, rr[0], rr[1]);
+      }
       renderVR();
     });
     dom.vrOpacity.addEventListener("input", function (e) {
@@ -2683,6 +2840,13 @@
       if (e.button === 0 && e.altKey) {
         var a0 = obliqueAngleAt(i, e.clientX, e.clientY);
         if (a0 !== null) state.drag = { cell: i, mode: "oblique", angle: a0 };
+        return;
+      }
+      if (e.button === 0 && state.freeRotate) {
+        var r0 = screenAngleAt(i, e.clientX, e.clientY);
+        if (r0 !== null) {
+          state.drag = { cell: i, mode: "spin", angle: r0, rotation: cell.view.rotation || 0 };
+        }
         return;
       }
       if (e.button === 0 && e.shiftKey) {
@@ -2783,6 +2947,16 @@
     if (!drag) return;
     var dx = e.clientX - drag.x;
     var dy = e.clientY - drag.y;
+
+    if (drag.mode === "spin") {
+      var now = screenAngleAt(drag.cell, e.clientX, e.clientY);
+      if (now === null) return;
+      var turned = ((now - drag.angle) * 180) / Math.PI;
+      var cellS = state.cells[drag.cell];
+      cellS.view.rotation = ((drag.rotation + turned) % 360 + 360) % 360;
+      renderCell(drag.cell);
+      return;
+    }
 
     if (drag.mode === "oblique") {
       var a = obliqueAngleAt(drag.cell, e.clientX, e.clientY);
@@ -2896,7 +3070,7 @@
       case "4": setLayout("vr"); break;
       case "5": setLayout("1x2"); break;
       case "6": setLayout("2x3"); break;
-      case "7": setLayout("4x4"); break;
+
     }
   }
 
@@ -2970,6 +3144,14 @@
     dom.boneCutStatus.textContent =
       "Bone removed at ≥ " + state.boneThreshold + " HU (dilated 2 voxels)." +
       (state.boneThreshold < 350 ? " Contrast-filled vessels are cut too at this threshold." : "");
+  }
+
+  /** Step the active pane's rotation, snapped to whole degrees. */
+  function nudgeRotation(delta) {
+    withActiveMprCell(function (cell, i) {
+      cell.view.rotation = (((cell.view.rotation || 0) + delta) % 360 + 360) % 360;
+      renderCell(i);
+    });
   }
 
   /** Run fn against the active pane, or the first 2D pane if 3D is focused. */
@@ -3070,6 +3252,24 @@
       " apart, covering " + (span + 1) + " slices at a time. Scrolling any pane moves the whole run.";
   }
 
+  /** How many slices apart repeated panes sit. */
+  function setStackStep(step) {
+    state.stackStep = step;
+    restack();
+    syncStackSeg();
+    syncCellControls();
+    syncSliders();
+    renderAll();
+    updateStackNote();
+  }
+
+  function syncStackSeg() {
+    if (!dom.stackSeg) return;
+    Array.prototype.forEach.call(dom.stackSeg.querySelectorAll(".seg-btn"), function (btn) {
+      btn.classList.toggle("active", parseInt(btn.dataset.step, 10) === state.stackStep);
+    });
+  }
+
   var obliqueInfoKey = null;
 
   function updateObliqueInfo() {
@@ -3145,8 +3345,10 @@
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     dom.huBtn.classList.toggle("active", state.huProbe);
+    dom.freeRotateBtn.classList.toggle("active", state.freeRotate);
     updateWLInputs();
     updateBoneStatus();
+    syncStackSeg();
     updateStackNote();
     updateObliqueInfo();
     renderMeasurementList();

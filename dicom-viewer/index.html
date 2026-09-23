@@ -38,7 +38,6 @@
           <span class="seg-sep"></span>
           <button class="seg-btn" data-layout="1x2" title="Two panes side by side (5)">1×2</button>
           <button class="seg-btn" data-layout="2x3" title="Six panes, 2 rows of 3 (6)">2×3</button>
-          <button class="seg-btn" data-layout="4x4" title="Sixteen panes (7)">4×4</button>
         </div>
         <select id="planeFill" title="Which plane the panes show">
           <option value="mix">Mixed planes</option>
@@ -63,6 +62,17 @@
       </div>
 
       <div class="toolbar-group">
+        <span class="tool-label">Stack</span>
+        <div class="seg" id="stackSeg">
+          <button class="seg-btn" data-step="0" title="Every repeated pane shows the same slice">Same</button>
+          <button class="seg-btn active" data-step="1" title="Repeated panes step one slice apart">1</button>
+          <button class="seg-btn" data-step="2" title="Repeated panes step two slices apart">2</button>
+          <button class="seg-btn" data-step="5" title="Repeated panes step five slices apart">5</button>
+          <button class="seg-btn" data-step="10" title="Repeated panes step ten slices apart">10</button>
+        </div>
+      </div>
+
+      <div class="toolbar-group">
         <span class="tool-label">Measure</span>
         <div class="seg" id="toolSeg">
           <button class="seg-btn active" data-tool="none" title="Navigate (no measurement)">✥</button>
@@ -78,7 +88,9 @@
         <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗</button>
         <button class="icon-btn" id="flipHBtn" title="Flip horizontal">↔️</button>
         <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
-        <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
+        <button class="icon-btn" id="rotateLeftBtn" title="Rotate 90° anticlockwise">⟲</button>
+        <button class="icon-btn" id="rotateBtn" title="Rotate 90° clockwise">⟳</button>
+        <button class="icon-btn" id="freeRotateBtn" title="Free rotate — drag on a pane to turn it to any angle">◷</button>
         <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
         <button class="icon-btn" id="huBtn" title="Show the value under the cursor in the status bar">HU</button>
         <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
@@ -176,8 +188,9 @@
             <div class="field-row">
               <label for="vrPreset">Preset</label>
               <select id="vrPreset">
-                <option value="bone">Bone</option>
-                <option value="angio">Angio</option>
+                <option value="bone">Bone VRT</option>
+                <option value="angio">Angiographic VRT</option>
+                <option value="muscle">Muscle VRT</option>
                 <option value="soft">Soft Tissue</option>
                 <option value="lung">Lung</option>
                 <option value="skin">Skin</option>
@@ -192,17 +205,8 @@
 
           <section class="tool-section">
             <h4>Panes</h4>
-            <div class="field-row">
-              <label for="stackStep">Stack</label>
-              <select id="stackStep">
-                <option value="0">Same slice</option>
-                <option value="1" selected>Every slice</option>
-                <option value="2">Every 2nd</option>
-                <option value="5">Every 5th</option>
-                <option value="10">Every 10th</option>
-              </select>
-            </div>
             <p class="hint-text" id="stackNote"></p>
+            <p class="hint-text">Set the spacing with the <strong>Stack</strong> buttons in the toolbar.</p>
           </section>
 
           <section class="tool-section">

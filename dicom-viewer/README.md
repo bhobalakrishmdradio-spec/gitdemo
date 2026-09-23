@@ -51,7 +51,23 @@ radiologist's report and your official imaging system for clinical decisions.
   you pay for resampling only when you actually tilt something.
 - **Layouts**: 2×2 (three planes + 3D), 1×1 single pane, three-up MPR, 3D alone,
   and the larger grids **1×2**, **2×3** and **4×4**. Double-click a pane to
-  expand it and again to go back; keys `1`–`7` switch layouts.
+  expand it and again to go back; keys `1`–`7` switch layouts. Any grid can
+  be filled with a single plane — see below.
+
+### Filling a grid with one plane
+
+The **Mixed planes / All axial / All coronal / All sagittal** selector, beside
+the layout buttons, points every pane at one plane. That is what turns a grid
+into a filmstrip: `4×4` + *All axial* gives sixteen consecutive axial slices
+on screen at once, and one scroll pages all sixteen (see **Stacked scrolling**
+below). *Mixed planes* restores each layout's own arrangement of the three
+planes plus the 3D view.
+
+The choice follows you between grids, so you can go from `2×3` to `4×4`
+without losing it. The **MPR** and **3D** layouts are defined by the planes
+they show, so the selector does not apply to them and greys out. Changing a
+single pane by hand puts the selector back to *Mixed planes*, since the grid
+is no longer uniform.
 
 ### Panes
 

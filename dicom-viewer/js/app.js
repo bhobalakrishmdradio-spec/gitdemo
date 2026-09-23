@@ -65,23 +65,75 @@
   var LAYOUTS = {
     quad: { label: "2×2", cols: 2, rows: 2, fill: ["axial", "coronal", "sagittal", "vr"] },
     axial: { label: "Axial", cols: 1, rows: 1, fill: ["axial"] },
-    mpr: { label: "MPR", cols: 3, rows: 1, fill: ["axial", "coronal", "sagittal"] },
-    vr: { label: "3D", cols: 1, rows: 1, fill: ["vr"] },
+    // `fixed` layouts are defined by which planes they show, so a whole-grid
+    // plane choice does not apply to them.
+    mpr: { label: "MPR", cols: 3, rows: 1, fill: ["axial", "coronal", "sagittal"], fixed: true },
+    vr: { label: "3D", cols: 1, rows: 1, fill: ["vr"], fixed: true },
     "1x2": { label: "1×2", cols: 2, rows: 1, fill: ["axial", "coronal"] },
     "2x3": { label: "2×3", cols: 3, rows: 2, fill: null },
     "4x4": { label: "4×4", cols: 4, rows: 4, fill: null },
   };
 
-  /** Planes a layout's panes start on. */
+  /**
+   * Planes a layout's panes start on.
+   *
+   * With a single plane chosen, every pane shows it, which is what turns a
+   * grid into a filmstrip: sixteen consecutive axial slices that page
+   * together. "Mixed" keeps each layout's own arrangement of the three
+   * planes plus the 3D view.
+   */
   function layoutFill(key) {
     var def = LAYOUTS[key] || LAYOUTS.quad;
     var total = def.cols * def.rows;
+
+    if (!def.fixed && state.planeFill && state.planeFill !== "mix") {
+      var same = [];
+      for (var k = 0; k < total; k++) same.push(state.planeFill);
+      return same;
+    }
+
     if (def.fill) return def.fill.slice(0, total);
     var out = [];
     for (var i = 0; i < total; i++) out.push(MPR_PLANES[i % MPR_PLANES.length]);
     // One 3D pane, in the fourth slot, where the 2x2 layout also puts it.
     if (total >= 4) out[3] = "vr";
     return out;
+  }
+
+  /** Point every pane at one plane, or back to the layout's own mixture. */
+  function setPlaneFill(fill) {
+    state.planeFill = fill;
+    var def = LAYOUTS[state.layout] || LAYOUTS.quad;
+    if (def.fixed || fill === "mix") {
+      applyLayout(state.layout);          // rebuild the layout's own arrangement
+    } else {
+      state.cells.forEach(function (cell) {
+        cell.plane = fill;
+        cell.pinned = false;
+        cell.offset = 0;
+      });
+      restack();
+      rebuildCells();
+    }
+    syncPlaneFill();
+  }
+
+  /**
+   * Reflect what the panes actually show, not what was last clicked — a
+   * pane changed on its own makes the grid mixed again.
+   */
+  function syncPlaneFill() {
+    if (!dom.planeFill) return;
+    var def = LAYOUTS[state.layout] || LAYOUTS.quad;
+    dom.planeFill.disabled = !!def.fixed;
+    dom.planeFill.title = def.fixed
+      ? "The " + def.label + " layout defines its own planes"
+      : "Which plane the panes show";
+    var planes = state.cells.map(function (c) { return c.plane; });
+    var uniform = planes.length && planes.every(function (p) { return p === planes[0]; });
+    var value = uniform && planes[0] !== "vr" ? planes[0] : "mix";
+    state.planeFill = value;
+    dom.planeFill.value = value;
   }
 
   var PLANE_LABELS = { axial: "Axial", coronal: "Coronal", sagittal: "Sagittal", vr: "3D" };
@@ -148,6 +200,8 @@
 
     huProbe: true,              // live value readout under the cursor
     layout: "quad",
+    planeFill: "mix",           // "mix" | "axial" | "coronal" | "sagittal"
+
     // Slices between one pane and the next on the same plane. 0 makes every
     // pane show the same slice; 1 makes a grid a filmstrip.
     stackStep: 1,
@@ -176,6 +230,7 @@
     dom.folderInput = byId("folderInput");
     dom.clearBtn = byId("clearBtn");
     dom.layoutSeg = byId("layoutSeg");
+    dom.planeFill = byId("planeFill");
     dom.toolSeg = byId("toolSeg");
     dom.presetSelect = byId("presetSelect");
     dom.invertBtn = byId("invertBtn");
@@ -345,6 +400,7 @@
       if (r) { r.rotX = camera.rotX; r.rotY = camera.rotY; r.distance = camera.distance; }
     }
     setActiveCell(Math.min(state.activeCell, state.cells.length - 1));
+    syncPlaneFill();
     syncCellControls();
     syncSliders();
     updateStackNote();
@@ -2378,6 +2434,10 @@
       if (btn) setLayout(btn.dataset.layout);
     });
 
+    dom.planeFill.addEventListener("change", function (e) {
+      setPlaneFill(e.target.value);
+    });
+
     dom.presetSelect.addEventListener("change", function (e) { applyPreset(e.target.value); });
 
     dom.invertBtn.addEventListener("click", function () {
@@ -3124,6 +3184,7 @@
     layoutFill: layoutFill,
     setLayout: setLayout,
     setCellPlane: setCellPlane,
+    setPlaneFill: setPlaneFill,
     setCellIndex: setCellIndex,
     setActiveCell: setActiveCell,
     cellIndex: cellIndex,

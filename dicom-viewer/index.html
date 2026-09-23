@@ -40,6 +40,12 @@
           <button class="seg-btn" data-layout="2x3" title="Six panes, 2 rows of 3 (6)">2×3</button>
           <button class="seg-btn" data-layout="4x4" title="Sixteen panes (7)">4×4</button>
         </div>
+        <select id="planeFill" title="Which plane the panes show">
+          <option value="mix">Mixed planes</option>
+          <option value="axial">All axial</option>
+          <option value="coronal">All coronal</option>
+          <option value="sagittal">All sagittal</option>
+        </select>
       </div>
 
       <div class="toolbar-group">
@@ -92,7 +98,7 @@
       <aside class="panel panel-left" id="seriesPanel">
         <div class="panel-title">Series</div>
         <div class="drop-hint" id="dropHint">
-          Drag &amp; drop DICOM files here,<br />or use <strong>Open Files</strong> / <strong>Open Folder</strong>.
+          Drag &amp; drop DICOM files here,<br />or use <strong>📂 Open</strong> / <strong>📁 Folder</strong>.
         </div>
         <div class="series-list" id="seriesList"></div>
       </aside>

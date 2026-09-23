@@ -1714,11 +1714,30 @@ function updateAppLockUI() {
   if (on) btn.closest('details.settings-panel').open = true;
 }
 
-/* ---------- Voice dictation (Description field) ---------- */
+/* ---------- Voice dictation (Description + Amount fields) ---------- */
 let dictationRecognition = null;
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+// Best-effort, regex-based (not AI) - speech engines usually transcribe
+// spoken numbers as digits already, so this mirrors the amount patterns
+// used elsewhere in the app rather than trying to parse number words.
+function extractAmountFromSpeech(text) {
+  const patterns = [
+    /(?:rs\.?|inr|rupees?|₹)\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /([\d,]+(?:\.\d{1,2})?)\s*(?:rs\.?|inr|rupees?)/i,
+    /([\d,]+(?:\.\d{1,2})?)/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const num = parseFloat(match[1].replace(/,/g, ''));
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  return null;
 }
 
 function resetDictationButton() {
@@ -1726,7 +1745,7 @@ function resetDictationButton() {
   if (btn) {
     btn.classList.remove('recording');
     btn.textContent = '🎤';
-    btn.title = 'Dictate description';
+    btn.title = 'Dictate transaction (fills description and amount)';
   }
   dictationRecognition = null;
 }
@@ -1779,7 +1798,20 @@ function toggleDictation() {
     resetDictationButton();
   };
 
-  dictationRecognition.onend = resetDictationButton;
+  dictationRecognition.onend = () => {
+    const spoken = finalTranscript.trim();
+    if (spoken) {
+      const amountInput = document.getElementById('txnAmount');
+      const detected = extractAmountFromSpeech(spoken);
+      if (detected !== null && amountInput && !amountInput.value) {
+        amountInput.value = detected.toFixed(2);
+        showToast('Filled from voice - description and amount (₹' + detected.toFixed(2) + ', please check)');
+      } else {
+        showToast('Description filled from voice');
+      }
+    }
+    resetDictationButton();
+  };
 
   try {
     dictationRecognition.start();

@@ -25,6 +25,12 @@ never leaves your device.
   layouts, so always review the filled-in fields before saving. The raw
   detected text is shown so you can copy details by hand if it gets it
   wrong.
+- **Voice input** — tap the 🎤 next to Description and speak the transaction
+  (e.g. "coffee with friends 250 rupees"); it fills the description with what
+  you said and, if a rupee amount is heard, fills the Amount field too. Uses
+  the browser's built-in speech recognition (nothing is sent anywhere) — not
+  supported in Safari on iPhone/Mac (Apple has never shipped it for the web),
+  where it shows a message instead of doing nothing; works in Chrome/Edge.
 - **Dashboard** — total balance across all accounts, per-account balances,
   a category spending donut chart, and a 6-month income/expense trend
   chart. A Month/Year picker lets Salary, Other Income, Expenses, and the

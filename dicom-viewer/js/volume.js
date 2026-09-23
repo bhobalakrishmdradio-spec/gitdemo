@@ -227,6 +227,38 @@
    * ------------------------------------------------------------------- */
 
   /** Number of addressable positions along a plane's normal. */
+  /**
+   * Patient Z of one axial slice, in millimetres, or null.
+   *
+   * Comparing two studies means lining them up by where the patient was,
+   * not by slice number: two series of the same region can have different
+   * slice counts, thicknesses and start positions.
+   */
+  function sliceZ(volume, index) {
+    if (!volume || !volume.slices) return null;
+    var rec = volume.slices[Math.max(0, Math.min(index, volume.slices.length - 1))];
+    var z = rec && rec.instance ? rec.instance.imagePositionZ : null;
+    return typeof z === "number" && isFinite(z) ? z : null;
+  }
+
+  /** The axial slice of `volume` closest to a patient Z, or null. */
+  function sliceNearestZ(volume, z) {
+    if (!volume || !volume.slices || typeof z !== "number") return null;
+    var best = null, bestGap = Infinity;
+    for (var i = 0; i < volume.slices.length; i++) {
+      var zi = sliceZ(volume, i);
+      if (zi === null) continue;
+      var gap = Math.abs(zi - z);
+      if (gap < bestGap) { bestGap = gap; best = i; }
+    }
+    return best === null ? null : { index: best, gap: bestGap };
+  }
+
+  /** True when the volume carries usable patient positions. */
+  function hasPositions(volume) {
+    return sliceZ(volume, 0) !== null;
+  }
+
   function planeCount(volume, plane) {
     if (plane === PLANES.coronal) return volume.rows;
     if (plane === PLANES.sagittal) return volume.cols;
@@ -695,6 +727,9 @@
     MODES: MODES,
     AIR_HU: AIR_HU,
     build: build,
+    sliceZ: sliceZ,
+    sliceNearestZ: sliceNearestZ,
+    hasPositions: hasPositions,
     planeCount: planeCount,
     planeGeometry: planeGeometry,
     normalSpacing: normalSpacing,

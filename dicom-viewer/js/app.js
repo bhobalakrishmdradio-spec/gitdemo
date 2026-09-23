@@ -166,7 +166,10 @@
     currentSeriesUID: null,
     duplicateCount: 0,
 
-    volume: null,
+    volume: null,                 // the current series' volume
+    volumes: {},                  // seriesUid -> volume, for comparison panes
+    seriesIndex: {},              // seriesUid -> { axial, coronal, sagittal }
+    link: true,                   // link panes across series by patient position
     geometryWarnings: [],
     index: { axial: 0, coronal: 0, sagittal: 0 },
     frames: null,                 // set from BASE_FRAMES on init / reset
@@ -222,6 +225,8 @@
   var vrDirty = true;           // texture needs re-upload
   var planeCache = {};          // request key -> extracted plane
   var planeCacheKeys = [];      // insertion order, for trimming
+  var volumeOrder = [];         // reconstruction order, for evicting
+  var MAX_CACHED_VOLUMES = 3;   // current study plus a prior or two
   var seriesNodes = {};         // uid -> { wrapper, sliceCount }
 
   /* ---------------------------------------------------------------------
@@ -242,6 +247,7 @@
     dom.orientBtn = byId("orientBtn");
     dom.orientMenu = byId("orientMenu");
     dom.crosshairBtn = byId("crosshairBtn");
+    dom.linkBtn = byId("linkBtn");
     dom.huBtn = byId("huBtn");
     dom.huReadout = byId("huReadout");
     dom.resetMenu = byId("resetMenu");
@@ -308,12 +314,49 @@
   function newCell(plane) {
     return {
       plane: plane,
+      seriesUid: null,      // null = whatever series is current
       offset: 0,            // slices ahead of the shared cut for this plane
       index: 0,             // absolute slice, used only while pinned
       pinned: false,        // true = hold this slice, ignore scrolling
       view: { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false },
       wl: null,             // own window/level; null while following the global one
     };
+  }
+
+  /** Which series a pane draws from. */
+  function cellSeriesUid(cell) {
+    return cell.seriesUid || state.currentSeriesUID || null;
+  }
+
+  /** The volume a pane draws from, which may not be the current one. */
+  function cellVolume(cell) {
+    if (!cell) return null;
+    var uid = cellSeriesUid(cell);
+    if (uid && state.volumes[uid]) return state.volumes[uid];
+    return cell.seriesUid ? null : state.volume;
+  }
+
+  /**
+   * Slice indices for one series.
+   *
+   * Comparison panes show a different series with its own slice count, so
+   * one shared index would be meaningless. Each series keeps its own,
+   * centred when first seen.
+   */
+  function indexRecord(uid) {
+    if (!uid) return state.index;
+    if (uid === state.currentSeriesUID) return state.index;
+    if (!state.seriesIndex[uid]) {
+      var vol = state.volumes[uid];
+      var rec = { axial: 0, coronal: 0, sagittal: 0 };
+      if (vol) {
+        MPR_PLANES.forEach(function (p) {
+          rec[p] = Math.floor(V.planeCount(vol, p) / 2);
+        });
+      }
+      state.seriesIndex[uid] = rec;
+    }
+    return state.seriesIndex[uid];
   }
 
   /**
@@ -324,9 +367,11 @@
    * rather than one image repeated. A pinned pane opts out and holds still.
    */
   function cellIndex(cell) {
-    if (!state.volume || cell.plane === "vr") return 0;
-    var count = V.planeCount(state.volume, cell.plane);
-    var i = cell.pinned ? cell.index : state.index[cell.plane] + (cell.offset || 0);
+    var vol = cellVolume(cell);
+    if (!vol || cell.plane === "vr") return 0;
+    var count = V.planeCount(vol, cell.plane);
+    var rec = indexRecord(cellSeriesUid(cell));
+    var i = cell.pinned ? cell.index : rec[cell.plane] + (cell.offset || 0);
     return Math.max(0, Math.min(count - 1, i));
   }
 
@@ -340,8 +385,11 @@
     var seen = {};
     state.cells.forEach(function (cell) {
       if (cell.plane === "vr") return;
-      var k = seen[cell.plane] || 0;
-      seen[cell.plane] = k + 1;
+      // Panes on different series are separate runs: a shared offset would
+      // mean different distances in each.
+      var key = cellSeriesUid(cell) + "|" + cell.plane;
+      var k = seen[key] || 0;
+      seen[key] = k + 1;
       if (!cell.pinned) cell.offset = k * state.stackStep;
     });
   }
@@ -443,6 +491,15 @@
     planeSel.value = cell.plane;
     bar.appendChild(planeSel);
 
+    // Which series this pane draws from. Only worth showing once there is
+    // more than one to choose between.
+    var seriesSel = null;
+    if (cell.plane !== "vr" && state.seriesOrder.length > 1) {
+      seriesSel = mk("select", "vp-series");
+      seriesSel.title = "Which series this pane shows";
+      bar.appendChild(seriesSel);
+    }
+
     var wlSel = null, linkBtn = null, slider = null;
     if (cell.plane !== "vr") {
       wlSel = mk("select", "vp-wl");
@@ -483,7 +540,8 @@
 
     var rec = {
       root: root, canvas: canvas, cross: cross, tl: tl, tr: tr, bl: bl, br: br,
-      bar: bar, planeSel: planeSel, wlSel: wlSel, linkBtn: linkBtn, slider: slider,
+      bar: bar, planeSel: planeSel, seriesSel: seriesSel,
+      wlSel: wlSel, linkBtn: linkBtn, slider: slider,
       empty: empty, geom: null,
       // A 2D context on the 3D pane's canvas would lock WebGL out of it.
       ctx: cell.plane === "vr" ? null : canvas.getContext("2d"),
@@ -496,6 +554,49 @@
     var el = document.createElement(tag);
     el.className = className;
     return el;
+  }
+
+  /**
+   * Bind a pane to a specific series, for comparing a study with a prior.
+   *
+   * The volume is reconstructed on demand and cached. A pane on another
+   * series keeps its own slice position; linked scrolling lines the two up
+   * by patient position, which is not the same as registering them.
+   */
+  function setCellSeries(i, uid) {
+    var cell = state.cells[i];
+    if (!cell) return;
+    cell.seriesUid = uid || null;
+    cell.pinned = false;
+    cell.offset = 0;
+    if (!uid || state.volumes[uid]) {
+      restack();
+      rebuildCells();
+      return;
+    }
+    var group = state.seriesMap[uid];
+    if (!group || group.slices.length < 2) {
+      showToast("That series has too few images to reconstruct.", true);
+      cell.seriesUid = null;
+      rebuildCells();
+      return;
+    }
+    setBusy(true, "Reconstructing " + (group.description || "series") + "…");
+    afterPaint(function () {
+      try {
+        rememberVolume(uid, V.build(group.slices, decodeForVolume));
+      } catch (err) {
+        showToast("Couldn't build that series: " + err.message, true);
+        cell.seriesUid = null;
+      }
+      setBusy(false);
+      // Start the comparison series at the position the current one is on.
+      if (cell.seriesUid && state.link) {
+        linkOthersTo(state.currentSeriesUID, state.index.axial);
+      }
+      restack();
+      rebuildCells();
+    });
   }
 
   /** Point a pane at a different view. */
@@ -517,6 +618,17 @@
       var rec = cellEls[i];
       if (!rec) return;
       if (rec.planeSel) rec.planeSel.value = cell.plane;
+      if (rec.seriesSel) {
+        fillOptions(rec.seriesSel, [["", "Current series"]].concat(
+          state.seriesOrder.map(function (uid) {
+            var g = state.seriesMap[uid];
+            var inst = g.slices.length ? g.slices[0].instance : null;
+            return [uid, (inst && inst.modality ? inst.modality + " · " : "") +
+              (g.description || "Series") + " (" + g.slices.length + ")"];
+          })));
+        rec.seriesSel.value = cell.seriesUid || "";
+        rec.seriesSel.classList.toggle("other", !!cell.seriesUid);
+      }
       if (rec.wlSel) rec.wlSel.value = cell.wl && cell.wl.preset ? cell.wl.preset : "";
       if (rec.linkBtn) {
         rec.linkBtn.textContent = "📌";
@@ -1181,6 +1293,13 @@
     vrDirty = true;
     renderSeriesList();
 
+    // Already reconstructed: reuse it rather than rebuilding.
+    if (state.volumes[uid]) {
+      state.volume = state.volumes[uid];
+      afterPaint(function () { finishSeriesLoad(group); });
+      return;
+    }
+
     setBusy(true, "Reconstructing volume from " + group.slices.length + " slices…");
     afterPaint(function () {
       try {
@@ -1189,14 +1308,39 @@
         state.volume = null;
         showToast("Couldn't build a volume: " + err.message, true);
       }
+      if (state.volume) rememberVolume(uid, state.volume);
 
-      if (state.volume) {
-        // Start at the middle of each axis, which is where anatomy usually is.
-        MPR_PLANES.forEach(function (plane) {
-          state.index[plane] = Math.floor(V.planeCount(state.volume, plane) / 2);
-        });
-        if (state.boneCut) recomputeBoneMask();
-      }
+      finishSeriesLoad(group);
+    });
+  }
+
+  /**
+   * Keep a bounded number of reconstructed volumes, so a comparison pane can
+   * hold a second study without rebuilding it on every switch.
+   */
+  function rememberVolume(uid, volume) {
+    state.volumes[uid] = volume;
+    volumeOrder = volumeOrder.filter(function (u) { return u !== uid; });
+    volumeOrder.push(uid);
+    while (volumeOrder.length > MAX_CACHED_VOLUMES) {
+      var drop = volumeOrder.shift();
+      // Never evict a volume a pane is showing.
+      var inUse = state.cells.some(function (c) { return c.seriesUid === drop; });
+      if (drop === state.currentSeriesUID || inUse) { volumeOrder.push(drop); break; }
+      delete state.volumes[drop];
+      delete state.seriesIndex[drop];
+    }
+  }
+
+  function finishSeriesLoad(group) {
+    if (state.volume) {
+      var rec = indexRecord(state.currentSeriesUID);
+      // Start at the middle of each axis, which is where anatomy usually is.
+      MPR_PLANES.forEach(function (plane) {
+        if (!rec[plane]) rec[plane] = Math.floor(V.planeCount(state.volume, plane) / 2);
+      });
+      if (state.boneCut) recomputeBoneMask();
+    }
 
       resetView();
       clearMeasurements();
@@ -1211,10 +1355,9 @@
       renderAll();
       highlightActiveThumb();
       setStatus(state.volume
-        ? "Volume " + state.volume.cols + "×" + state.volume.rows + "×" + state.volume.depth +
-          " · " + fmt(state.volume.spacingZ) + "mm slices"
-        : "Single-slice series — MPR and 3D need a stack.");
-    });
+      ? "Volume " + state.volume.cols + "×" + state.volume.rows + "×" + state.volume.depth +
+        " · " + fmt(state.volume.spacingZ) + "mm slices"
+      : "Single-slice series — MPR and 3D need a stack.");
   }
 
   /* ---------------------------------------------------------------------
@@ -1329,8 +1472,8 @@
    * mutually orthogonal however the frames are tilted.
    * ------------------------------------------------------------------- */
 
-  function volumeCenterMm() {
-    var v = state.volume;
+  function volumeCenterMm(vol) {
+    var v = vol || state.volume;
     return [
       ((v.cols - 1) / 2) * v.spacingX,
       ((v.rows - 1) / 2) * v.spacingY,
@@ -1339,43 +1482,49 @@
   }
 
   /** Signed distance of a plane's cut from the volume centre, in mm. */
-  function planeOffsetMm(plane) {
-    var count = V.planeCount(state.volume, plane);
-    return (state.index[plane] - (count - 1) / 2) * V.normalSpacing(state.volume, plane);
+  function planeOffsetMm(plane, vol, rec) {
+    var v = vol || state.volume;
+    var r = rec || state.index;
+    var count = V.planeCount(v, plane);
+    return (r[plane] - (count - 1) / 2) * V.normalSpacing(v, plane);
   }
 
   /** The crosshair point — where all three cuts meet — in millimetres. */
-  function crosshairWorld() {
-    var c = volumeCenterMm();
+  function crosshairWorld(vol, rec) {
+    var v = vol || state.volume;
+    var r = rec || state.index;
+    var c = volumeCenterMm(v);
     MPR_PLANES.forEach(function (plane) {
       var n = state.frames[plane].n;
-      var off = planeOffsetMm(plane);
+      var off = planeOffsetMm(plane, v, r);
       c[0] += n[0] * off; c[1] += n[1] * off; c[2] += n[2] * off;
     });
     return c;
   }
 
   /** Inverse of crosshairWorld: nearest slice index on each plane. */
-  function indicesFromWorld(w) {
-    var vc = volumeCenterMm();
+  function indicesFromWorld(w, vol) {
+    var v = vol || state.volume;
+    var vc = volumeCenterMm(v);
     var d = [w[0] - vc[0], w[1] - vc[1], w[2] - vc[2]];
     var out = {};
     MPR_PLANES.forEach(function (plane) {
-      var count = V.planeCount(state.volume, plane);
-      var pitch = V.normalSpacing(state.volume, plane);
+      var count = V.planeCount(v, plane);
+      var pitch = V.normalSpacing(v, plane);
       out[plane] = Math.round(dot3(d, state.frames[plane].n) / pitch + (count - 1) / 2);
     });
     return out;
   }
 
   /** World centre of a rendered plane. */
-  function planeCenterWorld(plane, slab, index) {
+  function planeCenterWorld(plane, slab, index, vol) {
     if (slab && slab.oblique) return slab.center;
+    var v = vol || state.volume;
     if (index === undefined || index === null) index = state.index[plane];
-    var c = volumeCenterMm();
+    var c = volumeCenterMm(v);
     var n = state.frames[plane].n;
-    var count = V.planeCount(state.volume, plane);
-    var off = (index - (count - 1) / 2) * V.normalSpacing(state.volume, plane);
+    var count = V.planeCount(v, plane);
+    var off = (index - (count - 1) / 2) * V.normalSpacing(v, plane);
     return [c[0] + n[0] * off, c[1] + n[1] * off, c[2] + n[2] * off];
   }
 
@@ -1385,9 +1534,9 @@
   }
 
   /** Plane column/row -> millimetres. Valid for orthogonal and oblique alike. */
-  function planeToWorld(plane, slab, px, py, index) {
+  function planeToWorld(plane, slab, px, py, index, vol) {
     var f = planeAxesOf(plane, slab);
-    var c = planeCenterWorld(plane, slab, index);
+    var c = planeCenterWorld(plane, slab, index, vol);
     var a = (px - slab.width / 2) * slab.spacingX;
     var b = (py - slab.height / 2) * slab.spacingY;
     return [
@@ -1398,9 +1547,9 @@
   }
 
   /** Millimetres -> plane column/row (the in-plane part; exact inverse). */
-  function worldToPlane(plane, slab, w, index) {
+  function worldToPlane(plane, slab, w, index, vol) {
     var f = planeAxesOf(plane, slab);
-    var c = planeCenterWorld(plane, slab, index);
+    var c = planeCenterWorld(plane, slab, index, vol);
     var d = [w[0] - c[0], w[1] - c[1], w[2] - c[2]];
     return {
       x: dot3(d, f.u) / slab.spacingX + slab.width / 2,
@@ -1415,7 +1564,9 @@
    * so the cache is keyed on the whole request and bounded rather than being
    * one slot per plane.
    */
-  function getPlaneData(plane, index) {
+  function getPlaneData(plane, index, vol, uid) {
+    var volume = vol || state.volume;
+    var seriesKey = uid || state.currentSeriesUID || "cur";
     if (index === undefined || index === null) index = state.index[plane];
     // Decided per plane: rotating in the axial view tilts coronal and
     // sagittal but leaves axial square, so axial keeps the fast path and its
@@ -1423,7 +1574,7 @@
     var oblique = planeOblique(plane);
     var frame = state.frames[plane];
     var key = [
-      plane, index, state.thicknessMm, state.projectionMode,
+      seriesKey, plane, index, state.thicknessMm, state.projectionMode,
       state.boneCut ? "cut" + state.boneMaskVersion : "raw",
       oblique ? frameKey(frame) + "|" + state.index.axial + "," +
         state.index.coronal + "," + state.index.sagittal : "ortho",
@@ -1439,8 +1590,8 @@
     // The axis-aligned path is a plain blit, so keep using it while the frames
     // are at rest; only a genuine tilt pays for trilinear resampling.
     var result = oblique
-      ? V.extractOblique(state.volume, obliqueCenterFor(plane, index), frame.u, frame.v, opts)
-      : V.extractPlane(state.volume, plane, index, opts);
+      ? V.extractOblique(volume, obliqueCenterFor(plane, index, volume), frame.u, frame.v, opts)
+      : V.extractPlane(volume, plane, index, opts);
 
     planeCache[key] = result;
     planeCacheKeys.push(key);
@@ -1460,9 +1611,10 @@
    * Centre of an oblique cut. The crosshair fixes where the three planes
    * meet; an unlinked pane slides from there along its own normal.
    */
-  function obliqueCenterFor(plane, index) {
-    var c = crosshairWorld();
-    var delta = (index - state.index[plane]) * V.normalSpacing(state.volume, plane);
+  function obliqueCenterFor(plane, index, vol) {
+    var v = vol || state.volume;
+    var c = crosshairWorld(v);
+    var delta = (index - state.index[plane]) * V.normalSpacing(v, plane);
     if (!delta) return c;
     var nv = state.frames[plane].n;
     return [c[0] + nv[0] * delta, c[1] + nv[1] * delta, c[2] + nv[2] * delta];
@@ -1487,6 +1639,7 @@
   function renderCell(i) {
     var cell = state.cells[i], rec = cellEls[i];
     if (!cell || !rec || !rec.ctx) return;
+    var vol = cellVolume(cell);
     var ctx = rec.ctx;
     resizeCanvas(rec.canvas);
     resizeCanvas(rec.cross);
@@ -1500,7 +1653,7 @@
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, cw, ch);
 
-    if (!state.volume) {
+    if (!vol) {
       ctx.restore();
       clearOverlays(i);
       rec.geom = null;
@@ -1509,7 +1662,7 @@
     }
 
     var index = cellIndex(cell);
-    var slab = getPlaneData(cell.plane, index);
+    var slab = getPlaneData(cell.plane, index, vol, cellSeriesUid(cell));
     var win = cellWindow(cell);
     var img = windowToCanvas(
       slab.data, slab.width, slab.height, win.ww, win.wc, state.invert, false
@@ -1527,7 +1680,10 @@
     ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    rec.geom = { t: t, cw: cw, ch: ch, slab: slab, index: index, plane: cell.plane };
+    rec.geom = {
+      t: t, cw: cw, ch: ch, slab: slab, index: index, plane: cell.plane,
+      vol: vol, uid: cellSeriesUid(cell),
+    };
     updateOverlays(i, slab);
     drawAnnotations(i, rec.geom);
   }
@@ -1619,7 +1775,7 @@
     if (!rec) return;
     var ctx = rec.cross.getContext("2d");
     ctx.clearRect(0, 0, rec.cross.width, rec.cross.height);
-    if (!geom || !state.volume) return;
+    if (!geom || !geom.vol) return;
 
     var dpr = window.devicePixelRatio || 1;
     if (state.crosshair) drawCrosshair(ctx, geom, dpr);
@@ -1636,9 +1792,11 @@
   function crosshairArm(geom, other) {
     var plane = geom.plane;
     var slab = geom.slab;
+    var vol = geom.vol || state.volume;
+    var rec = indexRecord(geom.uid);
     var f = planeAxesOf(plane, slab);
-    var cp = planeCenterWorld(plane, slab, geom.index);
-    var cq = planeCenterWorld(other, null);
+    var cp = planeCenterWorld(plane, slab, geom.index, vol);
+    var cq = planeCenterWorld(other, null, rec[other], vol);
     var nq = state.frames[other].n;
 
     // Points on this plane are cp + u*a + v*b; the companion plane is
@@ -1795,11 +1953,13 @@
     if (p.x < 0 || p.x > t.width || p.y < 0 || p.y > t.height) return;
 
     // Go through millimetres so the click lands correctly on a tilted plane.
-    var world = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index);
-    var want = indicesFromWorld(world);
+    var world = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index, geom.vol);
+    var want = indicesFromWorld(world, geom.vol);
+    var rec = indexRecord(geom.uid);
     MPR_PLANES.forEach(function (q) {
       if (q === geom.plane) return;    // clicking in-plane must not move this cut
-      setPlaneIndex(q, want[q], true);
+      var count = V.planeCount(geom.vol, q);
+      rec[q] = Math.max(0, Math.min(want[q], count - 1));
     });
     renderAll();
     syncSliders();
@@ -2074,15 +2234,18 @@
     var rec = cellEls[i], cell = state.cells[i];
     if (!rec || !cell) return;
     var plane = cell.plane;
-    var group = getCurrentGroup();
+    var uid = cellSeriesUid(cell);
+    var group = state.seriesMap[uid] || getCurrentGroup();
     var first = group && group.slices.length ? group.slices[0].instance : null;
-    var vol = state.volume;
+    var vol = cellVolume(cell);
+    if (!vol) return;
 
     if (first) {
       var name = formatPersonName(str(first.dataSet, "x00100010", ""));
       var id = str(first.dataSet, "x00100020", "");
       rec.tl.textContent = (name ? name + "\n" : "") + (id ? "ID: " + id : "");
-      rec.tr.textContent = (first.modality || "") + "\n" + (group.description || "");
+      rec.tr.textContent = (first.modality || "") + "\n" + (group.description || "") +
+        (cell.seriesUid ? "\n[comparison]" : "");
     }
 
     var win = cellWindow(cell);
@@ -2098,9 +2261,11 @@
       ? fmt(slab.samples * pitch) + "mm " + modeLabel(state.projectionMode)
       : fmt(pitch) + "mm";
     var tilt = tiltOf(plane);
+    var offBy = linkGapFor(cell);
     rec.br.textContent =
       (cellIndex(cell) + 1) + " / " + count +
       (cell.pinned ? "  pinned" : cell.offset ? "  " + (cell.offset > 0 ? "+" : "") + cell.offset : "") +
+      (offBy ? "\n⚠ " + offBy : "") +
       "\n" + thicknessLabel +
       (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
       "\n" + Math.round(cell.view.zoom * 100) + "%";
@@ -2405,30 +2570,85 @@
   }
 
   function setPlaneIndex(plane, index, skipRender) {
-    if (!state.volume) return;
-    var count = V.planeCount(state.volume, plane);
+    setSeriesIndex(state.currentSeriesUID, plane, index, skipRender);
+  }
+
+  /**
+   * Move one series' cut, then carry the others with it when linked.
+   *
+   * Linking is by patient position from Image Position (Patient), not by
+   * slice number: two series of the same region routinely differ in slice
+   * count, thickness and starting point, so matching indices would line up
+   * the wrong anatomy. Only the axial axis is linked, because that is the
+   * only axis a single-valued slice position defines.
+   *
+   * This is alignment by stated position, not registration. Nothing here
+   * corrects for the patient having moved between the two acquisitions.
+   */
+  function setSeriesIndex(uid, plane, index, skipRender) {
+    var vol = uid === state.currentSeriesUID ? state.volume : state.volumes[uid];
+    if (!vol) return;
+    var rec = indexRecord(uid);
+    var count = V.planeCount(vol, plane);
     var clamped = Math.max(0, Math.min(index, count - 1));
-    if (clamped === state.index[plane]) return;
-    state.index[plane] = clamped;
-    if (plane === "axial") highlightActiveThumb();
+    if (clamped === rec[plane]) return;
+    rec[plane] = clamped;
+
+    if (state.link && plane === "axial") linkOthersTo(uid, clamped);
+    if (uid === state.currentSeriesUID && plane === "axial") highlightActiveThumb();
     if (!skipRender) {
       renderAll();
       syncSliders();
     }
   }
 
+  /**
+   * How far a comparison pane actually is from the linked position.
+   *
+   * Snapping to the nearest slice always succeeds, even when the other
+   * study does not cover this level at all — it just returns its last
+   * slice. Left unsaid, that reads as a match. Returns a phrase when the
+   * gap is bigger than the pane's own slice spacing, else null.
+   */
+  function linkGapFor(cell) {
+    if (!state.link || !cell.seriesUid || cell.plane !== "axial") return null;
+    var vol = cellVolume(cell);
+    if (!vol || !state.volume) return null;
+    var here = V.sliceZ(vol, cellIndex(cell));
+    var there = V.sliceZ(state.volume, state.index.axial);
+    if (here === null || there === null) return null;
+    var gap = Math.abs(here - there);
+    if (gap <= Math.max(vol.spacingZ, 0.5)) return null;
+    return "off by " + gap.toFixed(1) + " mm — outside this series";
+  }
+
+  /** Drive every other loaded series to the slice nearest this patient Z. */
+  function linkOthersTo(uid, index) {
+    var from = uid === state.currentSeriesUID ? state.volume : state.volumes[uid];
+    var z = V.sliceZ(from, index);
+    if (z === null) return;                    // no positions: nothing to link by
+    Object.keys(state.volumes).forEach(function (other) {
+      if (other === uid) return;
+      var vol = state.volumes[other];
+      var hit = V.sliceNearestZ(vol, z);
+      if (!hit) return;
+      indexRecord(other).axial = hit.index;
+    });
+  }
+
   function syncSliders() {
     state.cells.forEach(function (cell, i) {
       var rec = cellEls[i];
       if (!rec || !rec.slider) return;
-      if (!state.volume) {
+      var vol = cellVolume(cell);
+      if (!vol) {
         rec.slider.disabled = true;
         rec.slider.max = 0;
         rec.slider.value = 0;
         return;
       }
       rec.slider.disabled = false;
-      rec.slider.max = Math.max(0, V.planeCount(state.volume, cell.plane) - 1);
+      rec.slider.max = Math.max(0, V.planeCount(vol, cell.plane) - 1);
       rec.slider.value = cellIndex(cell);
     });
   }
@@ -2787,6 +3007,17 @@
       dom.obliqueReset.addEventListener("click", resetOblique);
     }
 
+    dom.linkBtn.addEventListener("click", function () {
+      state.link = !state.link;
+      dom.linkBtn.classList.toggle("active", state.link);
+      if (state.link) linkOthersTo(state.currentSeriesUID, state.index.axial);
+      renderAll();
+      syncSliders();
+      showToast(state.link
+        ? "Linked: panes on other series follow by patient position."
+        : "Unlinked: each series scrolls on its own.");
+    });
+
     dom.crosshairBtn.addEventListener("click", function () {
       state.crosshair = !state.crosshair;
       dom.crosshairBtn.classList.toggle("active", state.crosshair);
@@ -3060,6 +3291,13 @@
     });
     rec.planeSel.addEventListener("mousedown", function (e) { e.stopPropagation(); });
 
+    if (rec.seriesSel) {
+      rec.seriesSel.addEventListener("change", function (e) {
+        setCellSeries(i, e.target.value);
+      });
+      rec.seriesSel.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    }
+
     if (rec.wlSel) {
       rec.wlSel.addEventListener("change", function (e) {
         var key = e.target.value;
@@ -3187,12 +3425,13 @@
    */
   function setCellIndex(i, index) {
     var cell = state.cells[i];
-    if (!cell || !state.volume || cell.plane === "vr") return;
-    var count = V.planeCount(state.volume, cell.plane);
+    var vol = cellVolume(cell);
+    if (!cell || !vol || cell.plane === "vr") return;
+    var count = V.planeCount(vol, cell.plane);
     if (!cell.pinned) {
       // Move the shared cut so every unpinned pane on this plane follows,
       // keeping its offset, and this pane lands where it was asked to.
-      setPlaneIndex(cell.plane, index - (cell.offset || 0));
+      setSeriesIndex(cellSeriesUid(cell), cell.plane, index - (cell.offset || 0));
       return;
     }
     var clamped = Math.max(0, Math.min(index, count - 1));
@@ -3650,6 +3889,7 @@
     window.addEventListener("mouseup", function () { state.drag = null; });
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
+    dom.linkBtn.classList.toggle("active", state.link);
     dom.huBtn.classList.toggle("active", state.huProbe);
     syncOrientMenu();
     updateWLInputs();
@@ -3699,6 +3939,11 @@
     setCellIndex: setCellIndex,
     setActiveCell: setActiveCell,
     cellIndex: cellIndex,
+    cellVolume: cellVolume,
+    cellSeriesUid: cellSeriesUid,
+    linkGapFor: linkGapFor,
+    setCellSeries: setCellSeries,
+    indexRecord: indexRecord,
     cellWindow: cellWindow,
     restack: restack,
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },

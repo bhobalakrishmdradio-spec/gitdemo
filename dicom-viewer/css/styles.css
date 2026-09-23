@@ -263,6 +263,9 @@ select, input[type="number"] {
 .vp-bar select:hover, .vp-bar button:hover { border-color: var(--accent); }
 .vp-plane { letter-spacing: 0.06em; text-transform: uppercase; }
 .vp-wl { max-width: 96px; }
+.vp-series { max-width: 130px; }
+.vp-series.other { color: #ffd24a; border-color: #ffd24a; }
+.vp.compact .vp-series { display: none; }
 .vp-link { padding: 3px 5px; }
 .vp-link { opacity: 0.55; }
 .vp-link.on { opacity: 1; color: #ffd24a; border-color: #ffd24a; }

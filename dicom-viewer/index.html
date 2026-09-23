@@ -57,6 +57,18 @@
       </div>
 
       <div class="toolbar-group">
+        <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
+        <select id="cineSpeed" title="Cine speed">
+          <option value="5">5 fps</option>
+          <option value="12" selected>12 fps</option>
+          <option value="25">25 fps</option>
+          <option value="40">40 fps</option>
+        </select>
+        <button class="icon-btn" id="cineDirBtn" title="Play in reverse">⇄</button>
+        <button class="icon-btn active" id="cineLoopBtn" title="Loop at the end of the stack">↻</button>
+      </div>
+
+      <div class="toolbar-group">
         <span class="tool-label">Stack</span>
         <div class="seg" id="stackSeg">
           <button class="seg-btn" data-step="0" title="Every repeated pane shows the same slice">Same</button>
@@ -76,6 +88,7 @@
           <button class="seg-btn" data-tool="angle" title="Angle — click three points (vertex second)">∠</button>
           <button class="seg-btn" data-tool="ellipse" title="Elliptical ROI — click two corners">◯</button>
           <button class="seg-btn" data-tool="rect" title="Rectangular ROI — click two corners">▭</button>
+          <button class="seg-btn" data-tool="sculpt" title="Sculpt — drag to cut tissue away by hand">✂</button>
         </div>
       </div>
 
@@ -229,6 +242,17 @@
               <span class="field-value" id="boneThresholdValue">200</span>
             </div>
             <p class="hint-text" id="boneCutStatus">Threshold segmentation — applies to MPR and 3D.</p>
+            <div class="field-row">
+              <label for="sculptRadius">Brush</label>
+              <input type="range" id="sculptRadius" min="2" max="40" step="1" value="8" />
+              <span class="field-value" id="sculptRadiusValue">8 mm</span>
+            </div>
+            <div class="field-row">
+              <button class="ghost-btn" id="sculptUndoBtn">Undo stroke</button>
+              <button class="ghost-btn" id="sculptClearBtn">Clear sculpting</button>
+            </div>
+            <p class="hint-text">Pick <strong>✂</strong> in the Measure group, then drag on any
+              plane to cut tissue away by hand. The 3D view follows.</p>
           </section>
 
           <section class="tool-section">

@@ -130,10 +130,14 @@
       ? "The " + def.label + " layout defines its own planes"
       : "Which plane the panes show";
     var planes = state.cells.map(function (c) { return c.plane; });
-    var uniform = planes.length && planes.every(function (p) { return p === planes[0]; });
-    var value = uniform && planes[0] !== "vr" ? planes[0] : "mix";
-    state.planeFill = value;
-    dom.planeFill.value = value;
+    // A single-pane layout is trivially "uniform", but inferring a whole-grid
+    // plane choice from it would silently turn 1x1 into "All axial" and cost
+    // the 3D pane on the way back to 2x2.
+    if (planes.length > 1) {
+      var uniform = planes.every(function (p) { return p === planes[0]; });
+      state.planeFill = uniform && planes[0] !== "vr" ? planes[0] : "mix";
+    }
+    dom.planeFill.value = state.planeFill;
   }
 
   var PLANE_LABELS = { axial: "Axial", coronal: "Coronal", sagittal: "Sagittal", vr: "3D" };
@@ -196,6 +200,10 @@
     boneCut: false,
     boneThreshold: 200,
     boneMaskVersion: 0,
+    sculptRadius: 8,            // brush radius in millimetres
+    sculptUndo: [],             // strokes, newest last
+
+    cine: { playing: false, fps: 12, reverse: false, loop: true },
 
     vrMode: "vr",
     vrPreset: "bone",
@@ -225,6 +233,7 @@
   var vrDirty = true;           // texture needs re-upload
   var planeCache = {};          // request key -> extracted plane
   var planeCacheKeys = [];      // insertion order, for trimming
+  var cineTimer = null;
   var volumeOrder = [];         // reconstruction order, for evicting
   var MAX_CACHED_VOLUMES = 3;   // current study plus a prior or two
   var seriesNodes = {};         // uid -> { wrapper, sliceCount }
@@ -291,6 +300,12 @@
     dom.boneThreshold = byId("boneThreshold");
     dom.boneThresholdValue = byId("boneThresholdValue");
     dom.boneCutStatus = byId("boneCutStatus");
+    dom.sculptRadius = byId("sculptRadius");
+    dom.sculptRadiusValue = byId("sculptRadiusValue");
+    dom.cineBtn = byId("cineBtn");
+    dom.cineSpeed = byId("cineSpeed");
+    dom.cineDirBtn = byId("cineDirBtn");
+    dom.cineLoopBtn = byId("cineLoopBtn");
     dom.vrMode = byId("vrMode");
     dom.vrPreset = byId("vrPreset");
     dom.vrOpacity = byId("vrOpacity");
@@ -709,6 +724,95 @@
     var group = getCurrentGroup();
     if (!group || !group.slices.length) return "";
     return huUnitOf(group.slices[0].instance);
+  }
+
+  /** True when anything is being removed from view: threshold or sculpting. */
+  function cutActive(vol) {
+    return !!(state.boneCut || V.hasSculpt(vol || state.volume));
+  }
+
+  /* ---------------------------------------------------------------------
+   * Hand sculpting
+   *
+   * A Hounsfield threshold cannot tell the skull from the opacified vessel
+   * lying against it. This lets the reader cut the rest away by hand, on
+   * any plane, with the 3D view following.
+   * ------------------------------------------------------------------- */
+
+  /** Paint one brush stamp at a pane point, recording it for undo. */
+  function sculptAt(i, clientX, clientY, stroke) {
+    var cell = state.cells[i];
+    var rec = cellEls[i], geom = rec && rec.geom;
+    var vol = cellVolume(cell);
+    if (!geom || !vol || cell.plane === "vr") return;
+    var p = eventToCell(i, clientX, clientY);
+    if (!p) return;
+    var world = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index, vol);
+    var changed = V.sculptSphere(vol, world, state.sculptRadius, false);
+    if (!changed.length) return;
+    if (stroke) stroke.push.apply(stroke, changed);
+    planeCache = {}; planeCacheKeys = [];
+    vrDirty = true;
+  }
+
+  function undoSculpt() {
+    var last = state.sculptUndo.pop();
+    if (!last) return showToast("Nothing to undo.", true);
+    V.undoSculpt(last.volume, last.indices, false);
+    planeCache = {}; planeCacheKeys = [];
+    vrDirty = true;
+    renderAll();
+    updateBoneStatus();
+    showToast("Undid one sculpt stroke.");
+  }
+
+  function clearSculpt() {
+    var any = false;
+    Object.keys(state.volumes).forEach(function (uid) {
+      if (V.hasSculpt(state.volumes[uid])) { V.clearSculpt(state.volumes[uid]); any = true; }
+    });
+    if (state.volume && V.hasSculpt(state.volume)) { V.clearSculpt(state.volume); any = true; }
+    state.sculptUndo = [];
+    if (!any) return;
+    planeCache = {}; planeCacheKeys = [];
+    vrDirty = true;
+    renderAll();
+    updateBoneStatus();
+    showToast("Sculpting cleared.");
+  }
+
+  /* ---------------------------------------------------------------------
+   * Cine
+   * ------------------------------------------------------------------- */
+
+  function setCine(playing) {
+    state.cine.playing = playing;
+    if (cineTimer) { clearInterval(cineTimer); cineTimer = null; }
+    if (playing) {
+      cineTimer = setInterval(cineStep, Math.max(20, 1000 / state.cine.fps));
+    }
+    dom.cineBtn.textContent = playing ? "⏸" : "▶";
+    dom.cineBtn.classList.toggle("active", playing);
+  }
+
+  /** Advance the active pane's series by one slice. */
+  function cineStep() {
+    var i = state.activeCell;
+    if (!state.cells[i] || state.cells[i].plane === "vr") {
+      i = state.cells.findIndex(function (c) { return c.plane !== "vr"; });
+    }
+    var cell = state.cells[i];
+    var vol = cellVolume(cell);
+    if (!cell || !vol) return setCine(false);
+
+    var count = V.planeCount(vol, cell.plane);
+    var at = cellIndex(cell);
+    var next = at + (state.cine.reverse ? -1 : 1);
+    if (next < 0 || next >= count) {
+      if (!state.cine.loop) return setCine(false);
+      next = state.cine.reverse ? count - 1 : 0;
+    }
+    setCellIndex(i, next);
   }
 
   /** True when the loaded series really is on a Hounsfield scale. */
@@ -1575,7 +1679,7 @@
     var frame = state.frames[plane];
     var key = [
       seriesKey, plane, index, state.thicknessMm, state.projectionMode,
-      state.boneCut ? "cut" + state.boneMaskVersion : "raw",
+      cutActive(volume) ? "cut" + state.boneMaskVersion + "." + (volume.sculptVersion || 0) : "raw",
       oblique ? frameKey(frame) + "|" + state.index.axial + "," +
         state.index.coronal + "," + state.index.sagittal : "ortho",
     ].join("|");
@@ -1585,7 +1689,7 @@
     var opts = {
       thicknessMm: state.thicknessMm,
       mode: state.projectionMode,
-      boneCut: state.boneCut,
+      boneCut: cutActive(volume),
     };
     // The axis-aligned path is a plain blit, so keep using it while the frames
     // are at rest; only a genuine tilt pays for trilinear resampling.
@@ -2202,6 +2306,7 @@
   function setTool(tool) {
     state.tool = tool;
     state.pendingMeasure = null;
+    if (tool === "sculpt") setStatus("Sculpt: drag on any plane to cut tissue away.");
     Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
       btn.classList.toggle("active", btn.dataset.tool === tool);
     });
@@ -2462,7 +2567,7 @@
 
     if (vrDirty) {
       var range = vrRange();
-      var packed = V.packTexture(state.volume, range[0], range[1], 256, state.boneCut);
+      var packed = V.packTexture(state.volume, range[0], range[1], 256, cutActive(state.volume));
       r.setVolume(packed);
       r.setTransferFunction(state.vrPreset, range[0], range[1]);
       vrDirty = false;
@@ -3007,6 +3112,27 @@
       dom.obliqueReset.addEventListener("click", resetOblique);
     }
 
+    dom.sculptRadius.addEventListener("input", function (e) {
+      state.sculptRadius = parseFloat(e.target.value) || 8;
+      dom.sculptRadiusValue.textContent = state.sculptRadius + " mm";
+    });
+    byId("sculptUndoBtn").addEventListener("click", undoSculpt);
+    byId("sculptClearBtn").addEventListener("click", clearSculpt);
+
+    dom.cineBtn.addEventListener("click", function () { setCine(!state.cine.playing); });
+    dom.cineSpeed.addEventListener("change", function (e) {
+      state.cine.fps = parseInt(e.target.value, 10) || 12;
+      if (state.cine.playing) setCine(true);          // restart at the new rate
+    });
+    dom.cineDirBtn.addEventListener("click", function () {
+      state.cine.reverse = !state.cine.reverse;
+      dom.cineDirBtn.classList.toggle("active", state.cine.reverse);
+    });
+    dom.cineLoopBtn.addEventListener("click", function () {
+      state.cine.loop = !state.cine.loop;
+      dom.cineLoopBtn.classList.toggle("active", state.cine.loop);
+    });
+
     dom.linkBtn.addEventListener("click", function () {
       state.link = !state.link;
       dom.linkBtn.classList.toggle("active", state.link);
@@ -3355,6 +3481,13 @@
         crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
+      if (e.button === 0 && state.tool === "sculpt") {
+        var stroke = [];
+        state.drag = { cell: i, mode: "sculpt", stroke: stroke, volume: cellVolume(cell) };
+        sculptAt(i, e.clientX, e.clientY, stroke);
+        renderAll();
+        return;
+      }
       if (e.button === 0 && state.tool !== MEAS.TOOLS.none) {
         measureClick(i, e.clientX, e.clientY);
         return;
@@ -3450,6 +3583,12 @@
     if (!drag) return;
     var dx = e.clientX - drag.x;
     var dy = e.clientY - drag.y;
+
+    if (drag.mode === "sculpt") {
+      sculptAt(drag.cell, e.clientX, e.clientY, drag.stroke);
+      renderAll();
+      return;
+    }
 
     if (drag.mode === "spin") {
       var now = screenAngleAt(drag.cell, e.clientX, e.clientY);
@@ -3639,6 +3778,12 @@
   }
 
   function updateBoneStatus() {
+    if (dom.sculptUndoBtn === undefined) {
+      dom.sculptUndoBtn = byId("sculptUndoBtn");
+      dom.sculptClearBtn = byId("sculptClearBtn");
+    }
+    if (dom.sculptUndoBtn) dom.sculptUndoBtn.disabled = !state.sculptUndo.length;
+    if (dom.sculptClearBtn) dom.sculptClearBtn.disabled = !V.hasSculpt(state.volume);
     if (!state.boneCut) {
       dom.boneCutStatus.textContent =
         "Threshold segmentation — applies to MPR and 3D. Raise the threshold " +
@@ -3886,7 +4031,15 @@
     wireEvents();
 
     window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", function () { state.drag = null; });
+    window.addEventListener("mouseup", function () {
+      var drag = state.drag;
+      if (drag && drag.mode === "sculpt" && drag.stroke.length) {
+        state.sculptUndo.push({ volume: drag.volume, indices: drag.stroke });
+        if (state.sculptUndo.length > 40) state.sculptUndo.shift();
+        updateBoneStatus();
+      }
+      state.drag = null;
+    });
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     dom.linkBtn.classList.toggle("active", state.link);
@@ -3900,6 +4053,7 @@
     renderMeasurementList();
     syncSliders();
     setTool("none");
+    setCine(false);
     state.report = REPORT.empty();
     renderReport();
     setLayout(state.layout);
@@ -3946,6 +4100,10 @@
     indexRecord: indexRecord,
     cellWindow: cellWindow,
     restack: restack,
+    setCine: setCine,
+    undoSculpt: undoSculpt,
+    clearSculpt: clearSculpt,
+    cutActive: cutActive,
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
     cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
     cellCount: function () { return cellEls.length; },

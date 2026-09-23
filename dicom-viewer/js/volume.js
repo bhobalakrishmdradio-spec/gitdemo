@@ -301,7 +301,7 @@
     var geom = planeGeometry(volume, plane);
     var count = planeCount(volume, plane);
     var mode = opts.mode || MODES.average;
-    var mask = opts.boneCut ? volume.boneMask : null;
+    var mask = opts.boneCut ? cutMaskOf(volume) : null;
 
     index = clamp(Math.round(index), 0, count - 1);
 
@@ -427,7 +427,7 @@
   function extractOblique(volume, centerMm, axisU, axisV, opts) {
     opts = opts || {};
     var mode = opts.mode || MODES.average;
-    var mask = opts.boneCut ? volume.boneMask : null;
+    var mask = opts.boneCut ? cutMaskOf(volume) : null;
 
     // Isotropic output sampling: use the finest voxel pitch so an oblique cut
     // through thick slices isn't needlessly blurred.
@@ -615,6 +615,91 @@
    *
    * @returns {Uint8Array} 1 where bone, 0 elsewhere
    */
+  /**
+   * The voxels currently removed from view.
+   *
+   * Two things can remove a voxel: the Hounsfield threshold, and hand
+   * sculpting. They are kept as separate arrays so the threshold can be
+   * re-run without losing hand work, and unioned lazily here.
+   */
+  function cutMaskOf(volume) {
+    var bone = volume.boneMask, sculpt = volume.sculptMask;
+    if (!bone) return sculpt || null;
+    if (!sculpt) return bone;
+    var stamp = (volume.boneMaskVersion || 0) + ":" + (volume.sculptVersion || 0);
+    if (volume._unionStamp !== stamp) {
+      var out = volume._union && volume._union.length === bone.length
+        ? volume._union : new Uint8Array(bone.length);
+      for (var i = 0; i < bone.length; i++) out[i] = bone[i] | sculpt[i];
+      volume._union = out;
+      volume._unionStamp = stamp;
+    }
+    return volume._union;
+  }
+
+  /**
+   * Remove voxels inside a sphere centred on a point, in millimetres.
+   *
+   * Hand sculpting complements the threshold: a threshold cannot tell the
+   * skull from the contrast-filled vessel beside it, but a radiologist can.
+   * Returns the voxel indices it changed, so the stroke can be undone.
+   */
+  function sculptSphere(volume, centreMm, radiusMm, erase) {
+    if (!volume.sculptMask) {
+      volume.sculptMask = new Uint8Array(volume.cols * volume.rows * volume.depth);
+      volume.sculptVersion = 0;
+    }
+    var mask = volume.sculptMask;
+    var sx = volume.spacingX, sy = volume.spacingY, sz = volume.spacingZ;
+    var cx = centreMm[0] / sx, cy = centreMm[1] / sy, cz = centreMm[2] / sz;
+    var rx = radiusMm / sx, ry = radiusMm / sy, rz = radiusMm / sz;
+
+    var x0 = Math.max(0, Math.floor(cx - rx)), x1 = Math.min(volume.cols - 1, Math.ceil(cx + rx));
+    var y0 = Math.max(0, Math.floor(cy - ry)), y1 = Math.min(volume.rows - 1, Math.ceil(cy + ry));
+    var z0 = Math.max(0, Math.floor(cz - rz)), z1 = Math.min(volume.depth - 1, Math.ceil(cz + rz));
+
+    var stride = volume.cols * volume.rows;
+    var want = erase ? 0 : 1;
+    var changed = [];
+    for (var z = z0; z <= z1; z++) {
+      var dz = (z - cz) / rz;
+      for (var y = y0; y <= y1; y++) {
+        var dy = (y - cy) / ry;
+        if (dz * dz + dy * dy > 1) continue;
+        for (var x = x0; x <= x1; x++) {
+          var dx = (x - cx) / rx;
+          if (dx * dx + dy * dy + dz * dz > 1) continue;
+          var idx = z * stride + y * volume.cols + x;
+          if (mask[idx] === want) continue;
+          mask[idx] = want;
+          changed.push(idx);
+        }
+      }
+    }
+    if (changed.length) volume.sculptVersion = (volume.sculptVersion || 0) + 1;
+    return changed;
+  }
+
+  /** Put a stroke's voxels back. */
+  function undoSculpt(volume, indices, wasErase) {
+    if (!volume.sculptMask || !indices) return;
+    var back = wasErase ? 1 : 0;
+    for (var i = 0; i < indices.length; i++) volume.sculptMask[indices[i]] = back;
+    volume.sculptVersion = (volume.sculptVersion || 0) + 1;
+  }
+
+  function clearSculpt(volume) {
+    if (!volume.sculptMask) return;
+    volume.sculptMask = null;
+    volume.sculptVersion = (volume.sculptVersion || 0) + 1;
+    volume._union = null;
+    volume._unionStamp = null;
+  }
+
+  function hasSculpt(volume) {
+    return !!(volume && volume.sculptMask && volume.sculptVersion);
+  }
+
   function computeBoneMask(volume, thresholdHU, dilation) {
     var threshold = thresholdHU === undefined ? 200 : thresholdHU;
     var grow = dilation === undefined ? 2 : dilation;
@@ -631,6 +716,7 @@
       mask = dilateOnce(mask, cols, rows, depth);
     }
     volume.boneMask = mask;
+    volume.boneMaskVersion = (volume.boneMaskVersion || 0) + 1;
     volume.boneThreshold = threshold;
     return mask;
   }
@@ -674,7 +760,7 @@
     var lo = windowLow === undefined ? -1024 : windowLow;
     var hi = windowHigh === undefined ? 3071 : windowHigh;
     var limit = maxDim || 256;
-    var mask = boneCut ? volume.boneMask : null;
+    var mask = boneCut ? cutMaskOf(volume) : null;
 
     var sx = Math.max(1, Math.ceil(volume.cols / limit));
     var sy = Math.max(1, Math.ceil(volume.rows / limit));
@@ -742,6 +828,11 @@
     rotateAbout: rotateAbout,
     orthonormalize: orthonormalize,
     computeBoneMask: computeBoneMask,
+    cutMaskOf: cutMaskOf,
+    sculptSphere: sculptSphere,
+    undoSculpt: undoSculpt,
+    clearSculpt: clearSculpt,
+    hasSculpt: hasSculpt,
     packTexture: packTexture,
     estimateSliceSpacing: estimateSliceSpacing,
   };

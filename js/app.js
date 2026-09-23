@@ -99,6 +99,13 @@ const TRANSLATIONS = {
     'toast.ocrNoneFound': "Couldn't confidently detect anything - check the text below or enter details manually",
     'toast.ocrLoadFailed': "Couldn't load the screenshot reader (needs an internet connection the first time) - enter details manually",
     'toast.ocrFailed': "Couldn't read that screenshot - enter details manually",
+    'toast.voiceListening': 'Listening… tap the mic to stop',
+    'toast.voiceTranscribing': 'Transcribing… first time downloads an on-device speech model, then works offline',
+    'toast.voiceModelLoadFailed': "Couldn't load the speech model (needs an internet connection the first time) - type the details in",
+    'toast.voiceMicBlocked': "Microphone access was blocked - check this browser's site settings",
+    'toast.voiceNoSpeech': "Didn't catch that - try again",
+    'toast.voiceFilled': 'Description filled from voice',
+    'toast.voiceFilledAmount': 'Filled from voice - description and amount:',
   },
   ta: {
     'nav.dashboard': '📊 முகப்பு', 'nav.transactions': '📒 பரிவர்த்தனைகள்', 'nav.budgets': '🎯 பட்ஜெட்', 'nav.settings': '⚙️ அமைப்புகள்',
@@ -179,6 +186,13 @@ const TRANSLATIONS = {
     'toast.ocrNoneFound': 'உறுதியாக எதையும் கண்டறிய முடியவில்லை - கீழே உள்ள உரையைப் பார்க்கவும் அல்லது கைமுறையாக உள்ளிடவும்',
     'toast.ocrLoadFailed': 'ஸ்கிரீன்ஷாட் ரீடரை ஏற்ற முடியவில்லை (முதல் முறை இணைய இணைப்பு தேவை) - கைமுறையாக உள்ளிடவும்',
     'toast.ocrFailed': 'அந்த ஸ்கிரீன்ஷாட்டைப் படிக்க முடியவில்லை - கைமுறையாக உள்ளிடவும்',
+    'toast.voiceListening': 'கேட்கிறது… நிறுத்த மைக்கைத் தட்டவும்',
+    'toast.voiceTranscribing': 'எழுத்தாக மாற்றப்படுகிறது… முதல் முறை பேச்சு மாடலைப் பதிவிறக்குகிறது, பின்பு இணையம் இல்லாமலும் வேலை செய்யும்',
+    'toast.voiceModelLoadFailed': 'பேச்சு மாடலை ஏற்ற முடியவில்லை (முதல் முறை இணைய இணைப்பு தேவை) - கைமுறையாக உள்ளிடவும்',
+    'toast.voiceMicBlocked': 'மைக்ரோஃபோன் அணுகல் தடுக்கப்பட்டது - இந்த உலாவியின் தள அமைப்புகளைச் சரிபார்க்கவும்',
+    'toast.voiceNoSpeech': 'கேட்கவில்லை - மீண்டும் முயற்சிக்கவும்',
+    'toast.voiceFilled': 'குரல் மூலம் விவரம் நிரப்பப்பட்டது',
+    'toast.voiceFilledAmount': 'குரல் மூலம் நிரப்பப்பட்டது - விவரமும் தொகையும்:',
   },
 };
 
@@ -1179,6 +1193,7 @@ function openTransactionModal(txn) {
 
 function closeTransactionModal() {
   if (dictationRecognition) dictationRecognition.stop();
+  if (voiceMediaRecorder) voiceMediaRecorder.stop();
   document.getElementById('modalOverlay').hidden = true;
 }
 
@@ -1714,8 +1729,16 @@ function updateAppLockUI() {
   if (on) btn.closest('details.settings-panel').open = true;
 }
 
-/* ---------- Voice dictation (Description + Amount fields) ---------- */
-let dictationRecognition = null;
+/* ---------- Voice dictation (Description + Amount fields) ----------
+   Native Web Speech API (SpeechRecognition) where the browser has it -
+   fast, free, no download. Safari (iPhone and Mac) has never implemented
+   it, so there we fall back to recording audio and transcribing it
+   on-device with a small Whisper model (loaded from a CDN via
+   transformers.js/WASM) - the same "browser API first, on-device ML
+   fallback when it's missing" pattern already used for OCR above. */
+let dictationRecognition = null;   // native SpeechRecognition instance, while active
+let voiceMediaRecorder = null;     // MediaRecorder instance, while recording for the Whisper path
+let whisperPipelinePromise = null;
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -1742,26 +1765,46 @@ function extractAmountFromSpeech(text) {
 
 function resetDictationButton() {
   const btn = document.getElementById('voiceDictateBtn');
+  const statusEl = document.getElementById('voiceStatus');
   if (btn) {
-    btn.classList.remove('recording');
+    btn.classList.remove('recording', 'busy');
+    btn.disabled = false;
     btn.textContent = '🎤';
     btn.title = 'Dictate transaction (fills description and amount)';
   }
+  if (statusEl) statusEl.hidden = true;
   dictationRecognition = null;
+  voiceMediaRecorder = null;
+}
+
+// Applies a finished transcript (from either engine) to the form and reports the outcome.
+function applyDictationTranscript(spoken, baseText) {
+  if (!spoken) {
+    showToast(i18n('toast.voiceNoSpeech'));
+    return;
+  }
+  const input = document.getElementById('txnDescription');
+  input.value = baseText ? (baseText + ' ' + spoken).trim() : spoken;
+  const amountInput = document.getElementById('txnAmount');
+  const detected = extractAmountFromSpeech(spoken);
+  if (detected !== null && amountInput && !amountInput.value) {
+    amountInput.value = detected.toFixed(2);
+    showToast(i18n('toast.voiceFilledAmount') + ' ₹' + detected.toFixed(2));
+  } else {
+    showToast(i18n('toast.voiceFilled'));
+  }
 }
 
 function toggleDictation() {
-  if (dictationRecognition) {
-    dictationRecognition.stop();
-    return;
-  }
+  if (dictationRecognition) { dictationRecognition.stop(); return; }
+  if (voiceMediaRecorder) { voiceMediaRecorder.stop(); return; }
 
   const SR = getSpeechRecognitionCtor();
-  if (!SR) {
-    showToast('Voice input is not supported in this browser');
-    return;
-  }
+  if (SR) startNativeDictation(SR);
+  else startWhisperDictation();
+}
 
+function startNativeDictation(SR) {
   const input = document.getElementById('txnDescription');
   const baseText = input.value.trim();
   const btn = document.getElementById('voiceDictateBtn');
@@ -1789,9 +1832,9 @@ function toggleDictation() {
 
   dictationRecognition.onerror = (event) => {
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-      showToast('Microphone access was blocked - check your browser\'s site settings');
+      showToast(i18n('toast.voiceMicBlocked'));
     } else if (event.error === 'no-speech') {
-      showToast('Didn\'t catch that - try again');
+      showToast(i18n('toast.voiceNoSpeech'));
     } else if (event.error !== 'aborted') {
       showToast('Voice input error: ' + event.error);
     }
@@ -1799,23 +1842,131 @@ function toggleDictation() {
   };
 
   dictationRecognition.onend = () => {
-    const spoken = finalTranscript.trim();
-    if (spoken) {
-      const amountInput = document.getElementById('txnAmount');
-      const detected = extractAmountFromSpeech(spoken);
-      if (detected !== null && amountInput && !amountInput.value) {
-        amountInput.value = detected.toFixed(2);
-        showToast('Filled from voice - description and amount (₹' + detected.toFixed(2) + ', please check)');
-      } else {
-        showToast('Description filled from voice');
-      }
-    }
+    applyDictationTranscript(finalTranscript.trim(), baseText);
     resetDictationButton();
   };
 
   try {
     dictationRecognition.start();
   } catch (e) {
+    showToast('Could not start the microphone');
+    resetDictationButton();
+  }
+}
+
+// Loads transformers.js and a small multilingual Whisper model from a CDN the
+// first time it's needed (tens of MB), then reuses the cached pipeline - same
+// lazy-singleton pattern as loadTesseract()/loadSheetJS() above.
+function loadWhisperPipeline(onProgress) {
+  if (!whisperPipelinePromise) {
+    whisperPipelinePromise = (async () => {
+      const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+      env.allowLocalModels = false;
+      return pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+        quantized: true,
+        progress_callback: onProgress,
+      });
+    })();
+  }
+  return whisperPipelinePromise;
+}
+
+// Decodes a recorded audio Blob into the 16kHz mono Float32 PCM the Whisper
+// pipeline expects, using the Web Audio API (supported in Safari too).
+async function blobToFloat32Mono16k(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioCtx = new AudioCtx();
+  let decoded;
+  try {
+    decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    audioCtx.close();
+  }
+  const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offlineCtx.destination);
+  source.start();
+  const rendered = await offlineCtx.startRendering();
+  return rendered.getChannelData(0);
+}
+
+function pickAudioMimeType() {
+  if (!window.MediaRecorder) return '';
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus'];
+  return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || '';
+}
+
+async function startWhisperDictation() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    showToast(i18n('toast.voiceMicBlocked'));
+    return;
+  }
+  const btn = document.getElementById('voiceDictateBtn');
+  const statusEl = document.getElementById('voiceStatus');
+  const input = document.getElementById('txnDescription');
+  const baseText = input.value.trim();
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    showToast(i18n('toast.voiceMicBlocked'));
+    return;
+  }
+
+  const mimeType = pickAudioMimeType();
+  const chunks = [];
+  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  voiceMediaRecorder = recorder;
+
+  btn.classList.add('recording');
+  btn.textContent = '⏹️';
+  btn.title = 'Stop dictation';
+  statusEl.hidden = false;
+  statusEl.textContent = i18n('toast.voiceListening');
+
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    voiceMediaRecorder = null;
+
+    if (chunks.length === 0) {
+      resetDictationButton();
+      showToast(i18n('toast.voiceNoSpeech'));
+      return;
+    }
+
+    btn.classList.remove('recording');
+    btn.classList.add('busy');
+    btn.disabled = true;
+    statusEl.hidden = false;
+    statusEl.textContent = i18n('toast.voiceTranscribing');
+
+    try {
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+      const pcm = await blobToFloat32Mono16k(blob);
+      const transcriber = await loadWhisperPipeline((p) => {
+        if (p && p.status === 'progress' && typeof p.progress === 'number') {
+          statusEl.textContent = i18n('toast.voiceTranscribing') + ' (' + Math.round(p.progress) + '%)';
+        }
+      });
+      const output = await transcriber(pcm);
+      applyDictationTranscript(((output && output.text) || '').trim(), baseText);
+    } catch (e) {
+      console.error('Whisper transcription failed', e);
+      showToast(i18n('toast.voiceModelLoadFailed'));
+    } finally {
+      resetDictationButton();
+    }
+  };
+
+  try {
+    recorder.start();
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
     showToast('Could not start the microphone');
     resetDictationButton();
   }

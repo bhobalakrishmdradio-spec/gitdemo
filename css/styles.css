@@ -426,6 +426,11 @@ details.settings-panel[open] summary { margin-bottom: 12px; }
 }
 @keyframes mic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 @media (prefers-reduced-motion: reduce) { .mic-btn.recording { animation: none; } }
+.mic-btn.busy { opacity: 0.6; cursor: default; animation: none; }
+.mic-btn:disabled { opacity: 0.6; cursor: default; }
+
+.voice-status { font-size: 0.8rem; color: var(--text-muted); margin: 6px 0 0; }
+.voice-status[hidden] { display: none; }
 
 .receipt-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .receipt-preview { position: relative; width: 56px; height: 56px; flex-shrink: 0; }

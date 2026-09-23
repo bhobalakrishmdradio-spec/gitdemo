@@ -28,9 +28,16 @@ never leaves your device.
 - **Voice input** — tap the 🎤 next to Description and speak the transaction
   (e.g. "coffee with friends 250 rupees"); it fills the description with what
   you said and, if a rupee amount is heard, fills the Amount field too. Uses
-  the browser's built-in speech recognition (nothing is sent anywhere) — not
-  supported in Safari on iPhone/Mac (Apple has never shipped it for the web),
-  where it shows a message instead of doing nothing; works in Chrome/Edge.
+  the browser's built-in speech recognition where available (Chrome/Edge —
+  instant, nothing leaves the browser). Safari (iPhone and Mac) has never
+  implemented that API, so there it automatically falls back to recording
+  the audio and transcribing it **on-device** with a small [Whisper
+  model](https://github.com/xenova/transformers.js) fetched from a CDN the
+  first time (tens of MB, needs internet then, works offline after) — the
+  recording itself is never uploaded anywhere, only the model files are
+  fetched. This on-device fallback takes a few seconds to transcribe and can
+  be less accurate than the native engine, so always check the filled-in
+  fields before saving, same as the screenshot scanner above.
 - **Dashboard** — total balance across all accounts, per-account balances,
   a category spending donut chart, and a 6-month income/expense trend
   chart. A Month/Year picker lets Salary, Other Income, Expenses, and the
@@ -103,8 +110,9 @@ see a summary before anything is replaced.
 ## Known limitations
 
 - Interface translation (English/Tamil) covers navigation, forms, settings,
-  and toasts; a few less-common strings (the pre-unlock lock screen, some
-  App Lock status text, voice-dictation messages) are still English-only.
+  and toasts (voice-dictation toasts included); a few less-common strings
+  (the pre-unlock lock screen, some App Lock status text, the mic button's
+  tooltip) are still English-only.
 - Category and account *names* you type are never translated (expected —
   they're your own data).
 - No recurring transactions, savings goals, multi-currency accounts, or

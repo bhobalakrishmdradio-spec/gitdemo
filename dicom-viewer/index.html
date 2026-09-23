@@ -11,11 +11,6 @@
   <div class="viewer">
     <!-- ================= Toolbar ================= -->
     <header class="toolbar">
-      <div class="toolbar-brand">
-        <span class="brand-icon">🩻</span>
-        <span class="brand-name">CT Console</span>
-      </div>
-
       <div class="toolbar-group">
         <label class="file-btn primary-btn" title="Open DICOM files">
           📂 Open
@@ -40,10 +35,10 @@
           <button class="seg-btn" data-layout="2x3" title="Six panes, 2 rows of 3 (6)">2×3</button>
         </div>
         <select id="planeFill" title="Which plane the panes show">
-          <option value="mix">Mixed planes</option>
-          <option value="axial">All axial</option>
-          <option value="coronal">All coronal</option>
-          <option value="sagittal">All sagittal</option>
+          <option value="mix">Mixed</option>
+          <option value="axial">Axial</option>
+          <option value="coronal">Coronal</option>
+          <option value="sagittal">Sagittal</option>
         </select>
       </div>
 
@@ -86,11 +81,9 @@
 
       <div class="toolbar-group">
         <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗</button>
-        <button class="icon-btn" id="flipHBtn" title="Flip horizontal">↔️</button>
-        <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
-        <button class="icon-btn" id="rotateLeftBtn" title="Rotate 90° anticlockwise">⟲</button>
-        <button class="icon-btn" id="rotateBtn" title="Rotate 90° clockwise">⟳</button>
-        <button class="icon-btn" id="freeRotateBtn" title="Free rotate — drag on a pane to turn it to any angle">◷</button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
+        </div>
         <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
         <button class="icon-btn" id="huBtn" title="Show the value under the cursor in the status bar">HU</button>
         <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
@@ -101,13 +94,18 @@
 
       <div class="toolbar-group toolbar-group-right">
         <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱</button>
-        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️ Tools</button>
+        <button class="icon-btn" id="reportToggleBtn" title="Toggle the report panel">📝</button>
+        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️</button>
       </div>
     </header>
 
     <div class="viewer-body">
       <!-- ================= Series panel ================= -->
       <aside class="panel panel-left" id="seriesPanel">
+        <div class="panel-brand">
+          <span class="brand-icon">🩻</span>
+          <span class="brand-name">CT Console</span>
+        </div>
         <div class="panel-title">Series</div>
         <div class="drop-hint" id="dropHint">
           Drag &amp; drop DICOM files here,<br />or use <strong>📂 Open</strong> / <strong>📁 Folder</strong>.
@@ -123,6 +121,62 @@
           <div class="muted small">Open a DICOM folder to begin</div>
         </div>
       </main>
+
+      <!-- ================= Report panel ================= -->
+      <aside class="panel panel-report collapsed" id="reportPanel">
+        <div class="panel-title">
+          Report
+          <span class="report-status" id="reportStatus"></span>
+        </div>
+        <div class="report-scroll">
+          <div class="report-header" id="reportHeader">
+            <p class="muted small">No study loaded.</p>
+          </div>
+
+          <div class="field-row">
+            <label for="reportTemplate">Template</label>
+            <select id="reportTemplate">
+              <option value="">Insert…</option>
+            </select>
+          </div>
+
+          <label class="report-field">
+            <span>Clinical history</span>
+            <textarea id="reportHistory" rows="2" placeholder="Referral, symptoms, relevant history"></textarea>
+          </label>
+          <label class="report-field">
+            <span>Technique</span>
+            <textarea id="reportTechnique" rows="2" placeholder="Acquisition, contrast, reconstructions"></textarea>
+          </label>
+          <label class="report-field grow">
+            <span>Findings</span>
+            <textarea id="reportFindings" rows="12" placeholder="Systematic findings"></textarea>
+          </label>
+          <label class="report-field">
+            <span>Impression</span>
+            <textarea id="reportImpression" rows="4" placeholder="Conclusion and recommendations"></textarea>
+          </label>
+
+          <div class="report-keys">
+            <div class="report-keys-head">
+              <span>Key images</span>
+              <button class="ghost-btn small" id="reportGrabBtn" title="Attach the active pane as a key image">+ Capture pane</button>
+            </div>
+            <div id="reportKeyList" class="key-list"><p class="muted small">None attached.</p></div>
+          </div>
+
+          <div class="report-actions">
+            <button class="ghost-btn" id="reportCopyBtn">Copy text</button>
+            <button class="ghost-btn" id="reportDownloadBtn">Download .txt</button>
+            <button class="ghost-btn" id="reportFinalBtn">Mark final</button>
+            <button class="ghost-btn danger" id="reportClearBtn">Delete draft</button>
+          </div>
+          <p class="hint-text">
+            Drafts are saved in this browser only, on this device. Anyone with access
+            to this browser profile can read them. Delete the draft when you are done.
+          </p>
+        </div>
+      </aside>
 
       <!-- ================= Tools panel ================= -->
       <aside class="panel panel-right" id="toolsPanel">
@@ -206,7 +260,8 @@
           <section class="tool-section">
             <h4>Panes</h4>
             <p class="hint-text" id="stackNote"></p>
-            <p class="hint-text">Set the spacing with the <strong>Stack</strong> buttons in the toolbar.</p>
+            <p class="hint-text">Set the spacing with the <strong>Stack</strong> buttons in the toolbar.
+              Fill a grid with one plane using the selector beside the layout buttons.</p>
           </section>
 
           <section class="tool-section">
@@ -264,6 +319,14 @@
     </footer>
   </div>
 
+  <div class="menu" id="orientMenu" hidden>
+    <button data-orient="rotl">Rotate left 90°<span>anticlockwise</span></button>
+    <button data-orient="rotr">Rotate right 90°<span>clockwise</span></button>
+    <button data-orient="free">Free rotate<span>drag on a pane for any angle</span></button>
+    <button data-orient="fliph">Flip horizontal<span>mirror left / right</span></button>
+    <button data-orient="flipv">Flip vertical<span>mirror up / down</span></button>
+    <button data-orient="upright">Straighten<span>clear rotation and flips</span></button>
+  </div>
   <div class="menu" id="resetMenu" hidden>
     <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
     <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
@@ -279,6 +342,7 @@
   <script src="js/codecs.js"></script>
   <script src="js/volume.js"></script>
   <script src="js/measure.js"></script>
+  <script src="js/report.js"></script>
   <script src="js/vr.js"></script>
   <script src="js/app.js"></script>
 </body>

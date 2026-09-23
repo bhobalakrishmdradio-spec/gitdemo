@@ -56,13 +56,13 @@ button, input, select { font-family: inherit; font-size: 13px; }
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
 }
-.toolbar-brand {
+.panel-brand {
   display: flex; align-items: center; gap: 8px;
-  font-weight: 600; font-size: 15px; color: var(--accent); margin-right: 4px;
+  padding: 10px 12px 6px; font-weight: 600; font-size: 15px; color: var(--accent);
+  border-bottom: 1px solid var(--border);
 }
 .brand-icon { font-size: 18px; }
 .toolbar-group { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.toolbar-brand { flex: 0 0 auto; }
 .toolbar-group-right { margin-left: auto; }
 .tool-label { color: var(--text-muted); margin-right: 2px; font-size: 12px; }
 
@@ -293,6 +293,51 @@ select, input[type="number"] {
 }
 .viewport-empty-icon { font-size: 48px; opacity: 0.5; }
 
+/* ---------- Report panel ---------- */
+.panel-report { width: 330px; border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+.panel-report.collapsed { display: none; }
+.report-scroll { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.report-status {
+  float: right; font-size: 10px; text-transform: none; letter-spacing: 0;
+  color: var(--text-muted); font-weight: 400;
+}
+.report-status.final { color: #6ef2a0; }
+.report-header {
+  font-size: 11px; line-height: 1.5; color: var(--text-muted);
+  background: var(--canvas-bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px;
+}
+.report-header strong { color: var(--text); font-weight: 600; }
+.report-field { display: flex; flex-direction: column; gap: 4px; }
+.report-field > span {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent);
+}
+.report-field textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 12px; line-height: 1.5;
+  color: var(--text); background: var(--canvas-bg);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 8px;
+}
+.report-field textarea:focus { outline: none; border-color: var(--accent); }
+.report-keys-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--accent); margin-bottom: 6px;
+}
+.ghost-btn.small { padding: 3px 7px; font-size: 10.5px; }
+.key-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.key-thumb { position: relative; width: 84px; }
+.key-thumb img { width: 100%; display: block; border: 1px solid var(--border); border-radius: 3px; }
+.key-thumb span { display: block; font-size: 9.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.3; }
+.key-thumb button {
+  position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0;
+  border: none; border-radius: 3px; cursor: pointer; line-height: 1;
+  background: rgba(0,0,0,0.65); color: var(--text);
+}
+.report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.report-actions .ghost-btn { flex: 1 1 auto; }
+.ghost-btn.danger { color: var(--danger); border-color: rgba(255,93,93,0.45); }
+.ghost-btn.danger:hover { background: rgba(255,93,93,0.15); }
+
 /* ---------- Dropdown menus ---------- */
 .menu-wrap { display: inline-flex; }
 .menu {
@@ -314,6 +359,8 @@ select, input[type="number"] {
 }
 .menu button:hover { background: var(--accent-dim); }
 .menu button.danger:hover { background: rgba(255, 93, 93, 0.22); }
+.menu button.on { color: var(--accent); }
+.menu button.on::after { content: " ✓"; }
 
 /* ---------- Status bar ---------- */
 .statusbar {
@@ -368,6 +415,16 @@ select, input[type="number"] {
    together. The group labels are the first thing to go. */
 @media (max-width: 1700px) {
   .tool-label { display: none; }
+}
+/* Tighten the controls before the toolbar has to start scrolling. */
+@media (max-width: 1520px) {
+  .toolbar { gap: 7px; padding: 8px 10px; }
+  .toolbar-group { gap: 4px; }
+  .toolbar .seg-btn { padding: 5px 7px; font-size: 11px; }
+  .toolbar .icon-btn, .toolbar .ghost-btn,
+  .toolbar .primary-btn, .toolbar .file-btn { padding: 5px 8px; font-size: 11px; }
+  .toolbar select { font-size: 11px; padding: 4px 6px; }
+  #layoutSeg .seg-btn { padding-left: 6px; padding-right: 6px; }
 }
 @media (max-width: 1100px) {
   .panel-left { width: 160px; }

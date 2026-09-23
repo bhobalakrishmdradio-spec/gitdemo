@@ -13,6 +13,7 @@
   var VR = window.CTVolumeRenderer;
   var MEAS = window.CTMeasure;
   var CODECS = window.CTCodecs;
+  var REPORT = window.CTReport;
 
   /* ---------------------------------------------------------------------
    * Constants
@@ -208,6 +209,10 @@
     crosshair: true,
 
     drag: null,
+
+    // The report is bound to one study; see swapReportToStudy().
+    reportStudyUid: null,
+    report: null,
   };
 
   var dom = {};
@@ -234,11 +239,8 @@
     dom.toolSeg = byId("toolSeg");
     dom.presetSelect = byId("presetSelect");
     dom.invertBtn = byId("invertBtn");
-    dom.flipHBtn = byId("flipHBtn");
-    dom.flipVBtn = byId("flipVBtn");
-    dom.rotateLeftBtn = byId("rotateLeftBtn");
-    dom.rotateBtn = byId("rotateBtn");
-    dom.freeRotateBtn = byId("freeRotateBtn");
+    dom.orientBtn = byId("orientBtn");
+    dom.orientMenu = byId("orientMenu");
     dom.crosshairBtn = byId("crosshairBtn");
     dom.huBtn = byId("huBtn");
     dom.huReadout = byId("huReadout");
@@ -256,6 +258,16 @@
     dom.tagSearch = byId("tagSearch");
     dom.seriesToggleBtn = byId("seriesToggleBtn");
     dom.panelToggleBtn = byId("panelToggleBtn");
+    dom.reportToggleBtn = byId("reportToggleBtn");
+    dom.reportPanel = byId("reportPanel");
+    dom.reportHeader = byId("reportHeader");
+    dom.reportStatus = byId("reportStatus");
+    dom.reportTemplate = byId("reportTemplate");
+    dom.reportKeyList = byId("reportKeyList");
+    dom.reportFields = {};
+    REPORT.SECTIONS.forEach(function (sec) {
+      dom.reportFields[sec.key] = byId("report" + sec.key.charAt(0).toUpperCase() + sec.key.slice(1));
+    });
 
     dom.seriesPanel = byId("seriesPanel");
     dom.toolsPanel = byId("toolsPanel");
@@ -402,6 +414,7 @@
       if (r) { r.rotX = camera.rotX; r.rotY = camera.rotY; r.distance = camera.distance; }
     }
     setActiveCell(Math.min(state.activeCell, state.cells.length - 1));
+    syncOrientMenu();
     syncPlaneFill();
     syncCellControls();
     syncSliders();
@@ -1189,6 +1202,7 @@
       clearMeasurements();
       setBusy(false);
       updateVolumeInfo();
+      swapReportToStudy();
       syncModalityControls();
       updateObliqueInfo();
       updateGeometryWarnings();
@@ -2310,16 +2324,21 @@
    * measurements because the zoom needed straightening is a real cost. Each
    * kind of state resets on its own, and "everything" is spelled out.
    */
-  /** Place the menu under its button, kept inside the viewport. */
-  function openResetMenu() {
-    var menu = dom.resetMenu;
+  /** Place a menu under its button, kept inside the viewport. */
+  function openMenuUnder(menu, button) {
+    closeMenus();
     menu.hidden = false;
-    var btn = dom.resetBtn.getBoundingClientRect();
+    var btn = button.getBoundingClientRect();
     var box = menu.getBoundingClientRect();
     var left = Math.max(8, Math.min(btn.right - box.width, window.innerWidth - box.width - 8));
     var top = Math.min(btn.bottom + 6, window.innerHeight - box.height - 8);
     menu.style.left = Math.round(left) + "px";
     menu.style.top = Math.round(Math.max(8, top)) + "px";
+  }
+
+  function closeMenus() {
+    if (dom.resetMenu) dom.resetMenu.hidden = true;
+    if (dom.orientMenu) dom.orientMenu.hidden = true;
   }
 
   function applyReset(what) {
@@ -2548,6 +2567,162 @@
   }
 
   /* ---------------------------------------------------------------------
+   * Reporting
+   * ------------------------------------------------------------------- */
+
+  /** Study Instance UID of what is on screen, or null. */
+  function currentStudyUid() {
+    var group = getCurrentGroup();
+    if (!group || !group.slices.length) return null;
+    return group.slices[0].instance.studyUID || null;
+  }
+
+  /**
+   * Point the report at the study on screen.
+   *
+   * The base plan is explicit that changing patient must not leave an
+   * unrelated report attached, so the in-progress draft is flushed to its
+   * own study and the new study's draft is loaded in its place. Nothing is
+   * carried across.
+   */
+  function swapReportToStudy() {
+    var uid = currentStudyUid();
+    if (uid === state.reportStudyUid) return;
+    flushReport();
+    state.reportStudyUid = uid;
+    state.report = REPORT.load(uid);
+    renderReport();
+  }
+
+  /** Write the current draft back to its own study, never another. */
+  function flushReport() {
+    if (!state.reportStudyUid || !state.report) return;
+    readReportFields();
+    if (REPORT.isEmpty(state.report)) {
+      REPORT.remove(state.reportStudyUid);
+      return;
+    }
+    var stamp = REPORT.save(state.reportStudyUid, state.report);
+    if (stamp) state.report.updated = stamp;
+  }
+
+  function readReportFields() {
+    if (!state.report) return;
+    REPORT.SECTIONS.forEach(function (sec) {
+      var el = dom.reportFields[sec.key];
+      if (el) state.report[sec.key] = el.value;
+    });
+  }
+
+  /** Study identity shown above the report, and used in the exported text. */
+  function reportHeaderRows() {
+    var group = getCurrentGroup();
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    if (!inst) return [];
+    var ds = inst.dataSet;
+    return [
+      ["Patient", formatPersonName(str(ds, "x00100010", ""))],
+      ["Patient ID", str(ds, "x00100020", "")],
+      ["Accession", str(ds, "x00080050", "")],
+      ["Study date", formatDicomDate(str(ds, "x00080020", ""))],
+      ["Modality", inst.modality || ""],
+      ["Study", str(ds, "x00081030", "") || group.description || ""],
+    ];
+  }
+
+  function renderReport() {
+    if (!dom.reportPanel) return;
+    var data = state.report || REPORT.empty();
+    REPORT.SECTIONS.forEach(function (sec) {
+      var el = dom.reportFields[sec.key];
+      if (el && el.value !== data[sec.key]) el.value = data[sec.key] || "";
+    });
+
+    var rows = reportHeaderRows();
+    dom.reportHeader.innerHTML = rows.length
+      ? rows.filter(function (r) { return r[1]; }).map(function (r) {
+          return "<div>" + escapeHtml(r[0]) + ": <strong>" + escapeHtml(r[1]) + "</strong></div>";
+        }).join("")
+      : '<p class="muted small">No study loaded.</p>';
+
+    dom.reportStatus.textContent = !state.reportStudyUid ? ""
+      : data.status === "final" ? "Final"
+      : data.updated ? "Draft · saved " + new Date(data.updated).toLocaleTimeString()
+      : "Draft";
+    dom.reportStatus.classList.toggle("final", data.status === "final");
+
+    var editable = !!state.reportStudyUid && data.status !== "final";
+    REPORT.SECTIONS.forEach(function (sec) {
+      var el = dom.reportFields[sec.key];
+      if (el) el.readOnly = !editable;
+    });
+    dom.reportFinalBtn.textContent = data.status === "final" ? "Reopen draft" : "Mark final";
+    renderKeyImages();
+  }
+
+  /** Refresh only the saved-at line, so typing does not fight the textarea. */
+  function renderReportStatusOnly() {
+    var data = state.report || REPORT.empty();
+    dom.reportStatus.textContent = !state.reportStudyUid ? ""
+      : data.status === "final" ? "Final"
+      : data.updated ? "Draft · saved " + new Date(data.updated).toLocaleTimeString()
+      : "Draft";
+  }
+
+  function renderKeyImages() {
+    var data = state.report || REPORT.empty();
+    if (!data.keyImages.length) {
+      dom.reportKeyList.innerHTML = '<p class="muted small">None attached.</p>';
+      return;
+    }
+    dom.reportKeyList.innerHTML = data.keyImages.map(function (img, i) {
+      return '<div class="key-thumb"><img src="' + img.thumb + '" alt="" />' +
+        '<button data-key="' + i + '" title="Remove">×</button>' +
+        "<span>" + escapeHtml(img.caption) + "</span></div>";
+    }).join("");
+  }
+
+  /** Attach the active pane as a key image, with what it is showing. */
+  function captureKeyImage() {
+    if (!state.reportStudyUid) return showToast("Open a study first.", true);
+    if (state.report.status === "final") return showToast("This report is marked final.", true);
+    var i = state.activeCell;
+    var cell = state.cells[i], rec = cellEls[i];
+    if (!cell || !rec || !rec.canvas) return;
+
+    var out = document.createElement("canvas");
+    var scale = Math.min(1, 220 / rec.canvas.width);
+    out.width = Math.max(1, Math.round(rec.canvas.width * scale));
+    out.height = Math.max(1, Math.round(rec.canvas.height * scale));
+    var ctx = out.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(rec.canvas, 0, 0, out.width, out.height);
+    if (cell.plane !== "vr") ctx.drawImage(rec.cross, 0, 0, out.width, out.height);
+
+    var caption = cell.plane === "vr"
+      ? "3D " + (VR.TRANSFER_FUNCTIONS[state.vrPreset] || {}).label
+      : cell.plane.charAt(0).toUpperCase() + cell.plane.slice(1) +
+        " slice " + (cellIndex(cell) + 1) + " / " + V.planeCount(state.volume, cell.plane);
+
+    state.report.keyImages.push({ thumb: out.toDataURL("image/jpeg", 0.72), caption: caption });
+    flushReport();
+    renderReport();
+    showToast("Key image attached: " + caption);
+  }
+
+  function reportText() {
+    readReportFields();
+    return REPORT.format(reportHeaderRows(), state.report || REPORT.empty());
+  }
+
+  function setReportPanel(open) {
+    dom.reportPanel.classList.toggle("collapsed", !open);
+    dom.reportToggleBtn.classList.toggle("active", open);
+    requestAnimationFrame(renderAll);
+  }
+
+  /* ---------------------------------------------------------------------
    * Events
    * ------------------------------------------------------------------- */
   function wireEvents() {
@@ -2620,28 +2795,16 @@
 
     // Rotate / flip act on the active pane, keeping each pane's display
     // state independent as the plan calls for.
-    dom.rotateLeftBtn.addEventListener("click", function () { nudgeRotation(-90); });
-    dom.rotateBtn.addEventListener("click", function () { nudgeRotation(90); });
-    dom.freeRotateBtn.addEventListener("click", function () {
-      state.freeRotate = !state.freeRotate;
-      dom.freeRotateBtn.classList.toggle("active", state.freeRotate);
-      setStatus(state.freeRotate
-        ? "Free rotate: drag on a pane to turn it to any angle."
-        : "Ready");
+    dom.orientBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (dom.orientMenu.hidden) openMenuUnder(dom.orientMenu, dom.orientBtn);
+      else dom.orientMenu.hidden = true;
     });
-    dom.flipHBtn.addEventListener("click", function () {
-      withActiveMprCell(function (cell, i) {
-        cell.view.flipH = !cell.view.flipH;
-        dom.flipHBtn.classList.toggle("active", cell.view.flipH);
-        renderCell(i);
-      });
-    });
-    dom.flipVBtn.addEventListener("click", function () {
-      withActiveMprCell(function (cell, i) {
-        cell.view.flipV = !cell.view.flipV;
-        dom.flipVBtn.classList.toggle("active", cell.view.flipV);
-        renderCell(i);
-      });
+    dom.orientMenu.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-orient]");
+      if (!btn) return;
+      applyOrient(btn.dataset.orient);
+      if (btn.dataset.orient !== "free") dom.orientMenu.hidden = true;
     });
 
     dom.toolSeg.addEventListener("click", function (e) {
@@ -2674,6 +2837,109 @@
       renderAllOverlays();
     });
 
+    dom.reportToggleBtn.addEventListener("click", function () {
+      setReportPanel(dom.reportPanel.classList.contains("collapsed"));
+    });
+
+    var saveSoon = debounce(function () {
+      flushReport();
+      renderReportStatusOnly();
+    }, 600);
+    REPORT.SECTIONS.forEach(function (sec) {
+      var el = dom.reportFields[sec.key];
+      if (el) el.addEventListener("input", saveSoon);
+    });
+
+    fillOptions(dom.reportTemplate, [["", "Insert…"]].concat(
+      Object.keys(REPORT.TEMPLATES).map(function (k) {
+        return [k, REPORT.TEMPLATES[k].label];
+      })));
+    dom.reportTemplate.addEventListener("change", function (e) {
+      var tpl = REPORT.TEMPLATES[e.target.value];
+      e.target.value = "";
+      if (!tpl || !state.reportStudyUid) return;
+      readReportFields();
+      var filled = ["technique", "findings", "impression"].filter(function (k) {
+        return (state.report[k] || "").trim();
+      });
+      if (filled.length && !confirm("Replace the current technique, findings and impression?")) return;
+      state.report.technique = tpl.technique;
+      state.report.findings = tpl.findings;
+      state.report.impression = tpl.impression;
+      // Push state into the textareas before saving: flushReport() reads the
+      // fields back, so saving first would write the stale values over the
+      // template that was just inserted.
+      renderReport();
+      flushReport();
+      renderReportStatusOnly();
+    });
+
+    byId("reportGrabBtn").addEventListener("click", captureKeyImage);
+
+    dom.reportKeyList.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-key]");
+      if (!btn || !state.report) return;
+      state.report.keyImages.splice(parseInt(btn.dataset.key, 10), 1);
+      flushReport();
+      renderReport();
+    });
+
+    byId("reportCopyBtn").addEventListener("click", function () {
+      var text = reportText();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          function () { showToast("Report copied."); },
+          function () { showToast("Could not reach the clipboard.", true); }
+        );
+      } else {
+        showToast("Clipboard unavailable in this browser.", true);
+      }
+    });
+
+    byId("reportDownloadBtn").addEventListener("click", function () {
+      if (!state.reportStudyUid) return showToast("Open a study first.", true);
+      var rows = reportHeaderRows();
+      var who = (rows[1] && rows[1][1]) || "study";
+      var name = "report-" + String(who).replace(/[^\w-]+/g, "_").slice(0, 40) + "-" +
+        new Date().toISOString().slice(0, 10) + ".txt";
+      var blob = new Blob([reportText()], { type: "text/plain;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      showToast("Saved " + name);
+    });
+
+    dom.reportFinalBtn = byId("reportFinalBtn");
+    dom.reportFinalBtn.addEventListener("click", function () {
+      if (!state.reportStudyUid) return showToast("Open a study first.", true);
+      readReportFields();
+      if (state.report.status === "final") {
+        state.report.status = "draft";
+      } else {
+        if (REPORT.isEmpty(state.report)) return showToast("Nothing to finalise.", true);
+        state.report.status = "final";
+      }
+      flushReport();
+      renderReport();
+      showToast(state.report.status === "final"
+        ? "Marked final. Reopen it to edit again."
+        : "Reopened for editing.");
+    });
+
+    byId("reportClearBtn").addEventListener("click", function () {
+      if (!state.reportStudyUid) return;
+      if (!confirm("Delete this study's report draft from this browser?")) return;
+      REPORT.remove(state.reportStudyUid);
+      state.report = REPORT.empty();
+      renderReport();
+      showToast("Draft deleted.");
+    });
+
+    // A reload mid-dictation must not lose the last few words.
+    window.addEventListener("beforeunload", flushReport);
+
     dom.tagSearch.addEventListener("input", debounce(updateMetadata, 120));
 
     dom.exportBtn.addEventListener("click", exportActiveViewport);
@@ -2686,10 +2952,10 @@
 
     dom.resetBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      if (dom.resetMenu.hidden) openResetMenu();
+      if (dom.resetMenu.hidden) openMenuUnder(dom.resetMenu, dom.resetBtn);
       else dom.resetMenu.hidden = true;
     });
-    window.addEventListener("resize", function () { dom.resetMenu.hidden = true; });
+    window.addEventListener("resize", closeMenus);
     dom.resetMenu.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-reset]");
       if (!btn) return;
@@ -2697,10 +2963,8 @@
       applyReset(btn.dataset.reset);
     });
     document.addEventListener("click", function (e) {
-      if (dom.resetMenu.hidden) return;
-      if (!e.target.closest(".menu-wrap") && !e.target.closest("#resetMenu")) {
-        dom.resetMenu.hidden = true;
-      }
+      if (dom.resetMenu.hidden && dom.orientMenu.hidden) return;
+      if (!e.target.closest(".menu-wrap") && !e.target.closest(".menu")) closeMenus();
     });
 
     dom.seriesToggleBtn.addEventListener("click", function () {
@@ -3039,8 +3303,9 @@
   }
 
   function onKeyDown(e) {
-    if (e.key === "Escape" && dom.resetMenu && !dom.resetMenu.hidden) {
-      dom.resetMenu.hidden = true;
+    if (e.key === "Escape" && dom.resetMenu &&
+        (!dom.resetMenu.hidden || !dom.orientMenu.hidden)) {
+      closeMenus();
       return;
     }
     if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
@@ -3144,6 +3409,47 @@
     dom.boneCutStatus.textContent =
       "Bone removed at ≥ " + state.boneThreshold + " HU (dilated 2 voxels)." +
       (state.boneThreshold < 350 ? " Contrast-filled vessels are cut too at this threshold." : "");
+  }
+
+  /** Rotation and flipping, applied to the pane you last worked in. */
+  function applyOrient(what) {
+    if (what === "free") {
+      state.freeRotate = !state.freeRotate;
+      dom.orientBtn.classList.toggle("active", state.freeRotate);
+      syncOrientMenu();
+      setStatus(state.freeRotate
+        ? "Free rotate armed — drag on a pane to turn it to any angle."
+        : "Ready");
+      return;
+    }
+    withActiveMprCell(function (cell, i) {
+      if (what === "rotl") cell.view.rotation = (((cell.view.rotation || 0) - 90) % 360 + 360) % 360;
+      else if (what === "rotr") cell.view.rotation = ((cell.view.rotation || 0) + 90) % 360;
+      else if (what === "fliph") cell.view.flipH = !cell.view.flipH;
+      else if (what === "flipv") cell.view.flipV = !cell.view.flipV;
+      else if (what === "upright") {
+        cell.view.rotation = 0; cell.view.flipH = false; cell.view.flipV = false;
+      }
+      renderCell(i);
+      syncOrientMenu();
+    });
+  }
+
+  /** Show which orientation options are currently on. */
+  function syncOrientMenu() {
+    if (!dom.orientMenu) return;
+    var cell = null;
+    withActiveMprCell(function (c) { cell = c; });
+    var on = {
+      free: state.freeRotate,
+      fliph: !!(cell && cell.view.flipH),
+      flipv: !!(cell && cell.view.flipV),
+    };
+    Array.prototype.forEach.call(dom.orientMenu.querySelectorAll("[data-orient]"), function (b) {
+      b.classList.toggle("on", !!on[b.dataset.orient]);
+    });
+    dom.orientBtn.classList.toggle("active",
+      state.freeRotate || !!(cell && (cell.view.rotation || cell.view.flipH || cell.view.flipV)));
   }
 
   /** Step the active pane's rotation, snapped to whole degrees. */
@@ -3345,7 +3651,7 @@
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     dom.huBtn.classList.toggle("active", state.huProbe);
-    dom.freeRotateBtn.classList.toggle("active", state.freeRotate);
+    syncOrientMenu();
     updateWLInputs();
     updateBoneStatus();
     syncStackSeg();
@@ -3354,6 +3660,8 @@
     renderMeasurementList();
     syncSliders();
     setTool("none");
+    state.report = REPORT.empty();
+    renderReport();
     setLayout(state.layout);
     setStatus("Ready — open a DICOM folder to begin");
   }
@@ -3386,6 +3694,7 @@
     layoutFill: layoutFill,
     setLayout: setLayout,
     setCellPlane: setCellPlane,
+    selectSeries: selectSeries,
     setPlaneFill: setPlaneFill,
     setCellIndex: setCellIndex,
     setActiveCell: setActiveCell,

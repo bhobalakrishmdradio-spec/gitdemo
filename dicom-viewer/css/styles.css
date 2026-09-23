@@ -56,6 +56,9 @@ button, input, select { font-family: inherit; font-size: 13px; }
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
 }
+.series-filter { padding: 6px 8px 0; }
+.series-filter input { width: 100%; box-sizing: border-box; }
+
 .panel-brand {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 12px 6px; font-weight: 600; font-size: 15px; color: var(--accent);

@@ -211,6 +211,7 @@
 
     huProbe: true,              // live value readout under the cursor
     freeRotate: false,          // drag rotates the pane to any angle
+    seriesFilter: "",
     layout: "quad",
     planeFill: "mix",           // "mix" | "axial" | "coronal" | "sagittal"
 
@@ -271,6 +272,7 @@
     dom.obliqueReset = byId("obliqueResetBtn");
     dom.geometryWarnings = byId("geometryWarnings");
     dom.tagSearch = byId("tagSearch");
+    dom.seriesFilter = byId("seriesFilter");
     dom.seriesToggleBtn = byId("seriesToggleBtn");
     dom.panelToggleBtn = byId("panelToggleBtn");
     dom.reportToggleBtn = byId("reportToggleBtn");
@@ -918,6 +920,12 @@
 
       rows: rows,
       columns: columns,
+      // Acquisition dimensions: a spatial stack must not mix echoes or time
+      // points, which occupy the same physical space.
+      echoNumber: str(dataSet, "x00180086", ""),
+      temporalPosition: str(dataSet, "x00200100", ""),
+      acquisitionNumber: str(dataSet, "x00200012", ""),
+
       bitsAllocated: uint16(dataSet, "x00280100", 16),
       // Bits Stored decides how many of the decoded bits are real samples,
       // which matters once a codec hands back values modulo 2**16.
@@ -1108,11 +1116,28 @@
   /* ---------------------------------------------------------------------
    * Series management
    * ------------------------------------------------------------------- */
+  /**
+   * Key a stack by series *and* acquisition dimension.
+   *
+   * A multi-echo or dynamic series carries several images at the same
+   * physical location. Stacking them together produces a volume with
+   * duplicate slice positions and reconstructions that interleave two
+   * different contrasts, so each echo and time point is its own stack.
+   */
+  function stackKey(instance) {
+    var extra = [instance.echoNumber, instance.temporalPosition].join("/");
+    return extra === "/" ? instance.seriesUID : instance.seriesUID + "#" + extra;
+  }
+
   function addInstance(instance) {
-    var group = state.seriesMap[instance.seriesUID];
+    var uid = stackKey(instance);
+    var group = state.seriesMap[uid];
     if (!group) {
       group = {
-        uid: instance.seriesUID,
+        uid: uid,
+        baseSeriesUID: instance.seriesUID,
+        echoNumber: instance.echoNumber,
+        temporalPosition: instance.temporalPosition,
         studyUID: instance.studyUID,
         studyDescription: instance.studyDescription,
         studyDate: instance.studyDate,
@@ -1122,8 +1147,8 @@
         instances: [],
         seenSopUids: {},
       };
-      state.seriesMap[instance.seriesUID] = group;
-      state.seriesOrder.push(instance.seriesUID);
+      state.seriesMap[uid] = group;
+      state.seriesOrder.push(uid);
     }
     // Opening the same folder twice shouldn't double the stack.
     var key = instance.sopInstanceUID;
@@ -1135,6 +1160,30 @@
       group.seenSopUids[key] = true;
     }
     group.instances.push(instance);
+  }
+
+  /**
+   * Say which echo or time point a stack is, but only when the series
+   * actually split — an unqualified single-echo series needs no label.
+   */
+  function labelSplitStacks() {
+    var byBase = {};
+    state.seriesOrder.forEach(function (uid) {
+      var g = state.seriesMap[uid];
+      var base = g.baseSeriesUID || uid;
+      (byBase[base] = byBase[base] || []).push(g);
+    });
+    Object.keys(byBase).forEach(function (base) {
+      var groups = byBase[base];
+      if (groups.length < 2 || groups[0].splitLabelled) return;
+      groups.forEach(function (g) {
+        var bits = [];
+        if (g.echoNumber) bits.push("Echo " + g.echoNumber);
+        if (g.temporalPosition) bits.push("Time " + g.temporalPosition);
+        if (bits.length) g.description += " · " + bits.join(", ");
+        g.splitLabelled = true;
+      });
+    });
   }
 
   /** Series grouped under their Study, in load order. */
@@ -1207,7 +1256,9 @@
       reader.onload = function () {
         try {
           var instance = parseFile(file, reader.result);
-          if (firstNewSeriesUID === null) firstNewSeriesUID = instance.seriesUID;
+          // The stack key, not the raw Series UID: a multi-echo series splits
+          // into several stacks and the raw UID matches none of them.
+          if (firstNewSeriesUID === null) firstNewSeriesUID = stackKey(instance);
           addInstance(instance);
           loaded++;
         } catch (err) {
@@ -1237,6 +1288,7 @@
       return;
     }
 
+    labelSplitStacks();
     renderSeriesList();
     var parts = [loaded + " image" + (loaded === 1 ? "" : "s") + " loaded"];
     if (skipped) parts.push(skipped + " skipped (not readable DICOM)");
@@ -1257,6 +1309,40 @@
   /* ---------------------------------------------------------------------
    * Series list UI
    * ------------------------------------------------------------------- */
+  /**
+   * Free-text worklist filter.
+   *
+   * Matches across patient name and ID, accession, study date and
+   * description, modality and series description, so one box covers the
+   * ways a reader actually looks for a study.
+   */
+  function seriesHaystack(group) {
+    if (group._haystack) return group._haystack;
+    var inst = group.slices && group.slices.length ? group.slices[0].instance
+      : (group.instances && group.instances[0]);
+    var ds = inst && inst.dataSet;
+    var bits = [
+      group.description, group.modality, group.studyDescription,
+      formatDicomDate(group.studyDate), group.studyDate,
+      inst && inst.modality,
+      ds && formatPersonName(str(ds, "x00100010", "")),
+      ds && str(ds, "x00100020", ""),
+      ds && str(ds, "x00080050", ""),
+      group.seriesNumber !== null && group.seriesNumber !== undefined
+        ? "series " + group.seriesNumber : "",
+    ];
+    group._haystack = bits.filter(Boolean).join(" ").toLowerCase();
+    return group._haystack;
+  }
+
+  function seriesMatchesFilter(group) {
+    var q = (state.seriesFilter || "").trim().toLowerCase();
+    if (!q) return true;
+    var hay = seriesHaystack(group);
+    // Every word must appear, so "ct chest" narrows rather than widens.
+    return q.split(/\s+/).every(function (word) { return hay.indexOf(word) >= 0; });
+  }
+
   function renderSeriesList() {
     dom.dropHint.style.display = state.seriesOrder.length ? "none" : "block";
 
@@ -1271,8 +1357,10 @@
     var showStudyHeaders = studies.length > 1 || (studies[0] && studies[0].description);
 
     studies.forEach(function (study) {
+      var headerNode = null;
       if (showStudyHeaders) {
         var headerId = "study-" + study.uid;
+        if (seriesNodes[headerId]) headerNode = seriesNodes[headerId].wrapper;
         if (!seriesNodes[headerId]) {
           var head = document.createElement("div");
           head.className = "study-header";
@@ -1281,12 +1369,22 @@
             '<span class="study-date">' + escapeHtml(formatDicomDate(study.date)) + "</span>";
           dom.seriesList.appendChild(head);
           seriesNodes[headerId] = { wrapper: head, sliceCount: -1 };
+          headerNode = head;
         }
       }
 
+      var visible = study.series.filter(seriesMatchesFilter);
+      if (headerNode && showStudyHeaders) headerNode.style.display = visible.length ? "" : "none";
       study.series.forEach(function (group) {
         var uid = group.uid;
         var cached = seriesNodes[uid];
+        if (!seriesMatchesFilter(group)) {
+          if (cached && cached.wrapper.parentNode) {
+            cached.wrapper.parentNode.removeChild(cached.wrapper);
+            delete seriesNodes[uid];
+          }
+          return;
+        }
         if (cached && cached.sliceCount === group.slices.length) {
           cached.wrapper.classList.toggle("active", uid === state.currentSeriesUID);
           return;
@@ -3296,6 +3394,16 @@
 
     // A reload mid-dictation must not lose the last few words.
     window.addEventListener("beforeunload", flushReport);
+
+    // debounce() does not forward arguments, so read the input directly.
+    dom.seriesFilter.addEventListener("input", debounce(function () {
+      state.seriesFilter = dom.seriesFilter.value;
+      // Rebuild from scratch: nodes are cached by series, and filtering
+      // changes which ones belong in the list at all.
+      seriesNodes = {};
+      dom.seriesList.innerHTML = "";
+      renderSeriesList();
+    }, 150));
 
     dom.tagSearch.addEventListener("input", debounce(updateMetadata, 120));
 

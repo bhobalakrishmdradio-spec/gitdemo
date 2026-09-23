@@ -62,6 +62,7 @@ const TRANSLATIONS = {
     'settings.exportJson': '⬇️ Export Data (JSON)', 'settings.exportCsv': '⬇️ Export as CSV',
     'settings.exportExcel': 'Export as Excel', 'settings.excelWeek': 'Week', 'settings.excelMonth': 'Month',
     'settings.excelYear': 'Year', 'settings.excelAllTime': 'All time', 'settings.excelDownload': '⬇️ Download',
+    'settings.excelEmail': '✉️ Send by email',
     'settings.importJson': '⬆️ Import Data (JSON)', 'settings.resetAll': '🗑️ Reset All Data',
     'settings.appLock': 'App Lock',
     'settings.appLockSubtitle': 'Require a PIN to open MyFinances, and encrypt your data at rest on this device.',
@@ -90,6 +91,9 @@ const TRANSLATIONS = {
     'toast.catAdded': 'Category added', 'toast.catArchived': 'Category archived', 'toast.catRestored': 'Category restored',
     'toast.budgetUpdated': 'Budget updated', 'toast.dataExported': 'Data exported', 'toast.csvExported': 'CSV exported',
     'toast.excelExported': 'Excel file downloaded', 'toast.excelLoadFailed': "Couldn't create the Excel file (needs an internet connection the first time)",
+    'toast.emailInvalid': "That doesn't look like a valid email address",
+    'toast.emailShared': 'Share menu opened with the Excel file attached - pick Mail or Gmail to send it',
+    'toast.emailDraftOpened': "Excel file downloaded and an email draft opened - attach the file before sending",
     'toast.noTxnsToExport': 'No transactions to export yet', 'toast.dataImported': 'Data restored successfully',
     'toast.dataCleared': 'All data cleared', 'toast.sampleLoaded': 'Sample data loaded',
     'toast.storageBlocked': "Couldn't save - your browser is blocking local storage",
@@ -145,6 +149,7 @@ const TRANSLATIONS = {
     'settings.exportJson': '⬇️ தரவை ஏற்றுமதி செய் (JSON)', 'settings.exportCsv': '⬇️ CSV ஆக ஏற்றுமதி செய்',
     'settings.exportExcel': 'Excel ஆக ஏற்றுமதி செய்', 'settings.excelWeek': 'வாரம்', 'settings.excelMonth': 'மாதம்',
     'settings.excelYear': 'ஆண்டு', 'settings.excelAllTime': 'எல்லா காலமும்', 'settings.excelDownload': '⬇️ பதிவிறக்கு',
+    'settings.excelEmail': '✉️ மின்னஞ்சல் மூலம் அனுப்பு',
     'settings.importJson': '⬆️ தரவை இறக்குமதி செய் (JSON)', 'settings.resetAll': '🗑️ அனைத்து தரவையும் அழி',
     'settings.appLock': 'பயன்பாட்டு பூட்டு',
     'settings.appLockSubtitle': 'MyFinances-ஐ திறக்க PIN தேவைப்படுத்தி, இந்த சாதனத்தில் உங்கள் தரவை குறியாக்கம் செய்யும்.',
@@ -177,6 +182,9 @@ const TRANSLATIONS = {
     'toast.budgetUpdated': 'பட்ஜெட் புதுப்பிக்கப்பட்டது', 'toast.dataExported': 'தரவு ஏற்றுமதி செய்யப்பட்டது',
     'toast.csvExported': 'CSV ஏற்றுமதி செய்யப்பட்டது',
     'toast.excelExported': 'Excel கோப்பு பதிவிறக்கப்பட்டது', 'toast.excelLoadFailed': 'Excel கோப்பை உருவாக்க முடியவில்லை (முதல் முறை இணைய இணைப்பு தேவை)',
+    'toast.emailInvalid': 'இது சரியான மின்னஞ்சல் முகவரி போல் தெரியவில்லை',
+    'toast.emailShared': 'Excel கோப்புடன் பகிர் மெனு திறக்கப்பட்டது - அனுப்ப Mail அல்லது Gmail ஐத் தேர்ந்தெடுக்கவும்',
+    'toast.emailDraftOpened': 'Excel கோப்பு பதிவிறக்கப்பட்டு மின்னஞ்சல் வரைவு திறக்கப்பட்டது - அனுப்பும் முன் கோப்பை இணைக்கவும்',
     'toast.noTxnsToExport': 'இன்னும் ஏற்றுமதி செய்ய பரிவர்த்தனைகள் இல்லை', 'toast.dataImported': 'தரவு வெற்றிகரமாக மீட்டமைக்கப்பட்டது',
     'toast.dataCleared': 'அனைத்து தரவும் அழிக்கப்பட்டது', 'toast.sampleLoaded': 'மாதிரி தரவு ஏற்றப்பட்டது',
     'toast.storageBlocked': 'சேமிக்க முடியவில்லை - உங்கள் உலாவி உள்ளூர் சேமிப்பகத்தைத் தடுக்கிறது',
@@ -2157,11 +2165,42 @@ function loadSheetJS() {
   return sheetJsLoadPromise;
 }
 
-async function exportExcelData() {
+function currentExcelPeriodAndTxns() {
   const type = document.getElementById('excelPeriodType').value;
   const value = document.getElementById('excelPeriodValue').value;
   const period = { type, value };
-  const txns = transactionsInExportPeriod(state.transactions, period);
+  return { period, txns: transactionsInExportPeriod(state.transactions, period) };
+}
+
+// Builds the workbook once, shared by both the plain download and the
+// email-send paths below, so they can never drift out of sync.
+async function buildExcelBlob(period, txns) {
+  const XLSX = await loadSheetJS();
+  const rows = buildExcelRows(period, txns);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [12, 10, 16, 16, 16, 16, 14, 14, 28, 12, 24].map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
+  const arrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const safeValue = (period.type === 'all' ? 'all-time' : period.value).replace(/[^\w-]/g, '');
+  const filename = `myfinances-${period.type}-${safeValue}-${todayStr()}.xlsx`;
+  return { blob, filename };
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function exportExcelData() {
+  const { period, txns } = currentExcelPeriodAndTxns();
   if (txns.length === 0) {
     showToast(i18n('toast.noTxnsToExport'));
     return;
@@ -2170,17 +2209,90 @@ async function exportExcelData() {
   const btn = document.getElementById('exportExcelBtn');
   btn.disabled = true;
   try {
-    const XLSX = await loadSheetJS();
-    const rows = buildExcelRows(period, txns);
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [12, 10, 16, 16, 16, 16, 14, 14, 28, 12, 24].map((wch) => ({ wch }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
-    const safeValue = (type === 'all' ? 'all-time' : value).replace(/[^\w-]/g, '');
-    XLSX.writeFile(wb, `myfinances-${type}-${safeValue}-${todayStr()}.xlsx`);
+    const { blob, filename } = await buildExcelBlob(period, txns);
+    downloadBlob(blob, filename);
     showToast(i18n('toast.excelExported'));
   } catch (e) {
     console.error('Excel export failed', e);
+    showToast(i18n('toast.excelLoadFailed'));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------- Send Excel by email ----------
+   No backend here, so there's no way to silently upload a file to an
+   email address. What IS real: the OS-level Share sheet, which on a
+   phone/computer that supports sharing files (iOS/Android, some desktop
+   browsers) hands the Excel file to whatever mail app the viewer picks,
+   already attached - they just address and send it. Where that isn't
+   supported, this falls back to opening a pre-filled email draft in the
+   viewer's default mail app, with the Excel file downloaded alongside it
+   for them to attach by hand. */
+let emailModalResolve = null;
+
+function promptForEmail() {
+  return new Promise((resolve) => {
+    emailModalResolve = resolve;
+    document.getElementById('emailModalInput').value = '';
+    document.getElementById('emailModalOverlay').hidden = false;
+    document.getElementById('emailModalInput').focus();
+  });
+}
+
+function closeEmailModal(result) {
+  document.getElementById('emailModalOverlay').hidden = true;
+  if (emailModalResolve) {
+    emailModalResolve(result);
+    emailModalResolve = null;
+  }
+}
+
+function canShareFiles(file) {
+  return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [file] }));
+}
+
+async function sendExcelByEmail() {
+  const { period, txns } = currentExcelPeriodAndTxns();
+  if (txns.length === 0) {
+    showToast(i18n('toast.noTxnsToExport'));
+    return;
+  }
+
+  const email = await promptForEmail();
+  if (!email) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showToast(i18n('toast.emailInvalid'));
+    return;
+  }
+
+  const btn = document.getElementById('emailExcelBtn');
+  btn.disabled = true;
+  try {
+    const { blob, filename } = await buildExcelBlob(period, txns);
+    const file = new File([blob], filename, { type: blob.type });
+    const subject = 'MyFinances export - ' + periodDisplayLabel(period);
+    const body = 'Attached: ' + filename;
+
+    if (canShareFiles(file)) {
+      try {
+        await navigator.share({ files: [file], title: subject, text: body });
+        showToast(i18n('toast.emailShared'));
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // viewer backed out of the share sheet - not an error
+        // fall through to the mailto fallback below
+      }
+    }
+
+    downloadBlob(blob, filename);
+    const mailto = 'mailto:' + encodeURIComponent(email)
+      + '?subject=' + encodeURIComponent(subject)
+      + '&body=' + encodeURIComponent(body + ' (attach the file just downloaded)');
+    window.location.href = mailto;
+    showToast(i18n('toast.emailDraftOpened'));
+  } catch (e) {
+    console.error('Email export failed', e);
     showToast(i18n('toast.excelLoadFailed'));
   } finally {
     btn.disabled = false;
@@ -2405,6 +2517,14 @@ function init() {
   document.getElementById('exportCsvBtn').addEventListener('click', exportCsvData);
   document.getElementById('excelPeriodType').addEventListener('change', populateExcelPeriodValueSelect);
   document.getElementById('exportExcelBtn').addEventListener('click', exportExcelData);
+  document.getElementById('emailExcelBtn').addEventListener('click', sendExcelByEmail);
+  document.getElementById('emailForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const val = document.getElementById('emailModalInput').value.trim();
+    closeEmailModal(val || null);
+  });
+  document.getElementById('emailModalCancel').addEventListener('click', () => closeEmailModal(null));
+  document.getElementById('emailModalClose').addEventListener('click', () => closeEmailModal(null));
   populateExcelPeriodValueSelect();
   document.getElementById('importInput').addEventListener('change', (e) => {
     if (e.target.files[0]) importData(e.target.files[0]);
@@ -2461,6 +2581,7 @@ function init() {
     else if (!document.getElementById('restoreModalOverlay').hidden) closeRestoreModal();
     else if (!document.getElementById('modalOverlay').hidden) closeTransactionModal();
     else if (!document.getElementById('pinModalOverlay').hidden) closePinModal(null);
+    else if (!document.getElementById('emailModalOverlay').hidden) closeEmailModal(null);
   });
 
   switchView('dashboard');

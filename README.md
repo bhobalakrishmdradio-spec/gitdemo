@@ -13,7 +13,9 @@ never leaves your device.
 - **Transactions** — income, expense, or transfer between two accounts;
   category, payment method (cash/UPI/card/bank transfer/other), description,
   optional notes, and an optional receipt photo you can view later. UPI
-  transactions can save the other party's UPI ID.
+  transactions can save the other party's UPI ID. Search and filter by type,
+  account, category, or any month you've ever recorded (not just recent
+  ones) to review older history.
 - **Scan a UPI screenshot** — attach a payment screenshot (Google Pay,
   PhonePe, Paytm, etc.) and tap "Scan UPI screenshot" to try to auto-fill
   the UPI ID, amount, and sender/recipient name, using on-device OCR
@@ -43,12 +45,19 @@ never leaves your device.
   chart. A Month/Year picker lets Salary, Other Income, Expenses, and the
   category chart show any single month or year on its own, not just the
   current one.
-- **Export as Excel** — download a real `.xlsx` file (not just CSV) for a
-  chosen week, month, year, or all time, with a summary block (salary,
-  other income, expenses, net) plus the full transaction list. Uses
-  [SheetJS](https://sheetjs.com/), loaded from a CDN the first time (needs
-  internet then, works offline after) — your data is never uploaded, only
-  the export library is fetched.
+- **Export as Excel** — download a real `.xlsx` file (not just CSV) for any
+  week, month, or year you've ever recorded transactions in (or all time),
+  with a summary block (salary, other income, expenses, net) plus the full
+  transaction list. Uses [SheetJS](https://sheetjs.com/), loaded from a CDN
+  the first time (needs internet then, works offline after) — your data is
+  never uploaded, only the export library is fetched.
+- **Send Excel by email** — next to Download, "Send by email" builds the
+  same file and hands it to your phone/computer's own Share sheet (pick
+  Mail, Gmail, WhatsApp, etc. — the file arrives already attached). Where a
+  device doesn't support sharing files, it falls back to downloading the
+  file and opening a pre-filled email draft for you to attach it to. There's
+  no server involved, so nothing is ever uploaded anywhere except through
+  whichever app you choose to send it with.
 - **Budgets** — set a spending limit per expense category *per month* (each
   month keeps its own limit) and track progress with a visual bar; shows an
   explicit "No budget set" state.

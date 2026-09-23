@@ -230,6 +230,7 @@
             </select>
             <select id="excelPeriodValue"></select>
             <button class="ghost-btn" id="exportExcelBtn" data-i18n="settings.excelDownload">⬇️ Download</button>
+            <button class="ghost-btn" id="emailExcelBtn" data-i18n="settings.excelEmail">✉️ Send by email</button>
           </div>
         </details>
 
@@ -398,6 +399,26 @@
         <div class="form-actions">
           <button type="button" class="ghost-btn" id="pinModalCancel">Cancel</button>
           <button type="submit" class="primary-btn" id="pinModalSubmit">Continue</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="emailModalOverlay" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Send Excel by email</h2>
+        <button class="icon-btn" id="emailModalClose">✕</button>
+      </div>
+      <p class="muted" id="emailModalSubtitle">Enter the email address to send this to.</p>
+      <form id="emailForm">
+        <div class="form-row">
+          <label for="emailModalInput">Email address</label>
+          <input type="email" id="emailModalInput" required placeholder="name@example.com" autocomplete="email" />
+        </div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="emailModalCancel">Cancel</button>
+          <button type="submit" class="primary-btn" id="emailModalSubmit">Send</button>
         </div>
       </form>
     </div>

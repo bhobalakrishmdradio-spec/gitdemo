@@ -26,8 +26,16 @@ never leaves your device.
   detected text is shown so you can copy details by hand if it gets it
   wrong.
 - **Dashboard** — total balance across all accounts, per-account balances,
-  monthly income/expenses, savings rate, a category spending donut chart,
-  and a 6-month income/expense trend chart.
+  a category spending donut chart, and a 6-month income/expense trend
+  chart. A Month/Year picker lets Salary, Other Income, Expenses, and the
+  category chart show any single month or year on its own, not just the
+  current one.
+- **Export as Excel** — download a real `.xlsx` file (not just CSV) for a
+  chosen week, month, year, or all time, with a summary block (salary,
+  other income, expenses, net) plus the full transaction list. Uses
+  [SheetJS](https://sheetjs.com/), loaded from a CDN the first time (needs
+  internet then, works offline after) — your data is never uploaded, only
+  the export library is fetched.
 - **Budgets** — set a spending limit per expense category *per month* (each
   month keeps its own limit) and track progress with a visual bar; shows an
   explicit "No budget set" state.

@@ -219,6 +219,18 @@
             </label>
             <button class="danger-btn" id="resetBtn" data-i18n="settings.resetAll">🗑️ Reset All Data</button>
           </div>
+
+          <div class="excel-export-row">
+            <label for="excelPeriodType" data-i18n="settings.exportExcel">Export as Excel</label>
+            <select id="excelPeriodType">
+              <option value="week" data-i18n="settings.excelWeek">Week</option>
+              <option value="month" selected data-i18n="settings.excelMonth">Month</option>
+              <option value="year" data-i18n="settings.excelYear">Year</option>
+              <option value="all" data-i18n="settings.excelAllTime">All time</option>
+            </select>
+            <select id="excelPeriodValue"></select>
+            <button class="ghost-btn" id="exportExcelBtn" data-i18n="settings.excelDownload">⬇️ Download</button>
+          </div>
         </details>
 
         <details class="panel settings-panel">

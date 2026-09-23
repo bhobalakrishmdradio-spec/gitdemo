@@ -356,6 +356,14 @@ details.settings-panel[open] summary { margin-bottom: 12px; }
 .settings-row select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 
+.excel-export-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.excel-export-row label { font-size: 0.82rem; font-weight: 600; color: var(--text-muted); }
+.excel-export-row select {
+  padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.85rem;
+}
+
 /* ---------- Modal ---------- */
 .modal-overlay {
   position: fixed;

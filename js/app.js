@@ -60,6 +60,8 @@ const TRANSLATIONS = {
     'settings.dataManagement': 'Data Management',
     'settings.dataSubtitle': 'All your data is stored locally in this browser (localStorage) — nothing is sent to a server.',
     'settings.exportJson': '⬇️ Export Data (JSON)', 'settings.exportCsv': '⬇️ Export as CSV',
+    'settings.exportExcel': 'Export as Excel', 'settings.excelWeek': 'Week', 'settings.excelMonth': 'Month',
+    'settings.excelYear': 'Year', 'settings.excelAllTime': 'All time', 'settings.excelDownload': '⬇️ Download',
     'settings.importJson': '⬆️ Import Data (JSON)', 'settings.resetAll': '🗑️ Reset All Data',
     'settings.appLock': 'App Lock',
     'settings.appLockSubtitle': 'Require a PIN to open MyFinances, and encrypt your data at rest on this device.',
@@ -87,6 +89,7 @@ const TRANSLATIONS = {
     'toast.acctAdded': 'Account added', 'toast.acctArchived': 'Account archived', 'toast.acctRestored': 'Account restored',
     'toast.catAdded': 'Category added', 'toast.catArchived': 'Category archived', 'toast.catRestored': 'Category restored',
     'toast.budgetUpdated': 'Budget updated', 'toast.dataExported': 'Data exported', 'toast.csvExported': 'CSV exported',
+    'toast.excelExported': 'Excel file downloaded', 'toast.excelLoadFailed': "Couldn't create the Excel file (needs an internet connection the first time)",
     'toast.noTxnsToExport': 'No transactions to export yet', 'toast.dataImported': 'Data restored successfully',
     'toast.dataCleared': 'All data cleared', 'toast.sampleLoaded': 'Sample data loaded',
     'toast.storageBlocked': "Couldn't save - your browser is blocking local storage",
@@ -133,6 +136,8 @@ const TRANSLATIONS = {
     'settings.dataManagement': 'தரவு மேலாண்மை',
     'settings.dataSubtitle': 'உங்கள் தரவு அனைத்தும் இந்த உலாவியில் (localStorage) உள்ளூரில் சேமிக்கப்படுகிறது — எதுவும் சர்வருக்கு அனுப்பப்படாது.',
     'settings.exportJson': '⬇️ தரவை ஏற்றுமதி செய் (JSON)', 'settings.exportCsv': '⬇️ CSV ஆக ஏற்றுமதி செய்',
+    'settings.exportExcel': 'Excel ஆக ஏற்றுமதி செய்', 'settings.excelWeek': 'வாரம்', 'settings.excelMonth': 'மாதம்',
+    'settings.excelYear': 'ஆண்டு', 'settings.excelAllTime': 'எல்லா காலமும்', 'settings.excelDownload': '⬇️ பதிவிறக்கு',
     'settings.importJson': '⬆️ தரவை இறக்குமதி செய் (JSON)', 'settings.resetAll': '🗑️ அனைத்து தரவையும் அழி',
     'settings.appLock': 'பயன்பாட்டு பூட்டு',
     'settings.appLockSubtitle': 'MyFinances-ஐ திறக்க PIN தேவைப்படுத்தி, இந்த சாதனத்தில் உங்கள் தரவை குறியாக்கம் செய்யும்.',
@@ -164,6 +169,7 @@ const TRANSLATIONS = {
     'toast.catRestored': 'வகை மீட்டெடுக்கப்பட்டது',
     'toast.budgetUpdated': 'பட்ஜெட் புதுப்பிக்கப்பட்டது', 'toast.dataExported': 'தரவு ஏற்றுமதி செய்யப்பட்டது',
     'toast.csvExported': 'CSV ஏற்றுமதி செய்யப்பட்டது',
+    'toast.excelExported': 'Excel கோப்பு பதிவிறக்கப்பட்டது', 'toast.excelLoadFailed': 'Excel கோப்பை உருவாக்க முடியவில்லை (முதல் முறை இணைய இணைப்பு தேவை)',
     'toast.noTxnsToExport': 'இன்னும் ஏற்றுமதி செய்ய பரிவர்த்தனைகள் இல்லை', 'toast.dataImported': 'தரவு வெற்றிகரமாக மீட்டமைக்கப்பட்டது',
     'toast.dataCleared': 'அனைத்து தரவும் அழிக்கப்பட்டது', 'toast.sampleLoaded': 'மாதிரி தரவு ஏற்றப்பட்டது',
     'toast.storageBlocked': 'சேமிக்க முடியவில்லை - உங்கள் உலாவி உள்ளூர் சேமிப்பகத்தைத் தடுக்கிறது',
@@ -603,7 +609,7 @@ function switchView(view) {
   if (view === 'dashboard') renderDashboard();
   if (view === 'transactions') { populateAccountFilter(); populateCategoryFilter(); renderTransactionsView(); }
   if (view === 'budgets') renderBudgetsView();
-  if (view === 'settings') { renderAccountManageList(); renderCategoryManageList(); }
+  if (view === 'settings') { renderAccountManageList(); renderCategoryManageList(); populateExcelPeriodValueSelect(); }
 }
 
 /* ---------- Backup reminder ---------- */
@@ -1858,6 +1864,146 @@ function exportCsvData() {
   showToast(i18n('toast.csvExported'));
 }
 
+/* ---------- Export as Excel, scoped to a week/month/year/all time ---------- */
+function weekStartDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay(); // 0 = Sunday .. 6 = Saturday
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day)); // Monday-anchored week
+  return d.toISOString().slice(0, 10);
+}
+
+function weekKey(dateStr) {
+  return weekStartDate(dateStr);
+}
+
+function weekLabel(weekStartStr) {
+  const start = new Date(weekStartStr + 'T00:00:00');
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const fmtShort = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const fmtWithYear = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const startStr = sameYear ? fmtShort(start) : fmtWithYear(start);
+  const endStr = sameYear ? `${fmtShort(end)}, ${end.getFullYear()}` : fmtWithYear(end);
+  return `${startStr} – ${endStr}`;
+}
+
+function transactionsInExportPeriod(txns, period) {
+  if (period.type === 'all') return txns;
+  if (period.type === 'week') return txns.filter((t) => weekKey(t.date) === period.value);
+  if (period.type === 'year') return txns.filter((t) => t.date.slice(0, 4) === period.value);
+  return txns.filter((t) => monthKey(t.date) === period.value);
+}
+
+function periodDisplayLabel(period) {
+  if (period.type === 'all') return 'All time';
+  if (period.type === 'week') return weekLabel(period.value);
+  if (period.type === 'year') return period.value;
+  return monthLabel(period.value);
+}
+
+function populateExcelPeriodValueSelect() {
+  const type = document.getElementById('excelPeriodType').value;
+  const valueSelect = document.getElementById('excelPeriodValue');
+  if (type === 'all') {
+    valueSelect.innerHTML = '';
+    valueSelect.hidden = true;
+    return;
+  }
+  valueSelect.hidden = false;
+  let options;
+  if (type === 'week') {
+    const weeks = Array.from(new Set(state.transactions.map((t) => weekKey(t.date)))).sort().reverse();
+    const curWeek = weekKey(todayStr());
+    if (!weeks.includes(curWeek)) weeks.unshift(curWeek);
+    options = weeks.map((w) => ({ value: w, label: weekLabel(w) }));
+  } else if (type === 'year') {
+    const years = Array.from(new Set(state.transactions.map((t) => t.date.slice(0, 4)))).sort().reverse();
+    const curYear = String(new Date().getFullYear());
+    if (!years.includes(curYear)) years.unshift(curYear);
+    options = years.map((y) => ({ value: y, label: y }));
+  } else {
+    const months = Array.from(new Set(state.transactions.map((t) => monthKey(t.date)))).sort().reverse();
+    if (!months.includes(currentMonthKey())) months.unshift(currentMonthKey());
+    options = months.map((m) => ({ value: m, label: monthLabel(m) }));
+  }
+  const prev = valueSelect.value;
+  valueSelect.innerHTML = options.map((o) => `<option value="${o.value}">${escapeHTML(o.label)}</option>`).join('');
+  valueSelect.value = options.some((o) => o.value === prev) ? prev : options[0].value;
+}
+
+function buildExcelRows(period, txns) {
+  const income = txns.filter((t) => t.type === 'income');
+  const salaryP = income.filter((t) => t.categoryId === 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const otherIncomeP = income.filter((t) => t.categoryId !== 'salary').reduce((s, t) => s + t.amountPaise, 0);
+  const expenseP = txns.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amountPaise, 0);
+
+  const rows = [];
+  rows.push(['MyFinances export']);
+  rows.push(['Period', periodDisplayLabel(period)]);
+  rows.push(['Generated', new Date().toLocaleString()]);
+  rows.push([]);
+  rows.push(['Salary (₹)', 'Other Income (₹)', 'Total Income (₹)', 'Expenses (₹)', 'Net (₹)']);
+  rows.push([salaryP / 100, otherIncomeP / 100, (salaryP + otherIncomeP) / 100, expenseP / 100, (salaryP + otherIncomeP - expenseP) / 100]);
+  rows.push([]);
+  rows.push(['Date', 'Type', 'Account', 'From Account', 'To Account', 'Category', 'Payment Method', 'UPI ID', 'Description', 'Amount (INR)', 'Notes']);
+
+  [...txns].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt).forEach((t) => {
+    if (t.type === 'transfer') {
+      rows.push([t.date, 'Transfer', '', accountInfo(t.fromAccountId).name, accountInfo(t.toAccountId).name, '', '', '', t.description, t.amountPaise / 100, t.notes || '']);
+    } else {
+      const info = categoryInfo(t.categoryId);
+      const signed = (t.type === 'income' ? t.amountPaise : -t.amountPaise) / 100;
+      rows.push([t.date, t.type === 'income' ? 'Income' : 'Expense', accountInfo(t.accountId).name, '', '', info.name, paymentMethodLabel(t.paymentMethod), t.upiId || '', t.description, signed, t.notes || '']);
+    }
+  });
+  return rows;
+}
+
+let sheetJsLoadPromise = null;
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (sheetJsLoadPromise) return sheetJsLoadPromise;
+  sheetJsLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    script.onload = () => { window.XLSX ? resolve(window.XLSX) : reject(new Error('XLSX did not load')); };
+    script.onerror = () => reject(new Error('Could not load the Excel export library'));
+    document.head.appendChild(script);
+  });
+  return sheetJsLoadPromise;
+}
+
+async function exportExcelData() {
+  const type = document.getElementById('excelPeriodType').value;
+  const value = document.getElementById('excelPeriodValue').value;
+  const period = { type, value };
+  const txns = transactionsInExportPeriod(state.transactions, period);
+  if (txns.length === 0) {
+    showToast(i18n('toast.noTxnsToExport'));
+    return;
+  }
+
+  const btn = document.getElementById('exportExcelBtn');
+  btn.disabled = true;
+  try {
+    const XLSX = await loadSheetJS();
+    const rows = buildExcelRows(period, txns);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [12, 10, 16, 16, 16, 16, 14, 14, 28, 12, 24].map((wch) => ({ wch }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
+    const safeValue = (type === 'all' ? 'all-time' : value).replace(/[^\w-]/g, '');
+    XLSX.writeFile(wb, `myfinances-${type}-${safeValue}-${todayStr()}.xlsx`);
+    showToast(i18n('toast.excelExported'));
+  } catch (e) {
+    console.error('Excel export failed', e);
+    showToast(i18n('toast.excelLoadFailed'));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 let pendingRestoreState = null;
 let preRestoreBackup = null; // kept in memory only, for this session, as a recovery copy
 
@@ -2074,6 +2220,9 @@ function init() {
 
   document.getElementById('exportBtn').addEventListener('click', exportData);
   document.getElementById('exportCsvBtn').addEventListener('click', exportCsvData);
+  document.getElementById('excelPeriodType').addEventListener('change', populateExcelPeriodValueSelect);
+  document.getElementById('exportExcelBtn').addEventListener('click', exportExcelData);
+  populateExcelPeriodValueSelect();
   document.getElementById('importInput').addEventListener('change', (e) => {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = '';

@@ -200,6 +200,35 @@ select, input[type="number"] {
   font-size: 15px; line-height: 1; padding: 0 2px; flex-shrink: 0;
 }
 .measure-del:hover { color: var(--danger); }
+.measure-eye {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.measure-eye:hover { color: var(--accent); }
+/* A hidden measurement stays listed and stays selectable — hiding is not
+   deleting, so its row must not disappear along with its drawing. */
+.measure-row.hidden-row .measure-kind,
+.measure-row.hidden-row .measure-main { opacity: 0.45; }
+
+.roi-histogram {
+  width: 100%; height: 86px; display: block; margin-bottom: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: #0b0d10;
+}
+.roi-histogram[hidden] { display: none; }
+
+/* ---------- Inline caption editor ---------- */
+.annot-input {
+  position: fixed; z-index: 70; display: flex; gap: 5px; align-items: center;
+  padding: 6px; background: var(--panel-bg);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+.annot-input[hidden] { display: none; }
+.annot-input input {
+  width: 190px; background: var(--panel-bg-alt); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
+  font: inherit; font-size: 12px;
+}
 
 /* ---------- Geometry warnings ---------- */
 .warn-block {
@@ -367,6 +396,13 @@ select, input[type="number"] {
 .menu button.danger:hover { background: rgba(255, 93, 93, 0.22); }
 .menu button.on { color: var(--accent); }
 .menu button.on::after { content: " ✓"; }
+.menu button.active { color: var(--accent); background: var(--accent-dim); }
+.menu-wide { min-width: 275px; max-height: 78vh; overflow-y: auto; }
+.menu-head {
+  padding: 7px 10px 3px; font-size: 10px; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.menu-head:first-child { padding-top: 4px; }
 
 /* ---------- Status bar ---------- */
 .statusbar {

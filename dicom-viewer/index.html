@@ -90,6 +90,7 @@
           <button class="seg-btn" data-tool="rect" title="Rectangular ROI — click two corners">▭</button>
           <button class="seg-btn" data-tool="sculpt" title="Sculpt — drag to cut tissue away by hand">✂</button>
         </div>
+        <button class="icon-btn" id="toolMoreBtn" title="More measurement and annotation tools">▾</button>
       </div>
 
       <div class="toolbar-group">
@@ -310,12 +311,23 @@
               <p class="muted small">No measurements yet.</p>
             </div>
             <div class="field-row">
-              <button class="ghost-btn full" id="clearMeasureBtn">Clear all</button>
+              <button class="ghost-btn" id="hideAnnotBtn">Hide all markers</button>
+              <button class="ghost-btn danger" id="clearMeasureBtn">Delete all</button>
             </div>
             <p class="hint-text" id="calibrationNote"></p>
-            <p class="hint-text">Probe pins a single pixel's value. Ellipse and rectangle
-              report mean ± SD, min, max and area from the pixel values, never from the
-              displayed image.</p>
+            <p class="hint-text">Probe pins a single pixel's value. Every ROI reports
+              mean ± SD, min, max, area and pixel count from the pixel values, never from
+              the displayed image. With <strong>✥ Navigate</strong> selected, drag a
+              handle to reshape a measurement or its centre grip to move it; with a
+              drawing tool selected, every click places a new point. Hiding is not
+              deleting.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>ROI Histogram</h4>
+            <canvas id="roiHistogram" class="roi-histogram" hidden></canvas>
+            <p class="hint-text" id="histogramNote">Select a circle, ellipse, rectangle,
+              polygon or freehand ROI to see its histogram.</p>
           </section>
 
           <section class="tool-section">
@@ -356,6 +368,26 @@
     <button data-orient="flipv">Flip vertical<span>mirror up / down</span></button>
     <button data-orient="upright">Straighten<span>clear rotation and flips</span></button>
   </div>
+  <div class="menu menu-wide" id="toolMenu" hidden>
+    <div class="menu-head">Measure</div>
+    <button data-tool="point">⌖ Probe<span>one pixel's value</span></button>
+    <button data-tool="distance">↔ Distance<span>two points</span></button>
+    <button data-tool="polyline">⌇ Polyline<span>summed segments · Enter to finish</span></button>
+    <button data-tool="angle">∠ Angle<span>three points, vertex second</span></button>
+    <button data-tool="cobb">⋀ Cobb angle<span>two lines, four points</span></button>
+    <div class="menu-head">Regions of interest</div>
+    <button data-tool="circle">⊙ Circle ROI<span>centre, then edge</span></button>
+    <button data-tool="ellipse">◯ Ellipse ROI<span>two corners</span></button>
+    <button data-tool="rect">▭ Rectangle ROI<span>two corners</span></button>
+    <button data-tool="polygon">⬠ Polygon ROI<span>click each vertex · Enter to close</span></button>
+    <button data-tool="freehandRoi">✺ Freehand ROI<span>hold and trace</span></button>
+    <div class="menu-head">Annotate</div>
+    <button data-tool="arrow">↗ Arrow<span>point at a finding</span></button>
+    <button data-tool="text">T Text<span>type a caption</span></button>
+    <button data-tool="freehand">✎ Draw<span>hold and trace</span></button>
+    <div class="menu-head">Navigate</div>
+    <button data-tool="none">✥ Navigate<span>no measurement</span></button>
+  </div>
   <div class="menu" id="resetMenu" hidden>
     <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
     <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
@@ -363,6 +395,11 @@
     <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
     <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
     <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
+  </div>
+  <div id="annotInput" class="annot-input" hidden>
+    <input type="text" id="annotField" maxlength="120" placeholder="Caption…" />
+    <button class="ghost-btn small" id="annotOk">OK</button>
+    <button class="ghost-btn small" id="annotCancel">Cancel</button>
   </div>
   <div id="toast" class="toast" hidden></div>
   <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><span id="busyText">Working…</span></div></div>

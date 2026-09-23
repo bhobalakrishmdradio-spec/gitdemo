@@ -35,6 +35,15 @@
   };
 
   var MAX_SERIES_FOR_THUMBNAILS = 60;
+
+  /**
+   * Every pop-up menu, by its dom key.
+   *
+   * They live outside the toolbar as fixed-position siblings: the toolbar
+   * scrolls horizontally, and a menu nested inside a scrolling container is
+   * clipped — it can look perfectly visible while being unclickable.
+   */
+  var MENUS = ["orientMenu", "resetMenu", "toolMenu", "displayMenu", "layoutMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
   // The 3D texture is packed once over the full diagnostic HU range so the
@@ -189,6 +198,14 @@
     measurements: [],
     pendingMeasure: null,
     selectedMeasurement: null,
+    showAnnotations: true,        // hide every marker without deleting one
+    textTarget: null,             // caption being typed, if any
+
+    // Measurements are saved per series so they survive a reload. The flag
+    // exists so a test, or a shared machine, can turn that off.
+    measurePersist: true,
+    measureStoredUids: [],        // series with a saved record, for clean-up
+    measureLoaded: {},            // series already restored this session
 
     windowWidth: 400,
     windowCenter: 40,
@@ -265,6 +282,15 @@
     dom.resetBtn = byId("resetBtn");
     dom.measureList = byId("measureList");
     dom.clearMeasureBtn = byId("clearMeasureBtn");
+    dom.hideAnnotBtn = byId("hideAnnotBtn");
+    dom.roiHistogram = byId("roiHistogram");
+    dom.histogramNote = byId("histogramNote");
+    dom.toolMenu = byId("toolMenu");
+    dom.toolMoreBtn = byId("toolMoreBtn");
+    dom.annotInput = byId("annotInput");
+    dom.annotField = byId("annotField");
+    dom.annotOk = byId("annotOk");
+    dom.annotCancel = byId("annotCancel");
     dom.calibrationNote = byId("calibrationNote");
     dom.stackSeg = byId("stackSeg");
     dom.stackNote = byId("stackNote");
@@ -1544,19 +1570,25 @@
       if (state.boneCut) recomputeBoneMask();
     }
 
-      resetView();
-      clearMeasurements();
-      setBusy(false);
-      updateVolumeInfo();
-      swapReportToStudy();
-      syncModalityControls();
-      updateObliqueInfo();
-      updateGeometryWarnings();
-      updateCalibrationNote();
-      syncSliders();
-      renderAll();
-      highlightActiveThumb();
-      setStatus(state.volume
+    resetView();
+    // Only the half-drawn shape is abandoned. Measurements now carry the
+    // series they were drawn on and are filtered by it, so changing series
+    // no longer needs to throw the previous one's work away — and anything
+    // saved for this series comes back.
+    cancelPending();
+    restoreMeasurements(state.currentSeriesUID);
+    renderMeasurementList();
+    setBusy(false);
+    updateVolumeInfo();
+    swapReportToStudy();
+    syncModalityControls();
+    updateObliqueInfo();
+    updateGeometryWarnings();
+    updateCalibrationNote();
+    syncSliders();
+    renderAll();
+    highlightActiveThumb();
+    setStatus(state.volume
       ? "Volume " + state.volume.cols + "×" + state.volume.rows + "×" + state.volume.depth +
         " · " + fmt(state.volume.spacingZ) + "mm slices"
       : "Single-slice series — MPR and 3D need a stack.");
@@ -2203,19 +2235,81 @@
     return typeof m.sliceIndex === "number" ? String(m.sliceIndex + 1) : "obl";
   }
 
-  /** Measurements that belong to the plane/slice currently shown. */
-  function measurementsFor(plane, index) {
+  /**
+   * Measurements that belong to the cut currently shown.
+   *
+   * The series has to match as well as the plane and the slice. Two studies
+   * open side by side both have an "axial slice 40"; an ROI drawn on one of
+   * them must not appear over the other patient's anatomy.
+   */
+  function measurementsFor(plane, index, uid) {
     var key = sliceKeyFor(plane, index);
     return state.measurements.filter(function (m) {
-      return m.plane === plane && m.sliceIndex === key;
+      return m.plane === plane && m.sliceIndex === key &&
+        (uid === undefined || m.seriesUid === uid) && !m.hidden;
     });
   }
 
+  /* ---------------------------------------------------------------------
+   * Persistence
+   * ------------------------------------------------------------------- */
+
+  /**
+   * Write every touched series' measurements to local storage.
+   *
+   * Series that *used* to have measurements are saved too, so deleting the
+   * last ROI on a series clears its stored record instead of leaving a
+   * stale one to reappear on the next reload.
+   */
+  function persistMeasurements() {
+    if (!state.measurePersist) return;
+    var uids = {};
+    state.measureStoredUids.forEach(function (u) { uids[u] = true; });
+    state.measurements.forEach(function (m) { if (m.seriesUid) uids[m.seriesUid] = true; });
+
+    var kept = [];
+    Object.keys(uids).forEach(function (u) {
+      MEAS.saveFor(u, state.measurements);
+      if (state.measurements.some(function (m) { return m.seriesUid === u; })) kept.push(u);
+    });
+    state.measureStoredUids = kept;
+  }
+
+  /** Pull a series' saved measurements back in, once, when it is opened. */
+  function restoreMeasurements(uid) {
+    if (!uid || !state.measurePersist || state.measureLoaded[uid]) return;
+    state.measureLoaded[uid] = true;
+    var saved = MEAS.loadFor(uid);
+    if (!saved.length) return;
+    // Guard against a double restore if the same series is opened twice.
+    var have = {};
+    state.measurements.forEach(function (m) { if (m.seriesUid === uid) have[m.id] = true; });
+    var added = saved.filter(function (m) { return !have[m.id]; });
+    if (!added.length) return;
+    state.measurements = state.measurements.concat(added);
+    if (state.measureStoredUids.indexOf(uid) < 0) state.measureStoredUids.push(uid);
+    renderMeasurementList();
+    renderAllOverlays();
+  }
+
+  /* ---------------------------------------------------------------------
+   * Drawing
+   * ------------------------------------------------------------------- */
+
+  var MEASURE_COLOUR = "#4ad6ff";
+  var MEASURE_SELECTED = "#6ef2a0";
+  var MEASURE_PENDING = "#ffd24a";
+  var ANNOT_COLOUR = "#ffb14a";
+
   function drawMeasurements(ctx, geom, dpr) {
+    if (!state.showAnnotations) return;
     var plane = geom.plane;
-    var list = measurementsFor(plane, geom.index);
-    var pending = state.pendingMeasure && state.pendingMeasure.plane === plane &&
-      state.pendingMeasure.sliceIndex === sliceKeyFor(plane, geom.index) ? state.pendingMeasure : null;
+    var list = measurementsFor(plane, geom.index, geom.uid);
+    var pending = state.pendingMeasure &&
+      state.pendingMeasure.plane === plane &&
+      state.pendingMeasure.seriesUid === geom.uid &&
+      state.pendingMeasure.sliceIndex === sliceKeyFor(plane, geom.index)
+      ? state.pendingMeasure : null;
     if (!list.length && !pending) return;
 
     var t = geom.t;
@@ -2223,23 +2317,28 @@
 
     ctx.save();
     ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.font = Math.round(12 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
     ctx.textBaseline = "bottom";
     ctx.shadowColor = "rgba(0,0,0,0.9)";
     ctx.shadowBlur = 3 * dpr;
 
     list.forEach(function (m) {
-      drawOne(m, m.id === state.selectedMeasurement ? "#6ef2a0" : "#4ad6ff", false);
+      var colour = m.id === state.selectedMeasurement ? MEASURE_SELECTED
+        : MEAS.isAnnotation(m.tool) ? ANNOT_COLOUR : MEASURE_COLOUR;
+      drawOne(m, colour, false);
     });
-    if (pending) drawOne(pending, "#ffd24a", true);
+    if (pending) drawOne(pending, MEASURE_PENDING, true);
     ctx.restore();
 
     function drawOne(m, colour, isPending) {
       var pts = m.points.map(function (p) { return planeToCanvas(t, p.x, p.y); });
       ctx.strokeStyle = colour;
       ctx.fillStyle = colour;
+      var tool = m.tool, T = MEAS.TOOLS;
 
-      if (m.tool === MEAS.TOOLS.point) {
+      if (tool === T.point) {
         // A crosshair tick rather than a blob, so the pixel stays visible.
         var c0 = pts[0], arm = 7 * dpr;
         ctx.beginPath();
@@ -2248,7 +2347,9 @@
         ctx.moveTo(c0.x, c0.y - arm); ctx.lineTo(c0.x, c0.y - 2 * dpr);
         ctx.moveTo(c0.x, c0.y + 2 * dpr); ctx.lineTo(c0.x, c0.y + arm);
         ctx.stroke();
-      } else if (m.tool === MEAS.TOOLS.rect && pts.length >= 2) {
+      } else if (tool === T.text) {
+        drawCaption(pts[0], m.text || "…", colour, dpr);
+      } else if (tool === T.rect && pts.length >= 2) {
         // Drawn through the transform so it rotates with the image.
         var rc = planeToCanvas(t, (m.points[0].x + m.points[1].x) / 2,
           (m.points[0].y + m.points[1].y) / 2);
@@ -2259,40 +2360,161 @@
         ctx.rotate(t.rot);
         ctx.strokeRect(-rw / 2, -rh / 2, rw, rh);
         ctx.restore();
-      } else if (m.tool === MEAS.TOOLS.ellipse && pts.length >= 2) {
-        // Draw the ellipse through the transform so it rotates with the image.
-        var c = planeToCanvas(t, (m.points[0].x + m.points[1].x) / 2, (m.points[0].y + m.points[1].y) / 2);
-        var rxPlane = Math.abs(m.points[1].x - m.points[0].x) / 2;
-        var ryPlane = Math.abs(m.points[1].y - m.points[0].y) / 2;
-        ctx.save();
-        ctx.translate(c.x, c.y);
-        ctx.rotate(t.rot);
+      } else if ((tool === T.ellipse || tool === T.circle) && pts.length >= 2) {
+        // Both are drawn from the same radii the statistics use, so what is
+        // outlined is exactly what was measured.
+        var e = MEAS.ellipseRadii(m, cal);
+        if (e) {
+          var c = planeToCanvas(t, e.cx, e.cy);
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.rotate(t.rot);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, e.rx * t.spacingX * t.scale, e.ry * t.spacingY * t.scale,
+            0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else if (tool === T.cobb && pts.length >= 2) {
+        // Two independent lines, plus a dashed hint of where they would meet.
+        // Below two points there is no line yet, and nothing to draw.
         ctx.beginPath();
-        ctx.ellipse(0, 0, rxPlane * t.spacingX * t.scale, ryPlane * t.spacingY * t.scale, 0, 0, Math.PI * 2);
+        ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y);
+        if (pts.length >= 4) { ctx.moveTo(pts[2].x, pts[2].y); ctx.lineTo(pts[3].x, pts[3].y); }
         ctx.stroke();
-        ctx.restore();
+        if (pts.length >= 4) {
+          var meet = lineIntersection(pts[0], pts[1], pts[2], pts[3]);
+          if (meet) {
+            ctx.save();
+            ctx.setLineDash([4 * dpr, 4 * dpr]);
+            ctx.globalAlpha = 0.55;
+            ctx.beginPath();
+            ctx.moveTo(pts[1].x, pts[1].y); ctx.lineTo(meet.x, meet.y);
+            ctx.moveTo(pts[3].x, pts[3].y); ctx.lineTo(meet.x, meet.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+      } else if (tool === T.arrow && pts.length >= 2) {
+        drawArrow(ctx, pts[0], pts[1], dpr);
       } else if (pts.length >= 2) {
+        // Distance, polyline, angle, polygon and the freehand shapes.
+        var closed = tool === T.polygon || tool === T.freehandRoi;
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        if (closed && !isPending) ctx.closePath();
         ctx.stroke();
       }
 
-      if (m.tool !== MEAS.TOOLS.point) {
-        pts.forEach(function (p) {
+      // Handles. A traced shape has hundreds of points, so it shows only its
+      // ends — a dot on every point would bury the anatomy underneath.
+      if (tool !== T.point && tool !== T.text) {
+        var handles = MEAS.isTrace(tool) ? [pts[0], pts[pts.length - 1]] : pts;
+        handles.forEach(function (pp) {
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 3.5 * dpr, 0, Math.PI * 2);
+          ctx.arc(pp.x, pp.y, 3.5 * dpr, 0, Math.PI * 2);
           ctx.fill();
         });
       }
 
+      // The move grip: drag it to shift the whole object without reshaping it.
+      if (!isPending && m.id === state.selectedMeasurement && pts.length > 1) {
+        var g = moveGripCanvas(m, t);
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = colour;
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.beginPath();
+        ctx.rect(g.x - 4.5 * dpr, g.y - 4.5 * dpr, 9 * dpr, 9 * dpr);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
       if (isPending) return;
+      if (tool === T.text) return;                 // its caption is the label
+
       var res = MEAS.evaluate(m, geom.slab, cal);
-      var unit = MEAS.reportsIntensity(m.tool) ? (" " + intensitySuffix(geom.slab)).trimEnd() : "";
+      if (res.annotation && !m.text) return;       // an arrow with nothing to say
+      var unit = MEAS.reportsIntensity(tool) ? (" " + intensitySuffix(geom.slab)).trimEnd() : "";
       var label = res.primary + unit;
-      var anchor = pts[pts.length - 1];
+      var anchor = labelAnchor(pts, tool);
       ctx.fillText(label, anchor.x + 8 * dpr, anchor.y - 6 * dpr);
     }
+
+    /** Where a shape's readout sits: clear of the shape, but attached to it. */
+    function labelAnchor(pts, tool) {
+      if (!MEAS.isRoi(tool)) return pts[pts.length - 1];
+      var top = pts[0];
+      pts.forEach(function (p) { if (p.y < top.y || (p.y === top.y && p.x > top.x)) top = p; });
+      return top;
+    }
+
+    function drawCaption(at, text, colour, d) {
+      var pad = 4 * d;
+      var w = ctx.measureText(text).width;
+      var h = 14 * d;
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(at.x, at.y - h - pad, w + pad * 2, h + pad * 1.4);
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = Math.max(1, d);
+      ctx.strokeRect(at.x, at.y - h - pad, w + pad * 2, h + pad * 1.4);
+      ctx.fillStyle = colour;
+      ctx.fillText(text, at.x + pad, at.y);
+      ctx.restore();
+    }
+  }
+
+  function drawArrow(ctx, from, to, dpr) {
+    var ang = Math.atan2(to.y - from.y, to.x - from.x);
+    var head = 11 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - head * Math.cos(ang - 0.4), to.y - head * Math.sin(ang - 0.4));
+    ctx.lineTo(to.x - head * Math.cos(ang + 0.4), to.y - head * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /** Where two infinite lines cross, or null when they are parallel. */
+  function lineIntersection(a0, a1, b0, b1) {
+    var d1x = a1.x - a0.x, d1y = a1.y - a0.y;
+    var d2x = b1.x - b0.x, d2y = b1.y - b0.y;
+    var den = d1x * d2y - d1y * d2x;
+    if (Math.abs(den) < 1e-9) return null;
+    var t = ((b0.x - a0.x) * d2y - (b0.y - a0.y) * d2x) / den;
+    return { x: a0.x + d1x * t, y: a0.y + d1y * t };
+  }
+
+  /** The move grip, in plane coordinates. */
+  function moveGrip(m) {
+    if (m.tool === MEAS.TOOLS.circle) return { x: m.points[0].x, y: m.points[0].y };
+    return MEAS.centroid(m.points);
+  }
+
+  function moveGripCanvas(m, t) {
+    var g = moveGrip(m);
+    return planeToCanvas(t, g.x, g.y);
+  }
+
+  /* ---------------------------------------------------------------------
+   * Placing measurements
+   * ------------------------------------------------------------------- */
+
+  /** Stamp a new measurement with where it belongs and keep it. */
+  function commitMeasurement(m) {
+    state.measurements.push(m);
+    state.selectedMeasurement = m.id;
+    state.pendingMeasure = null;
+    persistMeasurements();
+    renderMeasurementList();
   }
 
   /** Handle a click while a measurement tool is active. */
@@ -2301,33 +2523,68 @@
     if (!geom) return;
     var p = eventToCell(i, clientX, clientY);
     if (!p) return;
-    var need = MEAS.pointsNeeded(state.tool);
-    if (!need) return;
+    var tool = state.tool;
+    if (tool === MEAS.TOOLS.none || tool === "sculpt") return;
 
     var key = sliceKeyFor(geom.plane, geom.index);
     var pending = state.pendingMeasure;
-    if (!pending || pending.plane !== geom.plane || pending.sliceIndex !== key) {
-      pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, geom.plane, key, [p]);
+    var sameCut = pending && pending.plane === geom.plane &&
+      pending.seriesUid === geom.uid && pending.sliceIndex === key;
+
+    // Starting somewhere else abandons the half-finished shape rather than
+    // stretching it across two different cuts.
+    if (!sameCut) {
+      pending = state.pendingMeasure =
+        MEAS.createMeasurement(tool, geom.plane, key, [p], { seriesUid: geom.uid });
       state.measureCell = i;
-      // A one-point tool (the HU probe) is already complete.
-      if (pending.points.length >= need) {
-        state.measurements.push(pending);
-        state.selectedMeasurement = pending.id;
-        state.pendingMeasure = null;
-        renderMeasurementList();
+      if (MEAS.isVariable(tool)) { renderAllOverlays(); return; }
+      if (pending.points.length >= MEAS.pointsNeeded(tool)) finishFixed(pending);
+      renderAllOverlays();
+      return;
+    }
+
+    if (MEAS.isVariable(tool)) {
+      // Clicking the first vertex again closes the shape.
+      var first = pending.points[0];
+      if (pending.points.length >= MEAS.minPoints(tool) &&
+          Math.hypot(p.x - first.x, p.y - first.y) * geom.slab.spacingX < 3) {
+        finishPending();
+        return;
       }
+      pending.points.push({ x: p.x, y: p.y });
       renderAllOverlays();
       return;
     }
 
     pending.points.push({ x: p.x, y: p.y });
-    if (pending.points.length >= need) {
-      state.measurements.push(pending);
-      state.selectedMeasurement = pending.id;
-      state.pendingMeasure = null;
-      renderMeasurementList();
-    }
+    if (pending.points.length >= MEAS.pointsNeeded(tool)) finishFixed(pending);
     renderAllOverlays();
+
+    function finishFixed(m) {
+      if (MEAS.wantsText(m.tool)) { commitMeasurement(m); promptForText(m); return; }
+      commitMeasurement(m);
+    }
+  }
+
+  /** Close a variable-point or traced shape, if it has enough points. */
+  function finishPending() {
+    var pending = state.pendingMeasure;
+    if (!pending) return false;
+    if (pending.points.length < MEAS.minPoints(pending.tool)) {
+      state.pendingMeasure = null;
+      renderAllOverlays();
+      return false;
+    }
+    commitMeasurement(pending);
+    renderAllOverlays();
+    return true;
+  }
+
+  function cancelPending() {
+    if (!state.pendingMeasure) return false;
+    state.pendingMeasure = null;
+    renderAllOverlays();
+    return true;
   }
 
   /** Live preview of the in-progress measurement as the mouse moves. */
@@ -2335,15 +2592,83 @@
     var pending = state.pendingMeasure;
     var geom = cellEls[i] && cellEls[i].geom;
     if (!pending || !geom || pending.plane !== geom.plane) return;
+    if (MEAS.isTrace(pending.tool)) return;      // traced shapes follow the drag
     var p = eventToCell(i, clientX, clientY);
     if (!p) return;
-    var need = MEAS.pointsNeeded(state.tool);
-    var preview = pending.points.slice(0, need - 1);
-    preview.push(p);
     var saved = pending.points;
+    var preview;
+    if (MEAS.isVariable(pending.tool)) {
+      preview = saved.concat([p]);               // rubber-band to the cursor
+    } else {
+      preview = saved.slice(0, MEAS.pointsNeeded(pending.tool) - 1).concat([p]);
+    }
     pending.points = preview;
     renderCellOverlay(i);
     pending.points = saved;
+  }
+
+  /* ---------------------------------------------------------------------
+   * Editing an existing measurement
+   * ------------------------------------------------------------------- */
+
+  /**
+   * What lies under the cursor: a vertex to reshape, or the move grip.
+   *
+   * The tolerance is in screen pixels, so a handle stays equally easy to
+   * grab whether the pane is zoomed in or out.
+   */
+  function hitTestMeasurement(i, clientX, clientY) {
+    if (!state.showAnnotations) return null;
+    if (state.pendingMeasure) return null;      // finish the shape first
+    // Handles are live only while Navigate is the active tool. The rule
+    // lives here rather than in the caller so there is one place that
+    // decides it, and one place to test.
+    if (state.tool !== MEAS.TOOLS.none) return null;
+    var rec = cellEls[i], geom = rec && rec.geom;
+    if (!geom) return null;
+    var rect = rec.canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    var cx = (clientX - rect.left) * dpr, cy = (clientY - rect.top) * dpr;
+    var tol = 9 * dpr;
+    var list = measurementsFor(geom.plane, geom.index, geom.uid);
+
+    // Newest first, so a shape drawn on top of another is the one grabbed.
+    for (var k = list.length - 1; k >= 0; k--) {
+      var m = list[k];
+      if (m.id === state.selectedMeasurement && m.points.length > 1) {
+        var g = moveGripCanvas(m, geom.t);
+        if (Math.hypot(g.x - cx, g.y - cy) <= tol) return { m: m, move: true };
+      }
+      // A traced shape has too many vertices to reshape one at a time.
+      if (MEAS.isTrace(m.tool)) {
+        var ends = [0, m.points.length - 1];
+        for (var e = 0; e < ends.length; e++) {
+          var pe = planeToCanvas(geom.t, m.points[ends[e]].x, m.points[ends[e]].y);
+          if (Math.hypot(pe.x - cx, pe.y - cy) <= tol) return { m: m, move: true };
+        }
+        continue;
+      }
+      for (var v = 0; v < m.points.length; v++) {
+        var pc = planeToCanvas(geom.t, m.points[v].x, m.points[v].y);
+        if (Math.hypot(pc.x - cx, pc.y - cy) <= tol) return { m: m, vertex: v };
+      }
+    }
+    return null;
+  }
+
+  /** Apply a drag to the measurement it grabbed. */
+  function dragMeasurement(drag, clientX, clientY) {
+    var p = eventToCell(drag.cell, clientX, clientY);
+    if (!p) return;
+    if (drag.move) {
+      MEAS.translate(drag.m, p.x - drag.last.x, p.y - drag.last.y);
+      drag.last = { x: p.x, y: p.y };
+    } else {
+      drag.m.points[drag.vertex].x = p.x;
+      drag.m.points[drag.vertex].y = p.y;
+    }
+    renderAllOverlays();
+    renderMeasurementList();
   }
 
   /** Redraw just the annotation layer for one pane. */
@@ -2356,58 +2681,198 @@
     cellEls.forEach(function (rec, i) { if (rec.geom) drawAnnotations(i, rec.geom); });
   }
 
+  /* ---------------------------------------------------------------------
+   * Typed captions
+   * ------------------------------------------------------------------- */
+
+  /**
+   * Open the inline caption editor over a measurement.
+   *
+   * A text annotation with no text is nothing at all, so cancelling a brand
+   * new one deletes it rather than leaving an invisible marker behind.
+   */
+  function promptForText(m) {
+    var box = dom.annotInput;
+    if (!box) return;
+    var rec = cellEls[state.measureCell];
+    var geom = rec && rec.geom;
+    var wasNew = !m.text;
+    box.hidden = false;
+    dom.annotField.value = m.text || "";
+
+    if (geom) {
+      var rect = rec.canvas.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      var at = planeToCanvas(geom.t, m.points[0].x, m.points[0].y);
+      box.style.left = Math.round(rect.left + at.x / dpr) + "px";
+      box.style.top = Math.round(rect.top + at.y / dpr + 6) + "px";
+    }
+    dom.annotField.focus();
+    dom.annotField.select();
+
+    state.textTarget = { m: m, wasNew: wasNew };
+  }
+
+  function commitText(keep) {
+    var target = state.textTarget;
+    dom.annotInput.hidden = true;
+    state.textTarget = null;
+    if (!target) return;
+    var text = dom.annotField.value.trim();
+    if (!keep || (!text && target.wasNew)) {
+      if (target.wasNew) deleteMeasurement(target.m.id);
+      renderAllOverlays();
+      return;
+    }
+    target.m.text = text;
+    persistMeasurements();
+    renderMeasurementList();
+    renderAllOverlays();
+  }
+
+  /* ---------------------------------------------------------------------
+   * The measurement list
+   * ------------------------------------------------------------------- */
+
   /** The slab of a visible pane showing this measurement's cut, if any. */
   function visibleSlabFor(m) {
     for (var i = 0; i < state.cells.length; i++) {
       var rec = cellEls[i], geom = rec && rec.geom;
-      if (!geom || geom.plane !== m.plane) continue;
+      if (!geom || geom.plane !== m.plane || geom.uid !== m.seriesUid) continue;
       if (sliceKeyFor(geom.plane, geom.index) === m.sliceIndex) return geom.slab;
     }
     return null;
+  }
+
+  /** Short name of the series a measurement belongs to. */
+  function seriesShortName(uid) {
+    var group = state.seriesMap[uid];
+    if (!group) return "—";
+    return group.description || ("Series " + (group.number || "?"));
   }
 
   function renderMeasurementList() {
     var list = state.measurements;
     if (!list.length) {
       dom.measureList.innerHTML = '<p class="muted small">No measurements yet.</p>';
+      renderHistogram();
       return;
     }
     var html = "";
     list.forEach(function (m) {
       var slab = visibleSlabFor(m);
       var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
-      var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
-      var value = res ? res.primary + (unit ? " " + unit : "") : "—";
+      var value;
+      if (MEAS.isAnnotation(m.tool)) {
+        value = m.text || MEAS.label(m.tool);
+      } else if (res) {
+        var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
+        value = res.primary + (unit ? " " + unit : "");
+      } else {
+        value = "—";
+      }
+      var detail = res && res.detail && !MEAS.isAnnotation(m.tool) ? res.detail
+        : seriesShortName(m.seriesUid);
       html +=
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
-        '" data-id="' + m.id + '">' +
-        '<span class="measure-kind">' + toolGlyph(m.tool) + "</span>" +
+        (m.hidden ? " hidden-row" : "") + '" data-id="' + m.id + '">' +
+        '<span class="measure-kind" title="' + escapeHtml(MEAS.label(m.tool)) + '">' +
+        MEAS.glyph(m.tool) + "</span>" +
         '<span class="measure-main">' + escapeHtml(value) +
-        (res && res.detail ? '<span class="measure-detail">' + escapeHtml(res.detail) + "</span>" : "") +
+        '<span class="measure-detail">' + escapeHtml(detail || "") + "</span>" +
         "</span>" +
         '<span class="measure-loc">' + m.plane.slice(0, 3) + " " + sliceLabel(m) + "</span>" +
+        '<button class="measure-eye" data-eye="' + m.id + '" title="' +
+        (m.hidden ? "Show" : "Hide") + '">' + (m.hidden ? "◌" : "◉") + "</button>" +
         '<button class="measure-del" data-del="' + m.id + '" title="Delete">×</button>' +
         "</div>";
     });
     dom.measureList.innerHTML = html;
+    renderHistogram();
   }
 
-  function toolGlyph(tool) {
-    if (tool === MEAS.TOOLS.point) return "⌖";
-    if (tool === MEAS.TOOLS.distance) return "↔";
-    if (tool === MEAS.TOOLS.angle) return "∠";
-    if (tool === MEAS.TOOLS.ellipse) return "◯";
-    if (tool === MEAS.TOOLS.rect) return "▭";
-    return "•";
+  /** The selected measurement, or null. */
+  function selectedMeasurement() {
+    var id = state.selectedMeasurement;
+    if (!id) return null;
+    for (var i = 0; i < state.measurements.length; i++) {
+      if (state.measurements[i].id === id) return state.measurements[i];
+    }
+    return null;
   }
+
+  /**
+   * Distribution of the values inside the selected ROI.
+   *
+   * Drawn from the same pixels the ROI's mean came from, so the two can
+   * never disagree — and labelled with the same units qualifier, so a slab
+   * projection is not passed off as a thin-slice measurement.
+   */
+  function renderHistogram() {
+    var canvas = dom.roiHistogram;
+    if (!canvas) return;
+    var m = selectedMeasurement();
+    var slab = m && MEAS.isRoi(m.tool) ? visibleSlabFor(m) : null;
+    var hist = slab ? MEAS.histogramOf(m, slab, calibrationFor(m.plane, slab), 48) : null;
+
+    if (!hist) {
+      canvas.hidden = true;
+      dom.histogramNote.textContent = m && MEAS.isRoi(m.tool)
+        ? "Bring the ROI's slice back on screen to see its histogram."
+        : "Select a circle, ellipse, rectangle, polygon or freehand ROI to see its histogram.";
+      return;
+    }
+    canvas.hidden = false;
+    resizeCanvas(canvas);
+    var ctx = canvas.getContext("2d");
+    var w = canvas.width, h = canvas.height;
+    var dpr = window.devicePixelRatio || 1;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0b0d10";
+    ctx.fillRect(0, 0, w, h);
+
+    var n = hist.counts.length;
+    var bw = w / n;
+    ctx.fillStyle = "#4ad6ff";
+    for (var i = 0; i < n; i++) {
+      var bh = hist.peak ? (hist.counts[i] / hist.peak) * (h - 14 * dpr) : 0;
+      ctx.fillRect(i * bw, h - bh, Math.max(1, bw - 0.5), bh);
+    }
+    // Mean marker, so the bar chart and the reported number line up visibly.
+    var mx = ((hist.stats.mean - hist.min) / (hist.max - hist.min)) * w;
+    ctx.strokeStyle = "#ffd24a";
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.beginPath();
+    ctx.moveTo(mx, 0); ctx.lineTo(mx, h);
+    ctx.stroke();
+
+    var unit = intensitySuffix(slab) || "";
+    dom.histogramNote.textContent =
+      Math.round(hist.min) + " to " + Math.round(hist.max) + " " + unit +
+      " · n=" + hist.total + " · mean " + hist.stats.mean.toFixed(1) +
+      " (yellow line)";
+  }
+
+  function toolGlyph(tool) { return MEAS.glyph(tool); }
 
   function setTool(tool) {
+    // Switching tools abandons anything half-drawn rather than finishing it
+    // with the wrong shape's rules.
+    cancelPending();
     state.tool = tool;
-    state.pendingMeasure = null;
-    if (tool === "sculpt") setStatus("Sculpt: drag on any plane to cut tissue away.");
-    Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
-      btn.classList.toggle("active", btn.dataset.tool === tool);
-    });
+    if (tool === MEAS.TOOLS.none) {
+      setStatus("Navigate: drag a measurement's handle to reshape it, or its centre grip to move it.");
+    } else if (tool === "sculpt") setStatus("Sculpt: drag on any plane to cut tissue away.");
+    else if (MEAS.isVariable(tool)) {
+      setStatus(MEAS.label(tool) + ": click each point, then double-click, press Enter, " +
+        "or click the first point again to close it.");
+    } else if (MEAS.isTrace(tool)) {
+      setStatus(MEAS.label(tool) + ": hold the left button and trace.");
+    } else if (tool !== MEAS.TOOLS.none) {
+      setStatus(MEAS.label(tool) + ": " + MEAS.pointsNeeded(tool) + " click" +
+        (MEAS.pointsNeeded(tool) === 1 ? "" : "s") + ".");
+    }
+    syncToolControls();
     cellEls.forEach(function (rec, i) {
       if (state.cells[i] && state.cells[i].plane !== "vr") {
         rec.root.style.cursor = tool === MEAS.TOOLS.none ? "crosshair" : "cell";
@@ -2416,12 +2881,62 @@
     renderAllOverlays();
   }
 
+  /** Keep the toolbar buttons and the overflow menu showing the live tool. */
+  function syncToolControls() {
+    Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
+      btn.classList.toggle("active", btn.dataset.tool === state.tool);
+    });
+    if (dom.toolMenu) {
+      Array.prototype.forEach.call(dom.toolMenu.querySelectorAll("[data-tool]"), function (btn) {
+        btn.classList.toggle("active", btn.dataset.tool === state.tool);
+      });
+    }
+    // The overflow button shows which tool it is holding, so a tool chosen
+    // from the menu is not invisible on the toolbar.
+    if (dom.toolMoreBtn) {
+      var inSeg = !!dom.toolSeg.querySelector('.seg-btn[data-tool="' + state.tool + '"]');
+      dom.toolMoreBtn.classList.toggle("active", !inSeg);
+      dom.toolMoreBtn.textContent = inSeg ? "▾" : MEAS.glyph(state.tool) + " ▾";
+      dom.toolMoreBtn.title = inSeg ? "More measurement and annotation tools"
+        : "Active: " + MEAS.label(state.tool);
+    }
+  }
+
+  function deleteMeasurement(id) {
+    state.measurements = state.measurements.filter(function (m) { return m.id !== id; });
+    if (state.selectedMeasurement === id) state.selectedMeasurement = null;
+    persistMeasurements();
+    renderMeasurementList();
+    renderAllOverlays();
+  }
+
+  function toggleMeasurementHidden(id) {
+    state.measurements.forEach(function (m) { if (m.id === id) m.hidden = !m.hidden; });
+    persistMeasurements();
+    renderMeasurementList();
+    renderAllOverlays();
+  }
+
   function clearMeasurements() {
     state.measurements = [];
     state.pendingMeasure = null;
     state.selectedMeasurement = null;
+    persistMeasurements();
     renderMeasurementList();
     renderAllOverlays();
+  }
+
+  /** Measurements as report-ready lines, newest last. */
+  function measurementLines() {
+    return state.measurements.filter(function (m) { return !MEAS.isAnnotation(m.tool); })
+      .map(function (m) {
+        var slab = visibleSlabFor(m);
+        var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
+        if (!res) return null;
+        var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
+        return MEAS.label(m.tool) + " — " + res.primary + (unit ? " " + unit : "") +
+          " (" + m.plane + " " + sliceLabel(m) + ", " + seriesShortName(m.seriesUid) + ")";
+      }).filter(Boolean);
   }
 
   /* ---------------------------------------------------------------------
@@ -2704,9 +3219,16 @@
     menu.style.top = Math.round(Math.max(8, top)) + "px";
   }
 
+  /** True when any pop-up menu is showing. */
+  function anyMenuOpen() {
+    return MENUS.some(function (name) {
+      var el = dom[name];
+      return el && !el.hidden;
+    });
+  }
+
   function closeMenus() {
-    if (dom.resetMenu) dom.resetMenu.hidden = true;
-    if (dom.orientMenu) dom.orientMenu.hidden = true;
+    MENUS.forEach(function (name) { if (dom[name]) dom[name].hidden = true; });
   }
 
   function applyReset(what) {
@@ -3168,6 +3690,12 @@
       state.index = { axial: 0, coronal: 0, sagittal: 0 };
       state.measurements = [];
       state.pendingMeasure = null;
+      state.selectedMeasurement = null;
+      // Saved measurements are not deleted here — clearing the viewer is not
+      // the same as discarding a reader's work — but they must be allowed to
+      // load again when the series is reopened.
+      state.measureLoaded = {};
+      state.measureStoredUids = [];
       planeCache = {}; planeCacheKeys = [];
       vrDirty = true;
       if (renderer) renderer.dispose();
@@ -3267,18 +3795,45 @@
       if (btn) setTool(btn.dataset.tool);
     });
 
+    // The overflow menu carries the tools that do not fit on one toolbar row.
+    dom.toolMoreBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (dom.toolMenu.hidden) openMenuUnder(dom.toolMenu, dom.toolMoreBtn);
+      else dom.toolMenu.hidden = true;
+    });
+    dom.toolMenu.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-tool]");
+      if (!btn) return;
+      setTool(btn.dataset.tool);
+      dom.toolMenu.hidden = true;
+    });
+
     dom.clearMeasureBtn.addEventListener("click", clearMeasurements);
+
+    // Hiding is deliberately not deleting: the checklist asks for the two to
+    // be separate actions, and a reader who hides an ROI to look underneath
+    // should not lose it.
+    dom.hideAnnotBtn.addEventListener("click", function () {
+      state.showAnnotations = !state.showAnnotations;
+      dom.hideAnnotBtn.classList.toggle("active", !state.showAnnotations);
+      dom.hideAnnotBtn.textContent = state.showAnnotations
+        ? "Hide all markers" : "Show all markers";
+      renderAllOverlays();
+    });
+
+    dom.annotOk.addEventListener("click", function () { commitText(true); });
+    dom.annotCancel.addEventListener("click", function () { commitText(false); });
+    dom.annotField.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); commitText(true); }
+      else if (e.key === "Escape") { e.preventDefault(); commitText(false); }
+      e.stopPropagation();
+    });
 
     dom.measureList.addEventListener("click", function (e) {
       var del = e.target.closest("[data-del]");
-      if (del) {
-        var id = parseInt(del.dataset.del, 10);
-        state.measurements = state.measurements.filter(function (m) { return m.id !== id; });
-        if (state.selectedMeasurement === id) state.selectedMeasurement = null;
-        renderMeasurementList();
-        renderAllOverlays();
-        return;
-      }
+      if (del) { deleteMeasurement(parseInt(del.dataset.del, 10)); return; }
+      var eye = e.target.closest("[data-eye]");
+      if (eye) { toggleMeasurementHidden(parseInt(eye.dataset.eye, 10)); return; }
       var row = e.target.closest(".measure-row");
       if (!row) return;
       var rid = parseInt(row.dataset.id, 10);
@@ -3290,6 +3845,7 @@
       if (typeof m.sliceIndex === "number") setPlaneIndex(m.plane, m.sliceIndex);
       renderMeasurementList();
       renderAllOverlays();
+      if (e.detail > 1 && MEAS.isAnnotation(m.tool)) { state.measureCell = state.activeCell; promptForText(m); }
     });
 
     dom.reportToggleBtn.addEventListener("click", function () {
@@ -3596,6 +4152,38 @@
         renderAll();
         return;
       }
+      // hitTestMeasurement() returns nothing unless Navigate is active, so a
+      // drawing tool always draws: the alternative — grabbing handles
+      // whatever tool is selected — makes it impossible to place a new ROI
+      // whose corner lands near an existing one's handle, and turns the
+      // click that was meant to place a point into a silent drag of someone
+      // else's measurement.
+      if (e.button === 0) {
+        var hit = hitTestMeasurement(i, e.clientX, e.clientY);
+        if (hit) {
+          state.selectedMeasurement = hit.m.id;
+          renderMeasurementList();
+          var at0 = eventToCell(i, e.clientX, e.clientY);
+          state.drag = {
+            cell: i, mode: "measure", m: hit.m,
+            vertex: hit.vertex, move: !!hit.move,
+            last: at0 ? { x: at0.x, y: at0.y } : { x: 0, y: 0 },
+          };
+          renderAllOverlays();
+          return;
+        }
+      }
+      if (e.button === 0 && MEAS.isTrace(state.tool)) {
+        var p0 = eventToCell(i, e.clientX, e.clientY);
+        if (!p0) return;
+        state.measureCell = i;
+        state.pendingMeasure = MEAS.createMeasurement(
+          state.tool, rec.geom.plane, sliceKeyFor(rec.geom.plane, rec.geom.index),
+          [p0], { seriesUid: rec.geom.uid });
+        state.drag = { cell: i, mode: "trace" };
+        renderAllOverlays();
+        return;
+      }
       if (e.button === 0 && state.tool !== MEAS.TOOLS.none) {
         measureClick(i, e.clientX, e.clientY);
         return;
@@ -3634,6 +4222,12 @@
     // Double-click expands a pane to fill the grid, and back again.
     rec.root.addEventListener("dblclick", function (e) {
       if (rec.bar.contains(e.target)) return;
+      // A double-click closes a polygon or polyline; it must not also blow
+      // the pane up to full screen underneath it.
+      if (state.pendingMeasure && MEAS.isVariable(state.pendingMeasure.tool)) {
+        finishPending();
+        return;
+      }
       if (state.layout === "axial" || state.layout === "vr") {
         setLayout(lastGridLayout);
       } else {
@@ -3695,6 +4289,26 @@
     if (drag.mode === "sculpt") {
       sculptAt(drag.cell, e.clientX, e.clientY, drag.stroke);
       renderAll();
+      return;
+    }
+
+    if (drag.mode === "measure") {
+      dragMeasurement(drag, e.clientX, e.clientY);
+      return;
+    }
+
+    if (drag.mode === "trace") {
+      // Sample the path rather than every mouse event: a traced ROI needs
+      // to follow the cursor, not record a point per pixel of jitter.
+      var pending = state.pendingMeasure;
+      if (!pending) return;
+      var pt = eventToCell(drag.cell, e.clientX, e.clientY);
+      if (!pt) return;
+      var last = pending.points[pending.points.length - 1];
+      if (Math.hypot(pt.x - last.x, pt.y - last.y) >= 0.8) {
+        pending.points.push({ x: pt.x, y: pt.y });
+        renderCellOverlay(drag.cell);
+      }
       return;
     }
 
@@ -3789,12 +4403,27 @@
   }
 
   function onKeyDown(e) {
-    if (e.key === "Escape" && dom.resetMenu &&
-        (!dom.resetMenu.hidden || !dom.orientMenu.hidden)) {
-      closeMenus();
+    // The caption editor owns the keyboard while it is open.
+    if (state.textTarget) {
+      if (e.key === "Enter") { commitText(true); e.preventDefault(); }
+      else if (e.key === "Escape") { commitText(false); e.preventDefault(); }
       return;
     }
-    if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+    if (e.key === "Escape" && anyMenuOpen()) { closeMenus(); return; }
+    if (e.target && /input|select|textarea/i.test(e.target.tagName) ||
+        (e.target && e.target.isContentEditable)) return;
+
+    // Finishing or abandoning a shape comes before the navigation keys, so
+    // Enter never pages the stack while a polygon is half-drawn.
+    if (state.pendingMeasure) {
+      if (e.key === "Enter") { finishPending(); e.preventDefault(); return; }
+      if (e.key === "Escape") { cancelPending(); e.preventDefault(); return; }
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && state.selectedMeasurement) {
+      deleteMeasurement(state.selectedMeasurement);
+      e.preventDefault();
+      return;
+    }
     var i = state.activeCell;
     var cell = state.cells[i];
     if (!cell || cell.plane === "vr") {
@@ -4146,6 +4775,9 @@
         if (state.sculptUndo.length > 40) state.sculptUndo.shift();
         updateBoneStatus();
       }
+      if (drag && drag.mode === "trace") finishPending();
+      // An edited measurement is only worth saving once the drag has ended.
+      if (drag && drag.mode === "measure") persistMeasurements();
       state.drag = null;
     });
 
@@ -4212,6 +4844,18 @@
     undoSculpt: undoSculpt,
     clearSculpt: clearSculpt,
     cutActive: cutActive,
+    setTool: setTool,
+    measurementsFor: measurementsFor,
+    persistMeasurements: persistMeasurements,
+    restoreMeasurements: restoreMeasurements,
+    clearMeasurements: clearMeasurements,
+    deleteMeasurement: deleteMeasurement,
+    toggleMeasurementHidden: toggleMeasurementHidden,
+    finishPending: finishPending,
+    calibrationFor: calibrationFor,
+    measurementLines: measurementLines,
+    moveGrip: moveGrip,
+    hitTestMeasurement: hitTestMeasurement,
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
     cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
     cellCount: function () { return cellEls.length; },

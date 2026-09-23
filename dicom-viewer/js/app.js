@@ -146,6 +146,7 @@
     vrPreset: "bone",
     vrOpacity: 1,
 
+    huProbe: true,              // live value readout under the cursor
     layout: "quad",
     // Slices between one pane and the next on the same plane. 0 makes every
     // pane show the same slice; 1 makes a grid a filmstrip.
@@ -182,6 +183,9 @@
     dom.flipVBtn = byId("flipVBtn");
     dom.rotateBtn = byId("rotateBtn");
     dom.crosshairBtn = byId("crosshairBtn");
+    dom.huBtn = byId("huBtn");
+    dom.huReadout = byId("huReadout");
+    dom.resetMenu = byId("resetMenu");
     dom.exportBtn = byId("exportBtn");
     dom.resetBtn = byId("resetBtn");
     dom.measureList = byId("measureList");
@@ -1744,7 +1748,27 @@
       ctx.strokeStyle = colour;
       ctx.fillStyle = colour;
 
-      if (m.tool === MEAS.TOOLS.ellipse && pts.length >= 2) {
+      if (m.tool === MEAS.TOOLS.point) {
+        // A crosshair tick rather than a blob, so the pixel stays visible.
+        var c0 = pts[0], arm = 7 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(c0.x - arm, c0.y); ctx.lineTo(c0.x - 2 * dpr, c0.y);
+        ctx.moveTo(c0.x + 2 * dpr, c0.y); ctx.lineTo(c0.x + arm, c0.y);
+        ctx.moveTo(c0.x, c0.y - arm); ctx.lineTo(c0.x, c0.y - 2 * dpr);
+        ctx.moveTo(c0.x, c0.y + 2 * dpr); ctx.lineTo(c0.x, c0.y + arm);
+        ctx.stroke();
+      } else if (m.tool === MEAS.TOOLS.rect && pts.length >= 2) {
+        // Drawn through the transform so it rotates with the image.
+        var rc = planeToCanvas(t, (m.points[0].x + m.points[1].x) / 2,
+          (m.points[0].y + m.points[1].y) / 2);
+        var rw = Math.abs(m.points[1].x - m.points[0].x) * t.spacingX * t.scale;
+        var rh = Math.abs(m.points[1].y - m.points[0].y) * t.spacingY * t.scale;
+        ctx.save();
+        ctx.translate(rc.x, rc.y);
+        ctx.rotate(t.rot);
+        ctx.strokeRect(-rw / 2, -rh / 2, rw, rh);
+        ctx.restore();
+      } else if (m.tool === MEAS.TOOLS.ellipse && pts.length >= 2) {
         // Draw the ellipse through the transform so it rotates with the image.
         var c = planeToCanvas(t, (m.points[0].x + m.points[1].x) / 2, (m.points[0].y + m.points[1].y) / 2);
         var rxPlane = Math.abs(m.points[1].x - m.points[0].x) / 2;
@@ -1763,15 +1787,17 @@
         ctx.stroke();
       }
 
-      pts.forEach(function (p) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 3.5 * dpr, 0, Math.PI * 2);
-        ctx.fill();
-      });
+      if (m.tool !== MEAS.TOOLS.point) {
+        pts.forEach(function (p) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3.5 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
 
       if (isPending) return;
       var res = MEAS.evaluate(m, geom.slab, cal);
-      var unit = m.tool === MEAS.TOOLS.ellipse ? (" " + intensityUnit()).trimEnd() : "";
+      var unit = MEAS.reportsIntensity(m.tool) ? (" " + intensityUnit()).trimEnd() : "";
       var label = res.primary + unit;
       var anchor = pts[pts.length - 1];
       ctx.fillText(label, anchor.x + 8 * dpr, anchor.y - 6 * dpr);
@@ -1792,7 +1818,14 @@
     if (!pending || pending.plane !== geom.plane || pending.sliceIndex !== key) {
       pending = state.pendingMeasure = MEAS.createMeasurement(state.tool, geom.plane, key, [p]);
       state.measureCell = i;
-      renderCellOverlay(i);
+      // A one-point tool (the HU probe) is already complete.
+      if (pending.points.length >= need) {
+        state.measurements.push(pending);
+        state.selectedMeasurement = pending.id;
+        state.pendingMeasure = null;
+        renderMeasurementList();
+      }
+      renderAllOverlays();
       return;
     }
 
@@ -1853,7 +1886,7 @@
     list.forEach(function (m) {
       var slab = visibleSlabFor(m);
       var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
-      var value = res ? res.primary + (m.tool === MEAS.TOOLS.ellipse && unit ? " " + unit : "") : "—";
+      var value = res ? res.primary + (MEAS.reportsIntensity(m.tool) && unit ? " " + unit : "") : "—";
       html +=
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
         '" data-id="' + m.id + '">' +
@@ -1869,9 +1902,11 @@
   }
 
   function toolGlyph(tool) {
+    if (tool === MEAS.TOOLS.point) return "⌖";
     if (tool === MEAS.TOOLS.distance) return "↔";
     if (tool === MEAS.TOOLS.angle) return "∠";
     if (tool === MEAS.TOOLS.ellipse) return "◯";
+    if (tool === MEAS.TOOLS.rect) return "▭";
     return "•";
   }
 
@@ -2151,6 +2186,60 @@
     if (i >= 0) renderVRCell(i);
   }
 
+  /**
+   * The reset menu.
+   *
+   * One button that throws everything away is too blunt: losing a set of
+   * measurements because the zoom needed straightening is a real cost. Each
+   * kind of state resets on its own, and "everything" is spelled out.
+   */
+  function applyReset(what) {
+    var did = [];
+    if (what === "view" || what === "all") {
+      state.cells.forEach(function (cell) {
+        cell.view = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
+      });
+      if (renderer) { renderer.rotX = -1.35; renderer.rotY = 0; renderer.distance = 2.6; }
+      did.push("view");
+    }
+    if (what === "window" || what === "all") {
+      resetWindowToStudy();
+      did.push("window/level");
+    }
+    if (what === "oblique" || what === "all") {
+      resetFrames();
+      planeCache = {}; planeCacheKeys = [];
+      did.push("planes");
+    }
+    if (what === "panes" || what === "all") {
+      // Rebuild the panes this layout starts with, dropping per-pane
+      // windows, pins and offsets.
+      applyLayout(state.layout);
+      did.push("panes");
+    }
+    if (what === "measurements" || what === "all") {
+      clearMeasurements();
+      did.push("measurements");
+    }
+    syncCellControls();
+    syncSliders();
+    renderAll();
+    showToast("Reset " + did.join(", ") + ".");
+  }
+
+  /** Window/level back to what the study itself asks for. */
+  function resetWindowToStudy() {
+    var group = getCurrentGroup();
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    state.windowWidth = inst ? wwOf(inst) : 400;
+    state.windowCenter = inst ? wcOf(inst) : 40;
+    state.invert = false;
+    state.cells.forEach(function (cell) { cell.wl = null; });
+    dom.presetSelect.value = "";
+    dom.invertBtn.classList.remove("active");
+    updateWLInputs();
+  }
+
   /* ---------------------------------------------------------------------
    * View state
    * ------------------------------------------------------------------- */
@@ -2345,9 +2434,24 @@
 
     dom.exportBtn.addEventListener("click", exportActiveViewport);
 
-    dom.resetBtn.addEventListener("click", function () {
-      resetView();
-      renderAll();
+    dom.huBtn.addEventListener("click", function () {
+      state.huProbe = !state.huProbe;
+      dom.huBtn.classList.toggle("active", state.huProbe);
+      if (!state.huProbe) dom.huReadout.textContent = "";
+    });
+
+    dom.resetBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      dom.resetMenu.hidden = !dom.resetMenu.hidden;
+    });
+    dom.resetMenu.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-reset]");
+      if (!btn) return;
+      dom.resetMenu.hidden = true;
+      applyReset(btn.dataset.reset);
+    });
+    document.addEventListener("click", function (e) {
+      if (!dom.resetMenu.hidden && !e.target.closest(".menu-wrap")) dom.resetMenu.hidden = true;
     });
 
     dom.seriesToggleBtn.addEventListener("click", function () {
@@ -2576,6 +2680,7 @@
   }
 
   function onMouseMove(e) {
+    updateHuReadout(e);
     if (state.pendingMeasure && state.measureCell !== undefined) {
       measureHover(state.measureCell, e.clientX, e.clientY);
     }
@@ -2636,6 +2741,34 @@
     renderCell(drag.cell);
   }
 
+  /**
+   * Value of the pixel under the cursor, shown live in the status bar.
+   *
+   * Read from the plane's own samples, so it is the scanner's number and not
+   * whatever grey the current window happens to be painting.
+   */
+  function updateHuReadout(e) {
+    if (!dom.huReadout) return;
+    if (!state.huProbe || !state.volume) { dom.huReadout.textContent = ""; return; }
+
+    var target = e.target && e.target.closest ? e.target.closest(".vp") : null;
+    var i = target ? parseInt(target.dataset.cell, 10) : -1;
+    var cell = state.cells[i];
+    var geom = cellEls[i] && cellEls[i].geom;
+    if (!cell || cell.plane === "vr" || !geom) { dom.huReadout.textContent = ""; return; }
+
+    var p = eventToCell(i, e.clientX, e.clientY);
+    if (!p) { dom.huReadout.textContent = ""; return; }
+    var pv = MEAS.pointValue(geom.slab, p);
+    if (!pv) { dom.huReadout.textContent = ""; return; }
+
+    var unit = intensityUnit();
+    dom.huReadout.textContent =
+      (unit || "value") + " " + Math.round(pv.value) +
+      "   ·   " + cell.plane + " " + (geom.index + 1) +
+      "   ·   px " + pv.x + ", " + pv.y;
+  }
+
   function onKeyDown(e) {
     if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
     var i = state.activeCell;
@@ -2657,7 +2790,7 @@
       case "i": case "I":
         dom.invertBtn.click(); break;
       case "r": case "R":
-        resetView(); renderAll(); break;
+        applyReset("view"); break;
       case "1": setLayout("quad"); break;
       case "2": setLayout("axial"); break;
       case "3": setLayout("mpr"); break;
@@ -2912,6 +3045,7 @@
     window.addEventListener("mouseup", function () { state.drag = null; });
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
+    dom.huBtn.classList.toggle("active", state.huProbe);
     updateWLInputs();
     updateBoneStatus();
     updateStackNote();

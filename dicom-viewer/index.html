@@ -17,15 +17,15 @@
       </div>
 
       <div class="toolbar-group">
-        <label class="file-btn primary-btn">
-          📂 Open Files
+        <label class="file-btn primary-btn" title="Open DICOM files">
+          📂 Open
           <input type="file" id="fileInput" accept=".dcm,application/dicom" multiple hidden />
         </label>
-        <label class="file-btn ghost-btn">
-          📁 Open Folder
+        <label class="file-btn ghost-btn" title="Open a DICOM folder">
+          📁 Folder
           <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
         </label>
-        <button class="ghost-btn" id="clearBtn" title="Clear loaded series">🗑️ Clear</button>
+        <button class="ghost-btn" id="clearBtn" title="Clear loaded series">🗑️</button>
       </div>
 
       <div class="toolbar-group">
@@ -60,9 +60,11 @@
         <span class="tool-label">Measure</span>
         <div class="seg" id="toolSeg">
           <button class="seg-btn active" data-tool="none" title="Navigate (no measurement)">✥</button>
+          <button class="seg-btn" data-tool="point" title="HU probe — click a pixel to pin its value">⌖</button>
           <button class="seg-btn" data-tool="distance" title="Distance — click two points">↔</button>
           <button class="seg-btn" data-tool="angle" title="Angle — click three points (vertex second)">∠</button>
           <button class="seg-btn" data-tool="ellipse" title="Elliptical ROI — click two corners">◯</button>
+          <button class="seg-btn" data-tool="rect" title="Rectangular ROI — click two corners">▭</button>
         </div>
       </div>
 
@@ -72,8 +74,19 @@
         <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
         <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
         <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
+        <button class="icon-btn" id="huBtn" title="Show the value under the cursor">HU</button>
         <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
-        <button class="icon-btn" id="resetBtn" title="Reset view (R)">⤾ Reset</button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
+          <div class="menu" id="resetMenu" hidden>
+            <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
+            <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
+            <button data-reset="oblique">Straighten planes<span>undo any oblique tilt</span></button>
+            <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
+            <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
+            <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
+          </div>
+        </div>
       </div>
 
       <div class="toolbar-group toolbar-group-right">
@@ -214,6 +227,9 @@
               <button class="ghost-btn full" id="clearMeasureBtn">Clear all</button>
             </div>
             <p class="hint-text" id="calibrationNote"></p>
+            <p class="hint-text">Probe pins a single pixel's value. Ellipse and rectangle
+              report mean ± SD, min, max and area from the pixel values, never from the
+              displayed image.</p>
           </section>
 
           <section class="tool-section">
@@ -240,6 +256,7 @@
     <!-- ================= Status bar ================= -->
     <footer class="statusbar">
       <span id="statusText" class="muted">Ready</span>
+      <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
       <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique · Double-click: expand pane</span>
     </footer>

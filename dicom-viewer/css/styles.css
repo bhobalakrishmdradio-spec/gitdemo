@@ -42,8 +42,15 @@ button, input, select { font-family: inherit; font-size: 13px; }
 .toolbar {
   display: flex;
   align-items: center;
-  /* Seven layout choices plus the rest fit on one row at laptop widths; the
-     vertical space a wrapped toolbar costs comes straight off a 4x4 grid. */
+  /* The toolbar must never take a second row. The height it would steal
+     comes straight off the viewport grid, and at a 4x4 that is enough to
+     shrink the panes until adjacent slices downscale to the same pixels —
+     a real bug that is invisible until you compare two panes. So it never
+     wraps; on a narrow window it scrolls sideways instead. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   gap: 10px;
   padding: 8px 14px;
   background: var(--panel-bg);
@@ -55,7 +62,8 @@ button, input, select { font-family: inherit; font-size: 13px; }
   font-weight: 600; font-size: 15px; color: var(--accent); margin-right: 4px;
 }
 .brand-icon { font-size: 18px; }
-.toolbar-group { display: flex; align-items: center; gap: 6px; }
+.toolbar-group { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.toolbar-brand { flex: 0 0 auto; }
 .toolbar-group-right { margin-left: auto; }
 .tool-label { color: var(--text-muted); margin-right: 2px; font-size: 12px; }
 
@@ -286,6 +294,26 @@ select, input[type="number"] {
 }
 .viewport-empty-icon { font-size: 48px; opacity: 0.5; }
 
+/* ---------- Dropdown menus ---------- */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  min-width: 250px; padding: 4px;
+  background: var(--panel-bg); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+}
+.menu[hidden] { display: none; }
+.menu button {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 7px 10px; border: none; border-radius: 4px;
+  background: transparent; color: var(--text); font: inherit; font-size: 12px;
+}
+.menu button span {
+  display: block; color: var(--text-muted); font-size: 10.5px; margin-top: 1px;
+}
+.menu button:hover { background: var(--accent-dim); }
+.menu button.danger:hover { background: rgba(255, 93, 93, 0.22); }
+
 /* ---------- Status bar ---------- */
 .statusbar {
   display: flex; align-items: center; gap: 12px;
@@ -293,6 +321,11 @@ select, input[type="number"] {
   padding: 6px 14px; font-size: 12px;
 }
 .statusbar-spacer { flex: 1; }
+.hu-readout {
+  font-variant-numeric: tabular-nums; color: var(--accent);
+  padding-left: 12px; margin-left: 12px; border-left: 1px solid var(--border);
+}
+.hu-readout:empty { display: none; }
 
 /* ---------- Toast / busy ---------- */
 .toast {
@@ -329,6 +362,12 @@ select, input[type="number"] {
 }
 
 /* ---------- Responsive ---------- */
+/* The toolbar must stay on one row: a second row comes straight off the
+   viewport grid, and at a 4x4 that is enough to blur adjacent slices
+   together. The group labels are the first thing to go. */
+@media (max-width: 1700px) {
+  .tool-label { display: none; }
+}
 @media (max-width: 1100px) {
   .panel-left { width: 160px; }
   .panel-right { width: 230px; }

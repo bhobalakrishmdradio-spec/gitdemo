@@ -115,10 +115,17 @@ covering the image with text.
 - **3D MIP** through the whole volume.
 - Adjustable opacity; drag to rotate, wheel to zoom.
 
-### Measurements
+### Hounsfield Units and measurements
 
-- **Distance**, **angle**, and **elliptical ROI** with mean ± SD, min, max,
-  area and pixel count.
+- **Live HU readout** — the value of the pixel under the cursor, shown in the
+  status bar with its plane, slice and pixel coordinates. Toggle it with the
+  **HU** button. It reads the plane's own samples, so it is the scanner's
+  number, not whatever grey the current window happens to be painting.
+- **HU probe** (`⌖`) — one click pins a marker recording the value of that
+  single pixel. It reads one pixel rather than interpolating, because an
+  interpolated "HU" is a number the scanner never measured.
+- **Distance**, **angle**, **elliptical ROI** and **rectangular ROI**. Both
+  ROIs report mean ± SD, min, max, area and pixel count.
 - Statistics are computed from the **pixel values of the plane**, never from
   the displayed image — changing window/level or invert cannot change a
   reported number.
@@ -139,6 +146,21 @@ covering the image with text.
   positions and excluded mismatched slices are all reported rather than
   silently reformatted.
 - **PNG export** of the active viewport, with the overlays as displayed.
+
+### Reset options
+
+The **Reset ▾** menu resets one kind of state at a time, because a single
+button that throws everything away is too blunt — losing a set of
+measurements because the zoom needed straightening is a real cost.
+
+| Option | What it restores |
+| --- | --- |
+| Reset view | Zoom, pan, rotation, flip, and the 3D camera |
+| Reset window/level | The study's own Window Width/Center from the DICOM header, clearing invert and any per-pane windows |
+| Straighten planes | Removes any oblique tilt |
+| Reset panes | Rebuilds the current layout's panes, dropping per-pane windows, pins and stack offsets |
+| Clear measurements | Removes every marker and ROI |
+| Reset everything | All of the above; the study stays loaded |
 - Duplicate instances (same SOP Instance UID) are ignored on re-import and
   reported.
 
@@ -222,7 +244,7 @@ reconstructed.
 | `Page Up` / `Page Down` | Jump 10 slices |
 | `1` … `7` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 · 4×4 |
 | `I` | Invert grayscale |
-| `R` | Reset views |
+| `R` | Reset the view (zoom, pan, rotation, flip) |
 
 Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
@@ -259,6 +281,10 @@ in-plane, 2 mm slices):
 | ROI mean / SD | 200.00 / 0.00 HU | 200.00 / 0.00 HU |
 | ROI area | 78.54 mm² | 78.54 mm² |
 | ROI after changing window | unchanged | unchanged |
+| Rectangular ROI, 10×10 px at 1 mm | 100 mm², 100 px | 100.000000 mm², 100 px |
+| Inscribed ellipse vs. that rectangle | π/4 = 78.5% of the area | 78.5% |
+| HU readout over known −1000 / 300 / 900 HU regions | those values | −1000 / 299 / 900 |
+| HU readout after re-windowing and inverting | unchanged | unchanged |
 | Plane↔canvas round-trip (all rotations/flips) | 0 px | < 1e-14 px |
 
 Oblique reslicing is checked two ways. Against the orthogonal reslicer, an

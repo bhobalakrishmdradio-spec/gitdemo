@@ -13,8 +13,8 @@ radiologist's report and your official imaging system for clinical decisions.
 
 ### Viewing
 
-- **Open Files / Open Folder** — load one or many `.dcm` files at once
-  (drag-and-drop onto the window also works, including whole folders).
+- **Open / Folder** — load one or many `.dcm` files at once, or a whole
+  directory (drag-and-drop onto the window also works, including folders).
 - **Automatic series grouping** — instances are grouped by Series Instance
   UID and sorted by slice position / instance number.
 - **Window/Level** — left-drag on any plane: **right** widens the window,
@@ -30,7 +30,7 @@ radiologist's report and your official imaging system for clinical decisions.
   visible on a lung window (W1500) throws a brain window (W80) past its own
   width in a twitch — so the gesture feels identical on every preset, and the
   width cannot be slammed to zero by one long drag.
-- **Invert, zoom, pan, crosshair**, and a per-viewport slice scrubber.
+- **Invert, zoom, pan, crosshair**, and a per-pane slice scrubber.
 
 ### Multiplanar reconstruction (MPR)
 
@@ -44,12 +44,12 @@ radiologist's report and your official imaging system for clinical decisions.
 - **Oblique MPR** — Alt+drag in any plane to swing its crosshair. The plane
   you drag in holds still while the other two cuts tilt to follow, so you can
   line a reformat up with a vessel, a disc space or an angled fracture. The
-  tilt angle of each plane is shown in the viewport and in the Oblique MPR
+  tilt angle of each plane is shown in the pane and in the Oblique MPR
   panel, and **Straighten planes** puts everything back square.
   Oblique cuts are trilinear-sampled at the volume's finest voxel pitch;
   while the planes are square the fast axis-aligned path is used instead, so
   you pay for resampling only when you actually tilt something.
-- **Layouts**: 2×2 (three planes + 3D), single pane, three-up MPR, 3D alone,
+- **Layouts**: 2×2 (three planes + 3D), 1×1 single pane, three-up MPR, 3D alone,
   and the larger grids **1×2**, **2×3** and **4×4**. Double-click a pane to
   expand it and again to go back; keys `1`–`7` switch layouts.
 
@@ -119,8 +119,15 @@ covering the image with text.
 
 - **Live HU readout** — the value of the pixel under the cursor, shown in the
   status bar with its plane, slice and pixel coordinates. Toggle it with the
-  **HU** button. It reads the plane's own samples, so it is the scanner's
-  number, not whatever grey the current window happens to be painting.
+  **HU** button. It reads the plane's own samples, so window/level and invert
+  cannot change it.
+
+  It also says what the number *is*. On a thin slice that is the voxel's own
+  value, labelled `HU`. Once the slab is thicker than one voxel the sample is
+  a projection along the slab, so it reads `HU (MIP)`, `(MinIP)` or `(Avg)` —
+  a 10 mm MIP can sit a few tens of HU above the centre slice, and calling
+  that "the HU" would overstate it. With bone cut on it adds `(bone cut)`,
+  since masked voxels read as air.
 - **HU probe** (`⌖`) — one click pins a marker recording the value of that
   single pixel. It reads one pixel rather than interpolating, because an
   interpolated "HU" is a number the scanner never measured.
@@ -145,7 +152,9 @@ covering the image with text.
   changing Image Orientation, tilted/non-axial acquisitions, missing slice
   positions and excluded mismatched slices are all reported rather than
   silently reformatted.
-- **PNG export** of the active viewport, with the overlays as displayed.
+- **PNG export** of the active pane, with the overlays as displayed.
+- Duplicate instances (same SOP Instance UID) are ignored on re-import and
+  reported.
 
 ### Reset options
 
@@ -161,8 +170,6 @@ measurements because the zoom needed straightening is a real cost.
 | Reset panes | Rebuilds the current layout's panes, dropping per-pane windows, pins and stack offsets |
 | Clear measurements | Removes every marker and ROI |
 | Reset everything | All of the above; the study stays loaded |
-- Duplicate instances (same SOP Instance UID) are ignored on re-import and
-  reported.
 
 ## Relationship to the base plan
 
@@ -173,7 +180,7 @@ educational use:
 | Plan phase | Status here |
 | --- | --- |
 | Phase 1 — Import and display | Done: import, Study/Series grouping, real pixel decoding, thumbnails, navigation, window/level, zoom, pan, rotate, flip, invert, reset |
-| Phase 2 — Measurements and comparison | Done: distance, angle, ellipse ROI with statistics; searchable tag panel; PNG export; multi-pane layouts with per-pane window, plane and slice, which covers side-by-side comparison **within** a series. **Not done:** comparing two different series at once, persistent archive |
+| Phase 2 — Measurements and comparison | Done: HU probe, distance, angle, elliptical and rectangular ROI with statistics; live HU readout; searchable tag panel; PNG export; multi-pane layouts with per-pane window, plane and slice, which covers side-by-side comparison **within** a series. **Not done:** comparing two different series at once, persistent archive |
 | Phase 3 — Reconstruction | Done: orthogonal **and oblique** MPR with linked crosshairs, slab projections (Average/MIP/MinIP), volume rendering. **Not done:** curved-planar reformat |
 | Phase 4 — PACS | Not applicable to a browser build with no network access by design |
 | Phase 5 — Advanced workflows | Not started: fusion, PET/SUV, time-intensity curves, DSA, STL export |
@@ -207,7 +214,7 @@ views still work and the 3D panel says so.
 CT scanners and PACS systems typically let you export a study to a CD/USB
 drive or a ZIP file as standard **DICOM Part 10** files (often under a folder
 named `DICOM` with files that have no extension or a `.dcm` extension). Point
-**Open Folder** at that folder, or drag the whole folder onto the window.
+**📁 Folder** at that folder, or drag the whole folder onto the window.
 
 MPR and 3D need a **stack** — a single image can be viewed but not
 reconstructed.

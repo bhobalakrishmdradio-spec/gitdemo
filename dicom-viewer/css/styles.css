@@ -55,7 +55,6 @@ button, input, select { font-family: inherit; font-size: 13px; }
   padding: 8px 14px;
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
 }
 .toolbar-brand {
   display: flex; align-items: center; gap: 8px;
@@ -295,9 +294,11 @@ select, input[type="number"] {
 .viewport-empty-icon { font-size: 48px; opacity: 0.5; }
 
 /* ---------- Dropdown menus ---------- */
-.menu-wrap { position: relative; display: inline-flex; }
+.menu-wrap { display: inline-flex; }
 .menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  /* Fixed, and a sibling of the toolbar rather than a child: the toolbar
+     scrolls, which makes it clip its own children. */
+  position: fixed; z-index: 60;
   min-width: 250px; padding: 4px;
   background: var(--panel-bg); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0,0,0,0.55);

@@ -528,6 +528,24 @@
     return huUnitOf(group.slices[0].instance);
   }
 
+  /**
+   * How to label an intensity read off a plane.
+   *
+   * Once a slab is thicker than one voxel the samples are a projection —
+   * the maximum, minimum or mean along the slab — not the value of any one
+   * voxel. Calling a 10 mm MIP reading "HU" overstates it by however much
+   * the brightest voxel in the slab exceeds the one on the centre slice, so
+   * the projection is named instead.
+   */
+  function intensitySuffix(slab) {
+    var unit = intensityUnit();
+    var parts = [];
+    if (unit) parts.push(unit);
+    if (slab && slab.samples > 1) parts.push("(" + modeLabel(state.projectionMode) + ")");
+    if (state.boneCut) parts.push("(bone cut)");
+    return parts.join(" ");
+  }
+
   // A Window Center of 0 is a legitimate value, so these can't use `||`.
   function wwOf(instance) {
     var v = instance.fileWW;
@@ -1797,7 +1815,7 @@
 
       if (isPending) return;
       var res = MEAS.evaluate(m, geom.slab, cal);
-      var unit = MEAS.reportsIntensity(m.tool) ? (" " + intensityUnit()).trimEnd() : "";
+      var unit = MEAS.reportsIntensity(m.tool) ? (" " + intensitySuffix(geom.slab)).trimEnd() : "";
       var label = res.primary + unit;
       var anchor = pts[pts.length - 1];
       ctx.fillText(label, anchor.x + 8 * dpr, anchor.y - 6 * dpr);
@@ -1881,12 +1899,12 @@
       dom.measureList.innerHTML = '<p class="muted small">No measurements yet.</p>';
       return;
     }
-    var unit = intensityUnit();
     var html = "";
     list.forEach(function (m) {
       var slab = visibleSlabFor(m);
       var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
-      var value = res ? res.primary + (MEAS.reportsIntensity(m.tool) && unit ? " " + unit : "") : "—";
+      var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
+      var value = res ? res.primary + (unit ? " " + unit : "") : "—";
       html +=
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
         '" data-id="' + m.id + '">' +
@@ -2193,6 +2211,18 @@
    * measurements because the zoom needed straightening is a real cost. Each
    * kind of state resets on its own, and "everything" is spelled out.
    */
+  /** Place the menu under its button, kept inside the viewport. */
+  function openResetMenu() {
+    var menu = dom.resetMenu;
+    menu.hidden = false;
+    var btn = dom.resetBtn.getBoundingClientRect();
+    var box = menu.getBoundingClientRect();
+    var left = Math.max(8, Math.min(btn.right - box.width, window.innerWidth - box.width - 8));
+    var top = Math.min(btn.bottom + 6, window.innerHeight - box.height - 8);
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(Math.max(8, top)) + "px";
+  }
+
   function applyReset(what) {
     var did = [];
     if (what === "view" || what === "all") {
@@ -2442,8 +2472,10 @@
 
     dom.resetBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      dom.resetMenu.hidden = !dom.resetMenu.hidden;
+      if (dom.resetMenu.hidden) openResetMenu();
+      else dom.resetMenu.hidden = true;
     });
+    window.addEventListener("resize", function () { dom.resetMenu.hidden = true; });
     dom.resetMenu.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-reset]");
       if (!btn) return;
@@ -2451,7 +2483,10 @@
       applyReset(btn.dataset.reset);
     });
     document.addEventListener("click", function (e) {
-      if (!dom.resetMenu.hidden && !e.target.closest(".menu-wrap")) dom.resetMenu.hidden = true;
+      if (dom.resetMenu.hidden) return;
+      if (!e.target.closest(".menu-wrap") && !e.target.closest("#resetMenu")) {
+        dom.resetMenu.hidden = true;
+      }
     });
 
     dom.seriesToggleBtn.addEventListener("click", function () {
@@ -2762,14 +2797,18 @@
     var pv = MEAS.pointValue(geom.slab, p);
     if (!pv) { dom.huReadout.textContent = ""; return; }
 
-    var unit = intensityUnit();
+    var suffix = intensitySuffix(geom.slab);
     dom.huReadout.textContent =
-      (unit || "value") + " " + Math.round(pv.value) +
+      Math.round(pv.value) + " " + (suffix || "(stored value)") +
       "   ·   " + cell.plane + " " + (geom.index + 1) +
       "   ·   px " + pv.x + ", " + pv.y;
   }
 
   function onKeyDown(e) {
+    if (e.key === "Escape" && dom.resetMenu && !dom.resetMenu.hidden) {
+      dom.resetMenu.hidden = true;
+      return;
+    }
     if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
     var i = state.activeCell;
     var cell = state.cells[i];

@@ -31,7 +31,7 @@
       <div class="toolbar-group">
         <span class="tool-label">Layout</span>
         <div class="seg" id="layoutSeg">
-          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D  (1)">2×2</button>
+          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D (1)">2×2</button>
           <button class="seg-btn" data-layout="axial" title="Single pane (2)">1×1</button>
           <button class="seg-btn" data-layout="mpr" title="Three MPR planes (3)">MPR</button>
           <button class="seg-btn" data-layout="vr" title="3D only (4)">3D</button>
@@ -74,18 +74,10 @@
         <button class="icon-btn" id="flipVBtn" title="Flip vertical">↕️</button>
         <button class="icon-btn" id="rotateBtn" title="Rotate 90°">⟳</button>
         <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
-        <button class="icon-btn" id="huBtn" title="Show the value under the cursor">HU</button>
+        <button class="icon-btn" id="huBtn" title="Show the value under the cursor in the status bar">HU</button>
         <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
         <div class="menu-wrap">
           <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
-          <div class="menu" id="resetMenu" hidden>
-            <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
-            <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
-            <button data-reset="oblique">Straighten planes<span>undo any oblique tilt</span></button>
-            <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
-            <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
-            <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
-          </div>
         </div>
       </div>
 
@@ -262,6 +254,14 @@
     </footer>
   </div>
 
+  <div class="menu" id="resetMenu" hidden>
+    <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
+    <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
+    <button data-reset="oblique">Straighten planes<span>undo any oblique tilt</span></button>
+    <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
+    <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
+    <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
+  </div>
   <div id="toast" class="toast" hidden></div>
   <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><span id="busyText">Working…</span></div></div>
 

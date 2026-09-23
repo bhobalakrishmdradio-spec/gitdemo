@@ -220,7 +220,7 @@
       var pv = pointValue(slab, pts[0]);
       if (!pv) return { primary: "—", detail: null, raw: null };
       return {
-        primary: formatNumber(pv.value),
+        primary: formatIntensity(pv.value),
         detail: "pixel " + pv.x + ", " + pv.y,
         raw: pv,
       };
@@ -250,6 +250,16 @@
   function formatValue(v, unit) {
     if (!isFinite(v)) return "—";
     return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + " " + unit;
+  }
+
+  /**
+   * Intensities, not areas: a stored value is usually an integer, and
+   * formatNumber's "one decimal below 100" rule turns -1000 into "-1000.0",
+   * implying a precision the sample does not have.
+   */
+  function formatIntensity(v) {
+    if (!isFinite(v)) return "—";
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
   }
 
   function formatNumber(v) {
@@ -283,5 +293,6 @@
     evaluate: evaluate,
     pointsNeeded: pointsNeeded,
     formatValue: formatValue,
+    formatIntensity: formatIntensity,
   };
 })(typeof window !== "undefined" ? window : globalThis);

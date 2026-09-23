@@ -42,15 +42,17 @@ button, input, select { font-family: inherit; font-size: 13px; }
 .toolbar {
   display: flex;
   align-items: center;
-  /* The toolbar must never take a second row. The height it would steal
-     comes straight off the viewport grid, and at a 4x4 that is enough to
-     shrink the panes until adjacent slices downscale to the same pixels —
-     a real bug that is invisible until you compare two panes. So it never
-     wraps; on a narrow window it scrolls sideways instead. */
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  /* Every toolbar control must be reachable by a cursor at every window
+     width. Scrolling the bar sideways looks tidier and fails that: a
+     button scrolled past the right edge is still in the DOM, still passes
+     a click driven by script, and cannot be pressed by a person — which is
+     how the Tools and Report toggles went unclickable at 1920px.
+     So it wraps. A second row costs a little grid height, and only on a
+     window too narrow to hold one; being unable to open the report costs
+     more. Controls that are not needed every minute live in the Tools
+     panel instead, which is what keeps it to one row in practice. */
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 10px;
   padding: 8px 14px;
   background: var(--panel-bg);
@@ -272,12 +274,19 @@ select, input[type="number"] {
 .vp-overlay {
   position: absolute; z-index: 5; font-size: 11px; color: var(--overlay-text);
   line-height: 1.45; text-shadow: 0 1px 2px rgba(0,0,0,0.9);
-  pointer-events: none; white-space: pre;
+  pointer-events: none;
+  /* Newlines are content here, so `pre` stays; the cap and the clip are what
+     stop a long patient name sliding under the pane's own controls in the
+     middle of the top edge and leaving two strings overlapping. */
+  white-space: pre;
+  max-width: 30%; overflow: hidden;
 }
 .vp-tl { top: 6px; left: 8px; }
 .vp-tr { top: 6px; right: 8px; text-align: right; }
-.vp-bl { bottom: 26px; left: 8px; }
-.vp-br { bottom: 26px; right: 8px; text-align: right; }
+/* The bottom corners carry short numbers, so they can have more room. */
+.vp-bl { bottom: 26px; left: 8px; max-width: 45%; }
+.vp-br { bottom: 26px; right: 8px; text-align: right; max-width: 45%; }
+
 /* Per-pane controls: which view it shows, its window, and slice linking.
    Dimmed until the pane is hovered or active so they stay out of the way. */
 .vp-bar {
@@ -302,7 +311,7 @@ select, input[type="number"] {
 .vp-link { opacity: 0.55; }
 .vp-link.on { opacity: 1; color: #ffd24a; border-color: #ffd24a; }
 
-/* A 4x4 grid has no room for the patient banner or the big letters. */
+/* A small pane has no room for the patient banner or the big letters. */
 .vp.compact .vp-tl, .vp.compact .vp-tr { display: none; }
 .vp.compact .vp-overlay { font-size: 10px; }
 .vp.compact .vp-bl, .vp.compact .vp-br { bottom: 20px; }
@@ -394,10 +403,15 @@ select, input[type="number"] {
 }
 .menu button:hover { background: var(--accent-dim); }
 .menu button.danger:hover { background: rgba(255, 93, 93, 0.22); }
+.menu button:disabled { opacity: 0.4; cursor: default; }
+.menu button:disabled:hover { background: transparent; }
 .menu button.on { color: var(--accent); }
 .menu button.on::after { content: " ✓"; }
 .menu button.active { color: var(--accent); background: var(--accent-dim); }
-.menu-wide { min-width: 275px; max-height: 78vh; overflow-y: auto; }
+/* max-height is set when the menu opens, from the room actually below the
+   button; overflow lets a tall menu scroll rather than run off the screen. */
+.menu { overflow-y: auto; }
+.menu-wide { min-width: 275px; }
 .menu-head {
   padding: 7px 10px 3px; font-size: 10px; letter-spacing: 0.07em;
   text-transform: uppercase; color: var(--text-muted);
@@ -452,13 +466,16 @@ select, input[type="number"] {
 }
 
 /* ---------- Responsive ---------- */
-/* The toolbar must stay on one row: a second row comes straight off the
-   viewport grid, and at a 4x4 that is enough to blur adjacent slices
-   together. The group labels are the first thing to go. */
+/* The panel toggles are the way back to a hidden panel, so they keep their
+   place at the end of the bar however it wraps. */
+.toolbar-group-right { margin-left: auto; }
+
+/* The toolbar should stay on one row where it fits, because a second row
+   comes off the viewport grid. The group labels are the first thing to go. */
 @media (max-width: 1700px) {
   .tool-label { display: none; }
 }
-/* Tighten the controls before the toolbar has to start scrolling. */
+/* Tighten the controls before the toolbar has to wrap. */
 @media (max-width: 1520px) {
   .toolbar { gap: 7px; padding: 8px 10px; }
   .toolbar-group { gap: 4px; }

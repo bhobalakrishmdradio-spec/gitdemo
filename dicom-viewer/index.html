@@ -12,105 +12,38 @@
     <!-- ================= Toolbar ================= -->
     <header class="toolbar">
       <div class="toolbar-group">
-        <label class="file-btn primary-btn" title="Open DICOM files">
-          📂 Open
-          <input type="file" id="fileInput" accept=".dcm,application/dicom" multiple hidden />
-        </label>
-        <label class="file-btn ghost-btn" title="Open a DICOM folder">
-          📁 Folder
-          <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
-        </label>
-        <button class="ghost-btn" id="clearBtn" title="Clear loaded series">🗑️</button>
+        <button class="icon-btn primary-btn" id="openBtn" title="Open DICOM files or a folder">📂 Open ▾</button>
+        <input type="file" id="fileInput" accept=".dcm,application/dicom" multiple hidden />
+        <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
       </div>
 
       <div class="toolbar-group">
-        <span class="tool-label">Layout</span>
-        <div class="seg" id="layoutSeg">
-          <button class="seg-btn active" data-layout="quad" title="Axial · Coronal · Sagittal · 3D (1)">2×2</button>
-          <button class="seg-btn" data-layout="axial" title="Single pane (2)">1×1</button>
-          <button class="seg-btn" data-layout="mpr" title="Three MPR planes (3)">MPR</button>
-          <button class="seg-btn" data-layout="vr" title="3D only (4)">3D</button>
-          <span class="seg-sep"></span>
-          <button class="seg-btn" data-layout="1x2" title="Two panes side by side (5)">1×2</button>
-          <button class="seg-btn" data-layout="2x3" title="Six panes, 2 rows of 3 (6)">2×3</button>
-        </div>
-        <select id="planeFill" title="Which plane the panes show">
-          <option value="mix">Mixed</option>
-          <option value="axial">Axial</option>
-          <option value="coronal">Coronal</option>
-          <option value="sagittal">Sagittal</option>
-        </select>
+        <button class="icon-btn" id="layoutBtn" title="Choose a layout and which plane fills it">▦ 2×2 ▾</button>
+        <button class="icon-btn" id="windowBtn" title="Window presets and greyscale">◐ Window ▾</button>
       </div>
 
       <div class="toolbar-group">
-        <span class="tool-label">Window</span>
-        <select id="presetSelect">
-          <option value="">Custom</option>
-          <option value="lung">Lung 1500/-600</option>
-          <option value="bone">Bone 2000/480</option>
-          <option value="brain">Brain 80/40</option>
-          <option value="soft">Soft 400/40</option>
-          <option value="abdomen">Abdomen 400/50</option>
-          <option value="mediastinum">Mediast. 350/50</option>
-          <option value="angio">Angio 600/150</option>
-        </select>
+        <button class="icon-btn active" id="navBtn" data-tool="none" title="Navigate — drag a measurement's handle to reshape it (N)">✥</button>
+        <button class="icon-btn" id="toolMoreBtn" title="Measure and annotate">📏 Measure ▾</button>
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
-        <select id="cineSpeed" title="Cine speed">
-          <option value="5">5 fps</option>
-          <option value="12" selected>12 fps</option>
-          <option value="25">25 fps</option>
-          <option value="40">40 fps</option>
-        </select>
-        <button class="icon-btn" id="cineDirBtn" title="Play in reverse">⇄</button>
-        <button class="icon-btn active" id="cineLoopBtn" title="Loop at the end of the stack">↻</button>
-      </div>
-
-      <div class="toolbar-group">
-        <span class="tool-label">Stack</span>
-        <div class="seg" id="stackSeg">
-          <button class="seg-btn" data-step="0" title="Every repeated pane shows the same slice">Same</button>
-          <button class="seg-btn active" data-step="1" title="Repeated panes step one slice apart">1</button>
-          <button class="seg-btn" data-step="2" title="Repeated panes step two slices apart">2</button>
-          <button class="seg-btn" data-step="5" title="Repeated panes step five slices apart">5</button>
-          <button class="seg-btn" data-step="10" title="Repeated panes step ten slices apart">10</button>
-        </div>
-      </div>
-
-      <div class="toolbar-group">
-        <span class="tool-label">Measure</span>
-        <div class="seg" id="toolSeg">
-          <button class="seg-btn active" data-tool="none" title="Navigate (no measurement)">✥</button>
-          <button class="seg-btn" data-tool="point" title="HU probe — click a pixel to pin its value">⌖</button>
-          <button class="seg-btn" data-tool="distance" title="Distance — click two points">↔</button>
-          <button class="seg-btn" data-tool="angle" title="Angle — click three points (vertex second)">∠</button>
-          <button class="seg-btn" data-tool="ellipse" title="Elliptical ROI — click two corners">◯</button>
-          <button class="seg-btn" data-tool="rect" title="Rectangular ROI — click two corners">▭</button>
-          <button class="seg-btn" data-tool="sculpt" title="Sculpt — drag to cut tissue away by hand">✂</button>
-        </div>
-        <button class="icon-btn" id="toolMoreBtn" title="More measurement and annotation tools">▾</button>
-      </div>
-
-      <div class="toolbar-group">
-        <button class="icon-btn" id="invertBtn" title="Invert grayscale (I)">🌗</button>
-        <div class="menu-wrap">
-          <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
-        </div>
-        <button class="icon-btn" id="crosshairBtn" title="Toggle crosshair / linked planes">✛</button>
+        <button class="icon-btn" id="crosshairBtn" title="Crosshair: show where the other planes cut this one">✛</button>
         <button class="icon-btn active" id="linkBtn" title="Link panes on different series by patient position">🔗</button>
-        <button class="icon-btn" id="huBtn" title="Show the value under the cursor in the status bar">HU</button>
-        <button class="icon-btn" id="exportBtn" title="Export the active pane as a PNG">⬇</button>
-        <div class="menu-wrap">
-          <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
-        </div>
+        <button class="icon-btn" id="focusBtn" title="Focus: click a point and every pane, plane and series moves to it (F)">🎯</button>
+        <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
+      </div>
+
+      <div class="toolbar-group">
+        <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
+        <button class="icon-btn" id="moreBtn" title="More display and export options">⋯ More ▾</button>
+        <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
       </div>
 
       <div class="toolbar-group toolbar-group-right">
-        <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱</button>
-        <button class="icon-btn" id="reportToggleBtn" title="Toggle the report panel">📝</button>
-        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️</button>
+        <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱 Series</button>
+        <button class="icon-btn" id="reportToggleBtn" title="Toggle the report panel">📝 Report</button>
+        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️ Tools</button>
       </div>
     </header>
 
@@ -256,8 +189,9 @@
               <button class="ghost-btn" id="sculptUndoBtn">Undo stroke</button>
               <button class="ghost-btn" id="sculptClearBtn">Clear sculpting</button>
             </div>
-            <p class="hint-text">Pick <strong>✂</strong> in the Measure group, then drag on any
-              plane to cut tissue away by hand. The 3D view follows.</p>
+            <p class="hint-text">Pick <strong>✂ Sculpt</strong> from the
+              <strong>📏 Measure</strong> menu, then drag on any plane to cut tissue away
+              by hand. The 3D view follows.</p>
           </section>
 
           <section class="tool-section">
@@ -289,9 +223,53 @@
 
           <section class="tool-section">
             <h4>Panes</h4>
+            <div class="field-row">
+              <label>Stack</label>
+              <div class="seg" id="stackSeg">
+                <button class="seg-btn" data-step="0" title="Every repeated pane shows the same slice">Same</button>
+                <button class="seg-btn active" data-step="1" title="Repeated panes step one slice apart">1</button>
+                <button class="seg-btn" data-step="2" title="Repeated panes step two slices apart">2</button>
+                <button class="seg-btn" data-step="5" title="Repeated panes step five slices apart">5</button>
+                <button class="seg-btn" data-step="10" title="Repeated panes step ten slices apart">10</button>
+              </div>
+            </div>
             <p class="hint-text" id="stackNote"></p>
-            <p class="hint-text">Set the spacing with the <strong>Stack</strong> buttons in the toolbar.
-              Fill a grid with one plane using the selector beside the layout buttons.</p>
+            <p class="hint-text">Fill a grid with one plane from the layout menu, which
+              turns any grid into a filmstrip of consecutive slices.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>Cine</h4>
+            <div class="field-row">
+              <label for="cineSpeed">Speed</label>
+              <select id="cineSpeed" title="Cine speed">
+                <option value="5">5 fps</option>
+                <option value="12" selected>12 fps</option>
+                <option value="25">25 fps</option>
+                <option value="40">40 fps</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <button class="ghost-btn" id="cineDirBtn" title="Play in reverse">⇄ Reverse</button>
+              <button class="ghost-btn active" id="cineLoopBtn" title="Loop at the end of the stack">↻ Loop</button>
+            </div>
+            <p class="hint-text">Press <strong>▶</strong> in the toolbar to play. With loop
+              off, playback stops on the last slice instead of wrapping.</p>
+          </section>
+
+          <section class="tool-section">
+            <h4>Focus Point</h4>
+            <div class="field-row">
+              <button class="ghost-btn" id="focusPickBtn">Pick a point</button>
+              <button class="ghost-btn" id="focusGoBtn" disabled>Go to focus</button>
+              <button class="ghost-btn danger" id="focusClearBtn">Clear</button>
+            </div>
+            <p class="hint-text" id="focusNote"></p>
+            <p class="hint-text">A solid ring marks the point on panes whose cut contains
+              it; a dashed ring shows how far off the cut it is and which way to scroll.
+              Other series are matched in-plane only when they were acquired in the same
+              orientation — otherwise just the slice level is matched, and the note above
+              says so.</p>
           </section>
 
           <section class="tool-section">
@@ -311,8 +289,7 @@
               <p class="muted small">No measurements yet.</p>
             </div>
             <div class="field-row">
-              <button class="ghost-btn" id="hideAnnotBtn">Hide all markers</button>
-              <button class="ghost-btn danger" id="clearMeasureBtn">Delete all</button>
+              <button class="ghost-btn danger full" id="clearMeasureBtn">Delete all</button>
             </div>
             <p class="hint-text" id="calibrationNote"></p>
             <p class="hint-text">Probe pins a single pixel's value. Every ROI reports
@@ -320,7 +297,8 @@
               the displayed image. With <strong>✥ Navigate</strong> selected, drag a
               handle to reshape a measurement or its centre grip to move it; with a
               drawing tool selected, every click places a new point. Hiding is not
-              deleting.</p>
+              deleting: the eye beside each row hides one, and
+              <strong>⋯ More</strong> hides them all at once.</p>
           </section>
 
           <section class="tool-section">
@@ -356,7 +334,7 @@
       <span id="statusText" class="muted">Ready</span>
       <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique · Double-click: expand pane</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
     </footer>
   </div>
 
@@ -367,6 +345,42 @@
     <button data-orient="fliph">Flip horizontal<span>mirror left / right</span></button>
     <button data-orient="flipv">Flip vertical<span>mirror up / down</span></button>
     <button data-orient="upright">Straighten<span>clear rotation and flips</span></button>
+  </div>
+  <div class="menu" id="openMenu" hidden>
+    <button data-open="files">📂 Open files…<span>choose one or more DICOM files</span></button>
+    <button data-open="folder">📁 Open folder…<span>a whole study directory</span></button>
+    <button data-open="clear" class="danger">🗑️ Clear loaded series<span>removes the images, not saved reports</span></button>
+  </div>
+  <div class="menu" id="windowMenu" hidden>
+    <div class="menu-head">Preset</div>
+    <div id="windowPresets"></div>
+    <div class="menu-head">Greyscale</div>
+    <button data-window="invert">Invert<span>display only — measured values do not change</span></button>
+    <button data-window="reset">Back to the study's own W/L<span>from the DICOM header</span></button>
+  </div>
+  <div class="menu" id="moreMenu" hidden>
+    <div class="menu-head">Readout</div>
+    <button data-more="hu">Value under the cursor<span>live readout in the status bar</span></button>
+    <button data-more="markers">Measurements and annotations<span>show or hide every marker</span></button>
+    <div class="menu-head">Focus point</div>
+    <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (G)</span></button>
+    <button data-more="focusClear">Clear the focus point</button>
+    <div class="menu-head">Export</div>
+    <button data-more="export">Save the active pane as PNG<span>exactly what is on screen, overlays included</span></button>
+  </div>
+  <div class="menu" id="layoutMenu" hidden>
+    <div class="menu-head">Layout</div>
+    <button data-layout="quad">▦ 2×2<span>axial · coronal · sagittal · 3D &nbsp;(1)</span></button>
+    <button data-layout="axial">▢ 1×1<span>one pane, full window &nbsp;(2)</span></button>
+    <button data-layout="mpr">▤ MPR<span>the three planes, no 3D &nbsp;(3)</span></button>
+    <button data-layout="vr">◈ 3D<span>volume rendering only &nbsp;(4)</span></button>
+    <button data-layout="1x2">▯▯ 1×2<span>two panes, for comparison &nbsp;(5)</span></button>
+    <button data-layout="2x3">▦▦ 2×3<span>six panes &nbsp;(6)</span></button>
+    <div class="menu-head">Fill the panes with</div>
+    <button data-fill="mix">Mixed planes<span>each layout's own arrangement</span></button>
+    <button data-fill="axial">All axial<span>turn the grid into a filmstrip</span></button>
+    <button data-fill="coronal">All coronal</button>
+    <button data-fill="sagittal">All sagittal</button>
   </div>
   <div class="menu menu-wide" id="toolMenu" hidden>
     <div class="menu-head">Measure</div>
@@ -385,14 +399,15 @@
     <button data-tool="arrow">↗ Arrow<span>point at a finding</span></button>
     <button data-tool="text">T Text<span>type a caption</span></button>
     <button data-tool="freehand">✎ Draw<span>hold and trace</span></button>
-    <div class="menu-head">Navigate</div>
-    <button data-tool="none">✥ Navigate<span>no measurement</span></button>
+    <div class="menu-head">Edit the volume</div>
+    <button data-tool="sculpt">✂ Sculpt<span>drag to cut tissue away by hand</span></button>
   </div>
   <div class="menu" id="resetMenu" hidden>
     <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>
     <button data-reset="window">Reset window/level<span>back to the study's own W/L</span></button>
     <button data-reset="oblique">Straighten planes<span>undo any oblique tilt</span></button>
     <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
+    <button data-reset="focus">Clear focus point<span>stop pulling the panes to one place</span></button>
     <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
     <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
   </div>

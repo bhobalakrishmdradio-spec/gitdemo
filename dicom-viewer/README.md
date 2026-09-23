@@ -13,14 +13,14 @@ radiologist's report and your official imaging system for clinical decisions.
 
 ### Viewing
 
-- **Open / Folder** — load one or many `.dcm` files at once, or a whole
+- **📂 Open ▾** — load one or many `.dcm` files at once, or a whole
   directory (drag-and-drop onto the window also works, including folders).
 - **Automatic series grouping** — instances are grouped by Series Instance
   UID and sorted by slice position / instance number.
 - **Window/Level** — left-drag on any plane: **right** widens the window,
   **left** narrows it, **down** darkens and **up** brightens. There is also
-  manual numeric entry and one-click presets: Lung, Bone, Brain, Soft Tissue,
-  Abdomen, Mediastinum, Angio. Each image's Rescale Slope/Intercept is
+  manual numeric entry and presets under **◐ Window ▾**: Lung, Bone, Brain,
+  Soft Tissue, Abdomen, Mediastinum, Angio. Each image's Rescale Slope/Intercept is
   applied, so values are windowed in real Hounsfield Units.
 
   The drag is **scale-invariant**: the width moves multiplicatively (160 px
@@ -153,8 +153,8 @@ covering the image with text.
 ### Hounsfield Units and measurements
 
 - **Live HU readout** — the value of the pixel under the cursor, shown in the
-  status bar with its plane, slice and pixel coordinates. Toggle it with the
-  **HU** button. It reads the plane's own samples, so window/level and invert
+  status bar with its plane, slice and pixel coordinates. Toggle it under
+  **⋯ More**. It reads the plane's own samples, so window/level and invert
   cannot change it.
 
   It also says what the number *is*. On a thin slice that is the voxel's own
@@ -166,8 +166,38 @@ covering the image with text.
 - **HU probe** (`⌖`) — one click pins a marker recording the value of that
   single pixel. It reads one pixel rather than interpolating, because an
   interpolated "HU" is a number the scanner never measured.
-- **Distance**, **angle**, **elliptical ROI** and **rectangular ROI**. Both
-  ROIs report mean ± SD, min, max, area and pixel count.
+- **Measurements** — distance, polyline (summed segments), angle, and **Cobb
+  angle** between two independently drawn lines. A line has no direction, so
+  the Cobb result is folded into 0–90°: drawing an endplate backwards cannot
+  turn a 20° curve into a 160° one.
+- **Regions of interest** — circle (centre, then edge), ellipse, rectangle,
+  polygon and freehand. Each reports mean ± SD, min, max, area, perimeter and
+  pixel count.
+
+  Every ROI counts a pixel when its **centre** falls inside the shape. One
+  rule, deliberately: mixing conventions meant a rectangle and a polygon
+  drawn over the same square enclosed 1681 and 1600 pixels and reported
+  different means — a discrepancy small enough never to look wrong.
+
+  A circle is circular in **millimetres**, so on a plane with anisotropic
+  pixels it is drawn as an ellipse — the only way its radius can mean one
+  number.
+- **Annotations** — arrow, typed caption and freehand drawing. They carry
+  text rather than a number and are listed as annotations, never as
+  measurements that happen to have measured nothing.
+- **ROI histogram** — the distribution of the values inside the selected ROI,
+  over exactly the pixels its mean came from, with the mean marked. The bin
+  range is the ROI's own min–max; a fixed −1024…3071 axis would render most
+  soft-tissue ROIs as a single spike.
+- **Editing** — with **✥ Navigate** active, drag any handle to reshape a
+  measurement or its centre grip to move it; statistics recalculate as you
+  go. Handles are deliberately inert while a drawing tool is selected, so a
+  click meant to place a point can never silently drag someone else's ROI.
+- **Hiding is not deleting** — the eye beside each row hides one marker,
+  **⋯ More** hides them all, and both leave the measurement intact.
+- **Persistence** — measurements are saved per *series* in this browser and
+  come back when the series is reopened. Per series, not per study: an ROI
+  drawn on the arterial phase means nothing on the venous one.
 - Statistics are computed from the **pixel values of the plane**, never from
   the displayed image — changing window/level or invert cannot change a
   reported number.
@@ -176,7 +206,34 @@ covering the image with text.
   *uncalibrated* note. Intensities are labelled **HU** only for CT (or an
   explicit `RescaleType` of HU); otherwise they are reported as stored values.
 - Measurements are stored in plane coordinates, so they stay anchored to the
-  anatomy through zoom, pan, rotation and flipping.
+  anatomy through zoom, pan, rotation and flipping — and carry the series
+  they were drawn on, so with two studies open an ROI from one is never
+  redrawn over the other patient at the same slice number.
+
+### Focus point
+
+One anatomical point that every pane is made to show. Press **🎯** (or `F`)
+and click a finding: all three planes move to the cut that contains it, every
+other loaded series is pulled to the same place in the patient, and each pane
+pans so the point sits in the middle. Press `G`, or **⋯ More → Go to the
+focus point**, to bring everything back to it after scrolling away.
+
+A solid pink ring marks the point on panes whose cut contains it. A dashed
+ring says how far off the cut it is and which way to scroll — a pane that
+simply is not showing the finding, with nothing to say so, is the thing worth
+avoiding.
+
+Across series it works in **patient millimetres**, from Image Position and
+Image Orientation (Patient), so a prior with different slice thickness, a
+different matrix and a different start position still lands on the same
+anatomy. Two conditions are stated rather than assumed:
+
+- Series acquired in a **different orientation** are matched by slice level
+  only, and the panel says so.
+- Snapping to the nearest slice always succeeds, even when the other series
+  does not reach that level at all. When the nearest slice is more than a
+  millimetre away the panel reports the gap — *"nearest slice is 7.0 mm away
+  — outside this series"* — instead of calling it a match.
 
 ### Data inspection
 
@@ -203,6 +260,7 @@ measurements because the zoom needed straightening is a real cost.
 | Reset window/level | The study's own Window Width/Center from the DICOM header, clearing invert and any per-pane windows |
 | Straighten planes | Removes any oblique tilt |
 | Reset panes | Rebuilds the current layout's panes, dropping per-pane windows, pins and stack offsets |
+| Clear focus point | Stops pulling the panes to one place |
 | Clear measurements | Removes every marker and ROI |
 | Reset everything | All of the above; the study stays loaded |
 
@@ -286,11 +344,49 @@ reconstructed.
 | `Page Up` / `Page Down` | Jump 10 slices |
 | `1` … `6` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 |
 | `I` | Invert grayscale |
+| `N` | Navigate tool (drag handles to edit measurements) |
+| `F` | Arm the focus point |
+| `G` | Go to the focus point |
+| `Enter` | Finish a polygon or polyline |
+| `Esc` | Abandon the shape being drawn, or close a menu |
+| `Delete` | Delete the selected measurement |
 | `R` | Reset the view (zoom, pan, rotation, flip) |
 
 Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
 two planes (oblique MPR)** · double-click = expand a pane and back.
+
+## The toolbar
+
+Related controls sit behind one button each, which keeps the bar to a single
+row from 900 px up and leaves the height for the images:
+
+| Button | Holds |
+| --- | --- |
+| **📂 Open ▾** | Open files, open a folder, clear the loaded series |
+| **▦ 2×2 ▾** | Every layout, and which plane fills the grid |
+| **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
+| **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
+| **✛ 🔗 🎯 ▶** | Crosshair · link series · focus point · cine |
+| **⟳ ▾** | Rotate and flip the active pane |
+| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |
+| **⤾ Reset ▾** | The reset options below |
+
+Each button names what it is holding — the layout button reads `▦ 2×2`, the
+measure button reads `◯ Ellipse ROI` while that tool is armed — because a
+menu that hides the active state makes it the one setting on the toolbar you
+cannot read off the toolbar.
+
+Everything that is not needed every minute lives in the **⚙️ Tools** panel
+instead: slab thickness, bone cut and the sculpting brush, 3D rendering, the
+stack step, cine speed and direction, the focus point, oblique MPR, the
+measurement list and ROI histogram, volume geometry and the DICOM tag browser.
+
+Menus are fixed-position siblings of the toolbar, not children of it, and
+their height is clamped to the room actually below the button. Both are
+deliberate: a menu inside a scrolling container is clipped while still
+looking fine and still passing a scripted click, which is how the Reset menu
+was once unreachable by an actual cursor.
 
 ## Project structure
 

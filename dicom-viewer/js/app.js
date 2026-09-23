@@ -43,7 +43,8 @@
    * scrolls horizontally, and a menu nested inside a scrolling container is
    * clipped — it can look perfectly visible while being unclickable.
    */
-  var MENUS = ["orientMenu", "resetMenu", "toolMenu", "displayMenu", "layoutMenu"];
+  var MENUS = ["openMenu", "orientMenu", "resetMenu", "toolMenu",
+               "windowMenu", "moreMenu", "layoutMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
   // The 3D texture is packed once over the full diagnostic HU range so the
@@ -73,14 +74,16 @@
    * `fill: null` means "cycle the MPR planes", used by the larger grids.
    */
   var LAYOUTS = {
-    quad: { label: "2×2", cols: 2, rows: 2, fill: ["axial", "coronal", "sagittal", "vr"] },
-    axial: { label: "Axial", cols: 1, rows: 1, fill: ["axial"] },
+    quad: { label: "2×2", glyph: "▦", cols: 2, rows: 2,
+            fill: ["axial", "coronal", "sagittal", "vr"] },
+    axial: { label: "1×1", glyph: "▢", cols: 1, rows: 1, fill: ["axial"] },
     // `fixed` layouts are defined by which planes they show, so a whole-grid
     // plane choice does not apply to them.
-    mpr: { label: "MPR", cols: 3, rows: 1, fill: ["axial", "coronal", "sagittal"], fixed: true },
-    vr: { label: "3D", cols: 1, rows: 1, fill: ["vr"], fixed: true },
-    "1x2": { label: "1×2", cols: 2, rows: 1, fill: ["axial", "coronal"] },
-    "2x3": { label: "2×3", cols: 3, rows: 2, fill: null },
+    mpr: { label: "MPR", glyph: "▤", cols: 3, rows: 1,
+           fill: ["axial", "coronal", "sagittal"], fixed: true },
+    vr: { label: "3D", glyph: "◈", cols: 1, rows: 1, fill: ["vr"], fixed: true },
+    "1x2": { label: "1×2", glyph: "▯▯", cols: 2, rows: 1, fill: ["axial", "coronal"] },
+    "2x3": { label: "2×3", glyph: "▦▦", cols: 3, rows: 2, fill: null },
   };
 
   /**
@@ -132,12 +135,7 @@
    * pane changed on its own makes the grid mixed again.
    */
   function syncPlaneFill() {
-    if (!dom.planeFill) return;
     var def = LAYOUTS[state.layout] || LAYOUTS.quad;
-    dom.planeFill.disabled = !!def.fixed;
-    dom.planeFill.title = def.fixed
-      ? "The " + def.label + " layout defines its own planes"
-      : "Which plane the panes show";
     var planes = state.cells.map(function (c) { return c.plane; });
     // A single-pane layout is trivially "uniform", but inferring a whole-grid
     // plane choice from it would silently turn 1x1 into "All axial" and cost
@@ -146,7 +144,33 @@
       var uniform = planes.every(function (p) { return p === planes[0]; });
       state.planeFill = uniform && planes[0] !== "vr" ? planes[0] : "mix";
     }
-    dom.planeFill.value = state.planeFill;
+    syncLayoutControls();
+  }
+
+  /**
+   * Every layout choice lives behind one button, so the button has to say
+   * what is currently chosen — a menu that hides the active state makes the
+   * layout the only setting on the toolbar you cannot read off it.
+   */
+  function syncLayoutControls() {
+    var def = LAYOUTS[state.layout] || LAYOUTS.quad;
+    if (dom.layoutBtn) {
+      var fill = state.planeFill !== "mix" && !def.fixed
+        ? " · " + PLANE_LABELS[state.planeFill] : "";
+      dom.layoutBtn.textContent = (def.glyph || "▦") + " " + def.label + fill + " ▾";
+      dom.layoutBtn.title = "Layout: " + def.label + (fill ? "," + fill : "") +
+        " — click to change";
+    }
+    if (!dom.layoutMenu) return;
+    Array.prototype.forEach.call(dom.layoutMenu.querySelectorAll("[data-layout]"), function (b) {
+      b.classList.toggle("on", b.dataset.layout === state.layout);
+    });
+    Array.prototype.forEach.call(dom.layoutMenu.querySelectorAll("[data-fill]"), function (b) {
+      // A layout that defines its own panes cannot be filled with one plane;
+      // showing the option as choosable would be a lie.
+      b.disabled = !!def.fixed;
+      b.classList.toggle("on", !def.fixed && b.dataset.fill === state.planeFill);
+    });
   }
 
   var PLANE_LABELS = { axial: "Axial", coronal: "Coronal", sagittal: "Sagittal", vr: "3D" };
@@ -209,6 +233,7 @@
 
     windowWidth: 400,
     windowCenter: 40,
+    windowPreset: null,         // which named preset the current W/L matches
     invert: false,
 
     thicknessMm: 0,
@@ -225,6 +250,12 @@
     vrMode: "vr",
     vrPreset: "bone",
     vrOpacity: 1,
+
+    // One anatomical point every pane is asked to show. See the Focus
+    // section: stored in patient millimetres when the series says where it
+    // is, so comparison series can be brought to the same anatomy.
+    focusPoint: null,
+    focusPick: false,
 
     huProbe: true,              // live value readout under the cursor
     freeRotate: false,          // drag rotates the pane to any angle
@@ -265,24 +296,30 @@
   function cacheDom() {
     dom.fileInput = byId("fileInput");
     dom.folderInput = byId("folderInput");
-    dom.clearBtn = byId("clearBtn");
-    dom.layoutSeg = byId("layoutSeg");
-    dom.planeFill = byId("planeFill");
-    dom.toolSeg = byId("toolSeg");
-    dom.presetSelect = byId("presetSelect");
-    dom.invertBtn = byId("invertBtn");
+    dom.openBtn = byId("openBtn");
+    dom.openMenu = byId("openMenu");
+    dom.windowBtn = byId("windowBtn");
+    dom.windowMenu = byId("windowMenu");
+    dom.windowPresets = byId("windowPresets");
+    dom.moreBtn = byId("moreBtn");
+    dom.moreMenu = byId("moreMenu");
+    dom.navBtn = byId("navBtn");
+    dom.layoutBtn = byId("layoutBtn");
+    dom.layoutMenu = byId("layoutMenu");
     dom.orientBtn = byId("orientBtn");
     dom.orientMenu = byId("orientMenu");
     dom.crosshairBtn = byId("crosshairBtn");
+    dom.focusBtn = byId("focusBtn");
+    dom.focusGoBtn = byId("focusGoBtn");
+    dom.focusNote = byId("focusNote");
+    dom.focusPickBtn = byId("focusPickBtn");
+    dom.focusClearBtn = byId("focusClearBtn");
     dom.linkBtn = byId("linkBtn");
-    dom.huBtn = byId("huBtn");
     dom.huReadout = byId("huReadout");
     dom.resetMenu = byId("resetMenu");
-    dom.exportBtn = byId("exportBtn");
     dom.resetBtn = byId("resetBtn");
     dom.measureList = byId("measureList");
     dom.clearMeasureBtn = byId("clearMeasureBtn");
-    dom.hideAnnotBtn = byId("hideAnnotBtn");
     dom.roiHistogram = byId("roiHistogram");
     dom.histogramNote = byId("histogramNote");
     dom.toolMenu = byId("toolMenu");
@@ -930,7 +967,13 @@
     var instanceNumber = parseInt(str(dataSet, "x00200013", ""), 10);
     var sliceLocation = parseFloat(str(dataSet, "x00201041", ""));
     var imagePositionZ = NaN;
+    var imagePosition = null;
     if (dataSet.elements.x00200032) {
+      // The full vector, not just Z: lining two series up in-plane needs the
+      // patient origin, and Z alone can only match the slice level.
+      var ipp = [];
+      for (var pi = 0; pi < 3; pi++) ipp.push(dataSet.floatString("x00200032", pi));
+      if (ipp.every(function (v) { return isFinite(v); })) imagePosition = ipp;
       var z = dataSet.floatString("x00200032", 2);
       if (!isNaN(z)) imagePositionZ = z;
     }
@@ -977,6 +1020,7 @@
       instanceNumber: isNaN(instanceNumber) ? null : instanceNumber,
       sliceLocation: isNaN(sliceLocation) ? null : sliceLocation,
       imagePositionZ: isNaN(imagePositionZ) ? null : imagePositionZ,
+      imagePosition: imagePosition,
 
       studyUID: str(dataSet, "x0020000d", "(no study UID)"),
       studyDescription: str(dataSet, "x00081030", ""),
@@ -1514,7 +1558,7 @@
     var first = group.slices[0].instance;
     state.windowWidth = wwOf(first);
     state.windowCenter = wcOf(first);
-    dom.presetSelect.value = "";
+    syncWindowControls();
 
     state.volume = null;
     planeCache = {}; planeCacheKeys = [];
@@ -1879,7 +1923,7 @@
     resizeCanvas(rec.cross);
 
     var cw = rec.canvas.width, ch = rec.canvas.height;
-    // A 4x4 grid leaves little room, so the patient banner and the letters
+    // A small pane leaves little room, so the patient banner and the letters
     // step aside rather than covering the image.
     rec.root.classList.toggle("compact", rec.root.clientWidth < 320 || rec.root.clientHeight < 250);
 
@@ -2013,6 +2057,7 @@
 
     var dpr = window.devicePixelRatio || 1;
     if (state.crosshair) drawCrosshair(ctx, geom, dpr);
+    drawFocus(ctx, geom, dpr);
     if (!rec.root.classList.contains("compact")) drawOrientationMarkers(ctx, geom, dpr);
     drawMeasurements(ctx, geom, dpr);
   }
@@ -2197,6 +2242,262 @@
     });
     renderAll();
     syncSliders();
+  }
+
+
+  /* ---------------------------------------------------------------------
+   * Focus point
+   *
+   * One anatomical point that every pane is made to show. Clicking it in
+   * any pane moves all three planes to the cut that contains it, pulls the
+   * other loaded series to the same place in the patient, and pans each
+   * pane so the point sits in the middle — so scrolling, stacking and the
+   * comparison panes all end up pointing at the same finding rather than
+   * at the same slice number.
+   *
+   * The point is stored in *patient* millimetres when the series says where
+   * it is, because that is the only frame two series share. Without Image
+   * Position / Orientation (Patient) it falls back to the clicked series'
+   * own voxel frame and says so, rather than inventing an alignment.
+   * ------------------------------------------------------------------- */
+
+  /** Turn a click into a focus point and move everything to it. */
+  function focusFromPoint(i, clientX, clientY) {
+    var rec = cellEls[i], geom = rec && rec.geom;
+    if (!geom || !geom.vol) return false;
+    var p = eventToCell(i, clientX, clientY);
+    if (!p) return false;
+    var t = geom.t;
+    if (p.x < 0 || p.x > t.width || p.y < 0 || p.y > t.height) return false;
+
+    var local = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index, geom.vol);
+    var patient = V.toPatient(geom.vol, local);
+    state.focusPoint = {
+      uid: geom.uid,
+      local: local,
+      patient: patient,
+      label: geom.plane + " " + (geom.index + 1),
+    };
+    goToFocus(true);
+    return true;
+  }
+
+  /**
+   * Move every pane to the focus point.
+   *
+   * @param {boolean} centre  also pan each pane so the point is in the middle
+   */
+  function goToFocus(centre) {
+    var f = state.focusPoint;
+    if (!f) return false;
+
+    // 1. The series the point was picked in: all three planes, exactly.
+    var home = volumeFor(f.uid);
+    if (home) applyLocalTo(f.uid, home, f.local);
+
+    // 2. Every other loaded series, if linking is on.
+    if (state.link) {
+      Object.keys(state.volumes).forEach(function (uid) {
+        if (uid === f.uid) return;
+        var vol = state.volumes[uid];
+        if (!vol || vol === home) return;
+        var local = null;
+        if (f.patient && V.sameFrame(home, vol)) {
+          local = V.fromPatient(vol, f.patient);      // in-plane as well as level
+        }
+        if (local) {
+          applyLocalTo(uid, vol, local);
+        } else if (f.patient) {
+          // Different orientation, or no patient frame: the most that can
+          // honestly be matched is the slice level.
+          var hit = V.sliceNearestZ(vol, f.patient[2]);
+          if (hit) indexRecord(uid).axial = hit.index;
+        }
+      });
+    }
+
+    // 3. Pinned panes hold their own slice, so they have to be told directly.
+    state.cells.forEach(function (cell) {
+      if (!cell.pinned || cell.plane === "vr") return;
+      var uid = cellSeriesUid(cell);
+      var r = indexRecord(uid);
+      if (r && typeof r[cell.plane] === "number") cell.index = r[cell.plane];
+    });
+
+    renderAll();
+    syncSliders();
+    if (centre) centrePanesOnFocus();
+    updateFocusStatus();
+    return true;
+  }
+
+  /** Set one series' three plane indices from a point in its own frame. */
+  function applyLocalTo(uid, vol, local) {
+    var want = indicesFromWorld(local, vol);
+    var r = indexRecord(uid);
+    MPR_PLANES.forEach(function (q) {
+      var count = V.planeCount(vol, q);
+      r[q] = Math.max(0, Math.min(want[q], count - 1));
+    });
+  }
+
+  /** The volume behind a series UID, current or comparison. */
+  function volumeFor(uid) {
+    if (!uid) return state.volume;
+    if (uid === state.currentSeriesUID) return state.volume;
+    return state.volumes[uid] || null;
+  }
+
+  /**
+   * Pan each pane so the focus point lands in the middle of it.
+   *
+   * Done after a render, because it needs each pane's live transform: the
+   * correction is the vector from where the point currently draws to the
+   * pane's centre, which survives zoom, rotation and flipping without any
+   * special cases.
+   */
+  function centrePanesOnFocus() {
+    var f = state.focusPoint;
+    if (!f) return;
+    var moved = false;
+    state.cells.forEach(function (cell, i) {
+      if (cell.plane === "vr") return;
+      var rec = cellEls[i], geom = rec && rec.geom;
+      if (!geom || !geom.vol) return;
+      var local = localForCell(f, geom);
+      if (!local) return;
+      var pp = worldToPlane(geom.plane, geom.slab, local, geom.index, geom.vol);
+      if (!pp) return;
+      var here = planeToCanvas(geom.t, pp.x, pp.y);
+      cell.view.panX += geom.cw / 2 - here.x;
+      cell.view.panY += geom.ch / 2 - here.y;
+      moved = true;
+    });
+    if (moved) renderAll();
+  }
+
+  /** The focus point in one pane's own volume frame, or null. */
+  function localForCell(f, geom) {
+    if (geom.uid === f.uid) return f.local;
+    if (!f.patient) return null;
+    var home = volumeFor(f.uid);
+    if (!home || !V.sameFrame(home, geom.vol)) return null;
+    return V.fromPatient(geom.vol, f.patient);
+  }
+
+  function clearFocus() {
+    state.focusPoint = null;
+    setFocusPick(false);
+    updateFocusStatus();
+    renderAll();
+  }
+
+  function setFocusPick(on) {
+    state.focusPick = !!on;
+    if (dom.focusBtn) dom.focusBtn.classList.toggle("active", state.focusPick);
+    if (state.focusPick) {
+      setStatus("Focus: click the point you want every pane to show.");
+    }
+    updateFocusStatus();
+  }
+
+  /** Keep the Go button and the status line telling the truth. */
+  function updateFocusStatus() {
+    if (dom.focusGoBtn) dom.focusGoBtn.disabled = !state.focusPoint;
+    syncMoreMenu();
+    if (!dom.focusNote) return;
+    var f = state.focusPoint;
+    if (!f) {
+      dom.focusNote.textContent = "No focus point. Turn on 🎯 and click the finding you " +
+        "want every pane, every plane and every comparison series to show.";
+      return;
+    }
+    var where = f.patient
+      ? "patient " + f.patient.map(function (v) { return v.toFixed(1); }).join(", ") + " mm"
+      : "this series only — no Image Position (Patient), so other series cannot be lined up";
+    var others = [];
+    var home = volumeFor(f.uid);
+    Object.keys(state.volumes).forEach(function (uid) {
+      var vol = state.volumes[uid];
+      if (uid === f.uid || !vol || !home || vol === home) return;
+      var how = !f.patient ? "not linked"
+        : V.sameFrame(home, vol) ? "in-plane match"
+        : "slice level only (different orientation)";
+      // Snapping to the nearest slice always succeeds, even when the other
+      // series does not reach this level at all. Saying only "match" there
+      // would be the most misleading thing on the screen.
+      var gap = focusGapFor(uid, vol);
+      if (gap !== null && gap > 1.0) {
+        how = "nearest slice is " + gap.toFixed(1) + " mm away — outside this series";
+      }
+      others.push(seriesShortName(uid) + ": " + how);
+    });
+    dom.focusNote.textContent = "Focused on " + where +
+      (others.length ? " · " + others.join(" · ") : "");
+  }
+
+  /**
+   * How far a series' current cut actually is from the focus point, in
+   * millimetres, or null when it cannot be told.
+   *
+   * Measured from where the series ended up rather than from where it was
+   * asked to go, so clamping at the end of a short stack shows up.
+   */
+  function focusGapFor(uid, vol) {
+    var f = state.focusPoint;
+    if (!f || !f.patient || !vol || !V.hasPatientFrame(vol)) return null;
+    var at = V.toPatient(vol, crosshairWorld(vol, indexRecord(uid)));
+    if (!at) return null;
+    return Math.hypot(at[0] - f.patient[0], at[1] - f.patient[1], at[2] - f.patient[2]);
+  }
+
+  /**
+   * Draw the focus point on a pane.
+   *
+   * A solid ring means the point is on this cut. A dashed ring with an
+   * arrow means it is off to one side, and which way to scroll to reach
+   * it — an unmarked pane that simply is not showing the finding is the
+   * thing worth avoiding.
+   */
+  function drawFocus(ctx, geom, dpr) {
+    var f = state.focusPoint;
+    if (!f) return;
+    var local = localForCell(f, geom);
+    if (!local) return;
+    var pp = worldToPlane(geom.plane, geom.slab, local, geom.index, geom.vol);
+    if (!pp) return;
+
+    // How far off this cut the point is, along the plane's normal.
+    var centre = planeCenterWorld(geom.plane, geom.slab, geom.index, geom.vol);
+    var n = state.frames[geom.plane].n;
+    var away = dot3([local[0] - centre[0], local[1] - centre[1], local[2] - centre[2]], n);
+    var half = Math.max(V.normalSpacing(geom.vol, geom.plane), state.thicknessMm) / 2;
+    var onCut = Math.abs(away) <= half + 1e-6;
+
+    var c = planeToCanvas(geom.t, pp.x, pp.y);
+    var r = 9 * dpr;
+    ctx.save();
+    ctx.strokeStyle = onCut ? "#ff7ad9" : "rgba(255,122,217,0.55)";
+    ctx.lineWidth = Math.max(1.5, 1.6 * dpr);
+    if (!onCut) ctx.setLineDash([3 * dpr, 3 * dpr]);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(c.x - r - 4 * dpr, c.y); ctx.lineTo(c.x - r + 2 * dpr, c.y);
+    ctx.moveTo(c.x + r - 2 * dpr, c.y); ctx.lineTo(c.x + r + 4 * dpr, c.y);
+    ctx.moveTo(c.x, c.y - r - 4 * dpr); ctx.lineTo(c.x, c.y - r + 2 * dpr);
+    ctx.moveTo(c.x, c.y + r - 2 * dpr); ctx.lineTo(c.x, c.y + r + 4 * dpr);
+    ctx.stroke();
+    if (!onCut) {
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(255,122,217,0.9)";
+      ctx.font = Math.round(11 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
+      ctx.textBaseline = "top";
+      ctx.fillText((away > 0 ? "▲ " : "▼ ") + Math.abs(away).toFixed(1) + " mm off cut",
+        c.x + r + 5 * dpr, c.y - r);
+    }
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------------
@@ -2883,22 +3184,21 @@
 
   /** Keep the toolbar buttons and the overflow menu showing the live tool. */
   function syncToolControls() {
-    Array.prototype.forEach.call(dom.toolSeg.querySelectorAll(".seg-btn"), function (btn) {
-      btn.classList.toggle("active", btn.dataset.tool === state.tool);
-    });
+    var navigating = state.tool === MEAS.TOOLS.none;
+    if (dom.navBtn) dom.navBtn.classList.toggle("active", navigating);
     if (dom.toolMenu) {
       Array.prototype.forEach.call(dom.toolMenu.querySelectorAll("[data-tool]"), function (btn) {
-        btn.classList.toggle("active", btn.dataset.tool === state.tool);
+        btn.classList.toggle("on", btn.dataset.tool === state.tool);
       });
     }
-    // The overflow button shows which tool it is holding, so a tool chosen
-    // from the menu is not invisible on the toolbar.
+    // The button names the tool it is holding. A menu that hides which tool
+    // is armed is how a reader ends up drawing an ROI they meant to probe.
     if (dom.toolMoreBtn) {
-      var inSeg = !!dom.toolSeg.querySelector('.seg-btn[data-tool="' + state.tool + '"]');
-      dom.toolMoreBtn.classList.toggle("active", !inSeg);
-      dom.toolMoreBtn.textContent = inSeg ? "▾" : MEAS.glyph(state.tool) + " ▾";
-      dom.toolMoreBtn.title = inSeg ? "More measurement and annotation tools"
-        : "Active: " + MEAS.label(state.tool);
+      dom.toolMoreBtn.classList.toggle("active", !navigating);
+      dom.toolMoreBtn.textContent = navigating
+        ? "📏 Measure ▾" : MEAS.glyph(state.tool) + " " + MEAS.label(state.tool) + " ▾";
+      dom.toolMoreBtn.title = navigating
+        ? "Measure and annotate" : "Active tool: " + MEAS.label(state.tool);
     }
   }
 
@@ -3211,12 +3511,46 @@
   function openMenuUnder(menu, button) {
     closeMenus();
     menu.hidden = false;
+    // Measure unclamped, so a menu that would fit is not scrolled for nothing.
+    menu.style.maxHeight = "";
     var btn = button.getBoundingClientRect();
     var box = menu.getBoundingClientRect();
-    var left = Math.max(8, Math.min(btn.right - box.width, window.innerWidth - box.width - 8));
-    var top = Math.min(btn.bottom + 6, window.innerHeight - box.height - 8);
+    var margin = 8;
+    var left = Math.max(margin,
+      Math.min(btn.right - box.width, window.innerWidth - box.width - margin));
+    var top = Math.max(margin,
+      Math.min(btn.bottom + 6, window.innerHeight - box.height - margin));
+    // A menu taller than the window gets a scrollbar rather than items that
+    // sit below the bottom edge: an item that has to be scrolled to is at
+    // least reachable, one drawn off-screen is not.
+    var room = window.innerHeight - top - margin;
+    if (box.height > room) menu.style.maxHeight = Math.max(120, room) + "px";
     menu.style.left = Math.round(left) + "px";
-    menu.style.top = Math.round(Math.max(8, top)) + "px";
+    menu.style.top = Math.round(top) + "px";
+  }
+
+  /**
+   * Wire a button to the menu it opens.
+   *
+   * Every toolbar group that holds more than a couple of related controls
+   * collapses into one of these, which is what keeps the bar to a single
+   * row with room to spare. `onPick` receives the dataset key of whichever
+   * item was chosen.
+   */
+  function wireMenu(btn, menu, key, onPick, keepOpen) {
+    if (!btn || !menu) return;
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var wasHidden = menu.hidden;
+      closeMenus();
+      if (wasHidden) openMenuUnder(menu, btn);
+    });
+    menu.addEventListener("click", function (e) {
+      var item = e.target.closest("[data-" + key + "]");
+      if (!item || item.disabled) return;
+      onPick(item.dataset[key], item);
+      if (!keepOpen) menu.hidden = true;
+    });
   }
 
   /** True when any pop-up menu is showing. */
@@ -3255,6 +3589,10 @@
       applyLayout(state.layout);
       did.push("panes");
     }
+    if (what === "focus" || what === "all") {
+      if (state.focusPoint || state.focusPick) did.push("focus point");
+      clearFocus();
+    }
     if (what === "measurements" || what === "all") {
       clearMeasurements();
       did.push("measurements");
@@ -3273,8 +3611,7 @@
     state.windowCenter = inst ? wcOf(inst) : 40;
     state.invert = false;
     state.cells.forEach(function (cell) { cell.wl = null; });
-    dom.presetSelect.value = "";
-    dom.invertBtn.classList.remove("active");
+    syncWindowControls();
     updateWLInputs();
   }
 
@@ -3447,12 +3784,15 @@
     var group = getCurrentGroup();
     var modality = group && group.slices.length ? (group.slices[0].instance.modality || "") : "";
 
-    fillOptions(dom.presetSelect, hu
-      ? [["", "Custom"]].concat(Object.keys(PRESETS).map(function (k) {
-          return [k, PRESETS[k].label + " " + PRESETS[k].ww + "/" + PRESETS[k].wc];
-        }))
-      : [["", "Custom"], ["header", "From header"], ["auto", "Auto contrast"],
-         ["full", "Full range"]]);
+    // CT presets are fixed numbers because HU is an absolute scale; without
+    // one, the only honest presets are derived from this image or its header.
+    buildWindowMenu(hu
+      ? Object.keys(PRESETS).map(function (k) {
+          return [k, PRESETS[k].label, PRESETS[k].ww + " / " + PRESETS[k].wc + " HU"];
+        })
+      : [["header", "From the header", "Window Width / Center as sent"],
+         ["auto", "Auto contrast", "from this volume's own distribution"],
+         ["full", "Full range", "darkest to brightest voxel"]]);
 
     fillOptions(dom.vrPreset, hu
       ? [["bone", "Bone VRT"], ["angio", "Angiographic VRT"], ["muscle", "Muscle VRT"],
@@ -3485,6 +3825,54 @@
     }
   }
 
+  /** Tick the More menu's toggles, so their state is readable at a glance. */
+  function syncMoreMenu() {
+    if (!dom.moreMenu) return;
+    var set = function (k, on) {
+      var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
+      if (b) b.classList.toggle("on", !!on);
+    };
+    set("hu", state.huProbe);
+    set("markers", state.showAnnotations);
+    // Offering "go to the focus point" when there is none is worse than not
+    // offering it: it reads as though one had been set.
+    ["focusGo", "focusClear"].forEach(function (k) {
+      var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
+      if (b) b.disabled = !state.focusPoint;
+    });
+  }
+
+  /** Rebuild the window menu's preset list for the current modality. */
+  function buildWindowMenu(entries) {
+    if (!dom.windowPresets) return;
+    dom.windowPresets.innerHTML = entries.map(function (e) {
+      return '<button data-window="' + e[0] + '">' + escapeHtml(e[1]) +
+        (e[2] ? "<span>" + escapeHtml(e[2]) + "</span>" : "") + "</button>";
+    }).join("");
+    syncWindowControls();
+  }
+
+  /** Show which preset is in force, on the button and in the menu. */
+  function syncWindowControls() {
+    if (!dom.windowMenu) return;
+    var active = null;
+    Object.keys(PRESETS).forEach(function (k) {
+      if (PRESETS[k].ww === state.windowWidth && PRESETS[k].wc === state.windowCenter) active = k;
+    });
+    state.windowPreset = active;
+    Array.prototype.forEach.call(dom.windowMenu.querySelectorAll("[data-window]"), function (b) {
+      if (b.dataset.window === "invert") b.classList.toggle("on", state.invert);
+      else if (b.dataset.window === "reset") b.classList.remove("on");
+      else b.classList.toggle("on", b.dataset.window === active);
+    });
+    if (dom.windowBtn) {
+      var name = active ? PRESETS[active].label : "Custom";
+      dom.windowBtn.textContent = "◐ " + name + (state.invert ? " ⁻" : "") + " ▾";
+      dom.windowBtn.title = "Window " + Math.round(state.windowWidth) + " / " +
+        Math.round(state.windowCenter) + (state.invert ? ", inverted" : "") + " — click to change";
+    }
+  }
+
   function fillOptions(select, pairs) {
     if (!select) return;
     var current = select.value;
@@ -3506,9 +3894,7 @@
   function setLayout(layout) {
     if (!LAYOUTS[layout]) return;
     applyLayout(layout);
-    Array.prototype.forEach.call(dom.layoutSeg.querySelectorAll(".seg-btn"), function (btn) {
-      btn.classList.toggle("active", btn.dataset.layout === layout);
-    });
+    syncLayoutControls();
   }
 
   /* ---------------------------------------------------------------------
@@ -3680,8 +4066,14 @@
       e.target.value = "";
     });
 
-    dom.clearBtn.addEventListener("click", function () {
-      if (!state.seriesOrder.length) return;
+    wireMenu(dom.openBtn, dom.openMenu, "open", function (what) {
+      if (what === "files") dom.fileInput.click();
+      else if (what === "folder") dom.folderInput.click();
+      else if (what === "clear") clearLoadedSeries();
+    });
+
+    function clearLoadedSeries() {
+      if (!state.seriesOrder.length) return showToast("Nothing is loaded.", true);
       if (!confirm("Clear all loaded series?")) return;
       state.seriesOrder = [];
       state.seriesMap = {};
@@ -3707,24 +4099,33 @@
       updateObliqueInfo();
       renderAll();
       setStatus("Ready");
+    }
+
+    dom.layoutBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (dom.layoutMenu.hidden) openMenuUnder(dom.layoutMenu, dom.layoutBtn);
+      else dom.layoutMenu.hidden = true;
+    });
+    dom.layoutMenu.addEventListener("click", function (e) {
+      var pick = e.target.closest("[data-layout]");
+      if (pick) { setLayout(pick.dataset.layout); dom.layoutMenu.hidden = true; return; }
+      var fill = e.target.closest("[data-fill]");
+      if (fill && !fill.disabled) { setPlaneFill(fill.dataset.fill); dom.layoutMenu.hidden = true; }
     });
 
-    dom.layoutSeg.addEventListener("click", function (e) {
-      var btn = e.target.closest(".seg-btn");
-      if (btn) setLayout(btn.dataset.layout);
+    wireMenu(dom.windowBtn, dom.windowMenu, "window", function (what) {
+      if (what === "invert") {
+        state.invert = !state.invert;
+        renderAll();
+      } else if (what === "reset") {
+        resetWindowToStudy();
+      } else {
+        applyPreset(what);
+      }
+      syncWindowControls();
     });
 
-    dom.planeFill.addEventListener("change", function (e) {
-      setPlaneFill(e.target.value);
-    });
 
-    dom.presetSelect.addEventListener("change", function (e) { applyPreset(e.target.value); });
-
-    dom.invertBtn.addEventListener("click", function () {
-      state.invert = !state.invert;
-      dom.invertBtn.classList.toggle("active", state.invert);
-      renderAll();
-    });
 
     if (dom.stackSeg) {
       dom.stackSeg.addEventListener("click", function (e) {
@@ -3790,35 +4191,36 @@
       if (btn.dataset.orient !== "free") dom.orientMenu.hidden = true;
     });
 
-    dom.toolSeg.addEventListener("click", function (e) {
-      var btn = e.target.closest(".seg-btn");
-      if (btn) setTool(btn.dataset.tool);
+    dom.focusBtn.addEventListener("click", function () { setFocusPick(!state.focusPick); });
+    dom.focusPickBtn.addEventListener("click", function () { setFocusPick(!state.focusPick); });
+    dom.focusGoBtn.addEventListener("click", function () {
+      if (!goToFocus(true)) showToast("No focus point yet — turn on 🎯 and click one.", true);
     });
+    dom.focusClearBtn.addEventListener("click", clearFocus);
 
-    // The overflow menu carries the tools that do not fit on one toolbar row.
-    dom.toolMoreBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      if (dom.toolMenu.hidden) openMenuUnder(dom.toolMenu, dom.toolMoreBtn);
-      else dom.toolMenu.hidden = true;
-    });
-    dom.toolMenu.addEventListener("click", function (e) {
-      var btn = e.target.closest("[data-tool]");
-      if (!btn) return;
-      setTool(btn.dataset.tool);
-      dom.toolMenu.hidden = true;
-    });
+    dom.navBtn.addEventListener("click", function () { setTool(MEAS.TOOLS.none); });
+    wireMenu(dom.toolMoreBtn, dom.toolMenu, "tool", setTool);
 
     dom.clearMeasureBtn.addEventListener("click", clearMeasurements);
 
     // Hiding is deliberately not deleting: the checklist asks for the two to
     // be separate actions, and a reader who hides an ROI to look underneath
     // should not lose it.
-    dom.hideAnnotBtn.addEventListener("click", function () {
-      state.showAnnotations = !state.showAnnotations;
-      dom.hideAnnotBtn.classList.toggle("active", !state.showAnnotations);
-      dom.hideAnnotBtn.textContent = state.showAnnotations
-        ? "Hide all markers" : "Show all markers";
-      renderAllOverlays();
+    wireMenu(dom.moreBtn, dom.moreMenu, "more", function (what) {
+      if (what === "hu") {
+        state.huProbe = !state.huProbe;
+        if (!state.huProbe) dom.huReadout.textContent = "";
+      } else if (what === "markers") {
+        state.showAnnotations = !state.showAnnotations;
+        renderAllOverlays();
+      } else if (what === "focusGo") {
+        if (!goToFocus(true)) showToast("No focus point yet — press 🎯, then click one.", true);
+      } else if (what === "focusClear") {
+        clearFocus();
+      } else if (what === "export") {
+        exportActiveViewport();
+      }
+      syncMoreMenu();
     });
 
     dom.annotOk.addEventListener("click", function () { commitText(true); });
@@ -3963,13 +4365,7 @@
 
     dom.tagSearch.addEventListener("input", debounce(updateMetadata, 120));
 
-    dom.exportBtn.addEventListener("click", exportActiveViewport);
 
-    dom.huBtn.addEventListener("click", function () {
-      state.huProbe = !state.huProbe;
-      dom.huBtn.classList.toggle("active", state.huProbe);
-      if (!state.huProbe) dom.huReadout.textContent = "";
-    });
 
     dom.resetBtn.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -4001,11 +4397,11 @@
 
     dom.windowWidthInput.addEventListener("change", function (e) {
       var v = parseFloat(e.target.value);
-      if (isFinite(v) && v > 0) { state.windowWidth = v; dom.presetSelect.value = ""; renderAll(); }
+      if (isFinite(v) && v > 0) { state.windowWidth = v; syncWindowControls(); renderAll(); }
     });
     dom.windowCenterInput.addEventListener("change", function (e) {
       var v = parseFloat(e.target.value);
-      if (isFinite(v)) { state.windowCenter = v; dom.presetSelect.value = ""; renderAll(); }
+      if (isFinite(v)) { state.windowCenter = v; syncWindowControls(); renderAll(); }
     });
 
     dom.thicknessRange.addEventListener("input", function (e) {
@@ -4145,6 +4541,12 @@
         crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
+      // Focus is an explicit mode, so while it is on a plain click means
+      // "show me this point everywhere" and nothing else.
+      if (e.button === 0 && state.focusPick) {
+        focusFromPoint(i, e.clientX, e.clientY);
+        return;
+      }
       if (e.button === 0 && state.tool === "sculpt") {
         var stroke = [];
         state.drag = { cell: i, mode: "sculpt", stroke: stroke, volume: cellVolume(cell) };
@@ -4243,9 +4645,7 @@
     var target = cell.plane === "vr" ? "vr" : "axial";
     applyLayout(target);
     if (state.cells[0]) state.cells[0].plane = cell.plane;
-    Array.prototype.forEach.call(dom.layoutSeg.querySelectorAll(".seg-btn"), function (btn) {
-      btn.classList.toggle("active", btn.dataset.layout === target);
-    });
+    syncLayoutControls();
     rebuildCells();
   }
 
@@ -4358,7 +4758,7 @@
       } else {
         state.windowWidth = ww;
         state.windowCenter = wc;
-        dom.presetSelect.value = "";
+        syncWindowControls();
         updateWLInputs();
         renderAll();
       }
@@ -4440,8 +4840,18 @@
         setCellIndex(i, at + 10); e.preventDefault(); break;
       case "PageUp":
         setCellIndex(i, at - 10); e.preventDefault(); break;
+      case "f": case "F":
+        setFocusPick(!state.focusPick); break;
+      case "g": case "G":
+        if (!goToFocus(true)) showToast("No focus point yet — press F, then click one.", true);
+        break;
       case "i": case "I":
-        dom.invertBtn.click(); break;
+        state.invert = !state.invert;
+        syncWindowControls();
+        renderAll();
+        break;
+      case "n": case "N":
+        setTool(MEAS.TOOLS.none); break;
       case "r": case "R":
         applyReset("view"); break;
       case "1": setLayout("quad"); break;
@@ -4665,7 +5075,7 @@
     if (most < 2) {
       dom.stackNote.textContent =
         "No plane is repeated in this layout, so there is nothing to stack. " +
-        "Try the 2\u00d73 or 4\u00d74 grid.";
+        "Try the 2\u00d73 grid, or fill any grid with one plane from the layout menu.";
       return;
     }
     if (!state.stackStep) {
@@ -4783,8 +5193,12 @@
 
     dom.crosshairBtn.classList.toggle("active", state.crosshair);
     dom.linkBtn.classList.toggle("active", state.link);
-    dom.huBtn.classList.toggle("active", state.huProbe);
     syncOrientMenu();
+    syncLayoutControls();
+    syncWindowControls();
+    syncMoreMenu();
+    syncToolControls();
+    updateFocusStatus();
     updateWLInputs();
     updateBoneStatus();
     syncStackSeg();
@@ -4830,6 +5244,7 @@
     setCellPlane: setCellPlane,
     selectSeries: selectSeries,
     setPlaneFill: setPlaneFill,
+    syncLayoutControls: syncLayoutControls,
     setCellIndex: setCellIndex,
     setActiveCell: setActiveCell,
     cellIndex: cellIndex,
@@ -4845,6 +5260,12 @@
     clearSculpt: clearSculpt,
     cutActive: cutActive,
     setTool: setTool,
+    focusFromPoint: focusFromPoint,
+    goToFocus: goToFocus,
+    clearFocus: clearFocus,
+    setFocusPick: setFocusPick,
+    volumeFor: volumeFor,
+    focusGapFor: focusGapFor,
     measurementsFor: measurementsFor,
     persistMeasurements: persistMeasurements,
     restoreMeasurements: restoreMeasurements,

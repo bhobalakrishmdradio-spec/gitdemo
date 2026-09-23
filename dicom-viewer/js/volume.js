@@ -112,6 +112,10 @@
       // Reslicing across Z is only metrically trustworthy when the slice
       // spacing is actually regular.
       spacingZReliable: geometry.regular,
+      // Where this volume sits in the patient, so two series can be lined
+      // up by anatomy rather than by slice number. Null when the series
+      // does not carry Image Position / Orientation (Patient).
+      frame: patientFrame(usable, step),
     };
   }
 
@@ -221,6 +225,103 @@
     var thickness = slices[0].instance.sliceThickness;
     return thickness && thickness > 0 ? thickness : 1;
   }
+
+
+  /* ---------------------------------------------------------------------
+   * Patient frame
+   *
+   * Volume-local millimetres put the origin at the first voxel's centre and
+   * run along the columns, the rows and the slices. That is enough to
+   * reslice one series, but not to point at the same anatomy in another:
+   * two series of one patient share the *patient* coordinate system, not a
+   * voxel grid. These two transforms move between the two.
+   * ------------------------------------------------------------------- */
+
+  function cross3(a, b) {
+    return [a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]];
+  }
+  function norm3(v) {
+    var l = Math.hypot(v[0], v[1], v[2]);
+    return l > 1e-9 ? [v[0] / l, v[1] / l, v[2] / l] : null;
+  }
+  function dot3v(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+  /**
+   * Origin and axes of a volume in patient millimetres, or null.
+   *
+   * The slice axis is taken from where the slices actually went, not from
+   * the cross product of the in-plane axes: a feet-first series runs the
+   * opposite way, and a sign error here would put every cross-series jump
+   * on the mirror image of the level intended.
+   */
+  function patientFrame(slices, step) {
+    var first = slices[0].instance;
+    var o = first.imagePosition, iop = first.imageOrientation;
+    if (!o || !iop) return null;
+    var rowDir = norm3([iop[0], iop[1], iop[2]]);   // along increasing column
+    var colDir = norm3([iop[3], iop[4], iop[5]]);   // along increasing row
+    if (!rowDir || !colDir) return null;
+
+    var sliceDir = null;
+    var lastPos = slices[slices.length - 1].instance.imagePosition;
+    if (lastPos && slices.length > 1) {
+      sliceDir = norm3([lastPos[0] - o[0], lastPos[1] - o[1], lastPos[2] - o[2]]);
+    }
+    if (!sliceDir) sliceDir = norm3(cross3(rowDir, colDir));
+    if (!sliceDir) return null;
+
+    return {
+      origin: [o[0], o[1], o[2]],
+      rowDir: rowDir, colDir: colDir, sliceDir: sliceDir,
+      // Kept so a caller can tell whether two series were acquired the same
+      // way round before trusting an in-plane match.
+      orientation: [iop[0], iop[1], iop[2], iop[3], iop[4], iop[5]],
+      downsample: step,
+    };
+  }
+
+  /** Volume-local millimetres -> patient millimetres. Null without a frame. */
+  function toPatient(volume, local) {
+    var f = volume && volume.frame;
+    if (!f) return null;
+    return [
+      f.origin[0] + f.rowDir[0] * local[0] + f.colDir[0] * local[1] + f.sliceDir[0] * local[2],
+      f.origin[1] + f.rowDir[1] * local[0] + f.colDir[1] * local[1] + f.sliceDir[1] * local[2],
+      f.origin[2] + f.rowDir[2] * local[0] + f.colDir[2] * local[1] + f.sliceDir[2] * local[2],
+    ];
+  }
+
+  /** Patient millimetres -> volume-local millimetres. Null without a frame. */
+  function fromPatient(volume, patient) {
+    var f = volume && volume.frame;
+    if (!f) return null;
+    var d = [patient[0] - f.origin[0], patient[1] - f.origin[1], patient[2] - f.origin[2]];
+    return [dot3v(d, f.rowDir), dot3v(d, f.colDir), dot3v(d, f.sliceDir)];
+  }
+
+  /**
+   * True when two volumes were acquired in the same orientation.
+   *
+   * Without this, mapping a point from an axial series into a coronal one
+   * would still produce a number — just a meaningless one. The caller is
+   * expected to fall back to matching the slice level by Z alone.
+   */
+  function sameFrame(a, b, tol) {
+    var fa = a && a.frame, fb = b && b.frame;
+    if (!fa || !fb) return false;
+    var t = tol === undefined ? 1e-3 : tol;
+    for (var i = 0; i < 6; i++) {
+      if (Math.abs(fa.orientation[i] - fb.orientation[i]) > t) return false;
+    }
+    // Same plane, but one stack could still run head-first and the other
+    // feet-first; that flips which way "next slice" goes.
+    return dot3v(fa.sliceDir, fb.sliceDir) > 0;
+  }
+
+  /** True when a volume knows where it sits in the patient. */
+  function hasPatientFrame(volume) { return !!(volume && volume.frame); }
 
   /* ---------------------------------------------------------------------
    * Plane geometry
@@ -814,6 +915,10 @@
     AIR_HU: AIR_HU,
     build: build,
     sliceZ: sliceZ,
+    toPatient: toPatient,
+    fromPatient: fromPatient,
+    sameFrame: sameFrame,
+    hasPatientFrame: hasPatientFrame,
     sliceNearestZ: sliceNearestZ,
     hasPositions: hasPositions,
     planeCount: planeCount,

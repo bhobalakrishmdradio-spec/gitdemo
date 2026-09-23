@@ -2172,10 +2172,22 @@ function currentExcelPeriodAndTxns() {
   return { period, txns: transactionsInExportPeriod(state.transactions, period) };
 }
 
+// Never let a call hang the UI forever with no feedback: race it against a
+// timeout and reject with a clear, actionable message if it never settles.
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 // Builds the workbook once, shared by both the plain download and the
 // email-send paths below, so they can never drift out of sync.
 async function buildExcelBlob(period, txns) {
-  const XLSX = await loadSheetJS();
+  const XLSX = await withTimeout(loadSheetJS(), 20000, 'Timed out loading the Excel export library - check your connection and try again');
   const rows = buildExcelRows(period, txns);
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [12, 10, 16, 16, 16, 16, 14, 14, 28, 12, 24].map((wch) => ({ wch }));
@@ -2267,7 +2279,9 @@ async function sendExcelByEmail() {
   }
 
   const btn = document.getElementById('emailExcelBtn');
+  const originalBtnText = btn.textContent;
   btn.disabled = true;
+  btn.textContent = 'Preparing…';
   try {
     const { blob, filename } = await buildExcelBlob(period, txns);
     const file = new File([blob], filename, { type: blob.type });
@@ -2275,8 +2289,17 @@ async function sendExcelByEmail() {
     const body = 'Attached: ' + filename;
 
     if (canShareFiles(file)) {
+      btn.textContent = 'Sending…';
       try {
-        await navigator.share({ files: [file], title: subject, text: body });
+        // The share sheet itself can wait indefinitely on the viewer, which
+        // is fine - but if the call never even reaches a share sheet (seen
+        // inside some embedded WebViews, where it silently never resolves),
+        // don't leave the button stuck forever: give up and fall back.
+        await withTimeout(
+          navigator.share({ files: [file], title: subject, text: body }),
+          15000,
+          'Share sheet did not respond',
+        );
         showToast(i18n('toast.emailShared'));
         return;
       } catch (e) {
@@ -2285,6 +2308,7 @@ async function sendExcelByEmail() {
       }
     }
 
+    btn.textContent = 'Downloading…';
     downloadBlob(blob, filename);
     const mailto = 'mailto:' + encodeURIComponent(email)
       + '?subject=' + encodeURIComponent(subject)
@@ -2296,6 +2320,7 @@ async function sendExcelByEmail() {
     showToast(i18n('toast.excelLoadFailed'));
   } finally {
     btn.disabled = false;
+    btn.textContent = originalBtnText;
   }
 }
 

@@ -232,6 +232,17 @@ select, input[type="number"] {
   font: inherit; font-size: 12px;
 }
 
+/* ---------- Report placeholder warning ---------- */
+.report-warn {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: var(--radius);
+  background: rgba(255, 210, 74, 0.09); border: 1px solid rgba(255, 210, 74, 0.35);
+  font-size: 11px; color: #e8dcb4; line-height: 1.5;
+}
+.report-warn[hidden] { display: none; }
+.report-warn strong { color: var(--crosshair); }
+.report-warn ul { margin: 5px 0 0; padding-left: 16px; }
+.report-warn li { margin-bottom: 2px; }
+
 /* ---------- Geometry warnings ---------- */
 .warn-block {
   margin-top: 10px; padding: 8px 10px; border-radius: var(--radius);
@@ -474,6 +485,11 @@ select, input[type="number"] {
    comes off the viewport grid. The group labels are the first thing to go. */
 @media (max-width: 1700px) {
   .tool-label { display: none; }
+}
+/* The panel toggles keep their icons; only the words go, and only once the
+   bar would otherwise have to wrap. */
+@media (max-width: 1400px) {
+  .btn-label { display: none; }
 }
 /* Tighten the controls before the toolbar has to wrap. */
 @media (max-width: 1520px) {

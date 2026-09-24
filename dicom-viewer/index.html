@@ -18,7 +18,13 @@
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="layoutBtn" title="Choose a layout and which plane fills it">▦ 2×2 ▾</button>
+        <button class="icon-btn" id="layoutBtn" title="Choose a layout">▦ 2×2 ▾</button>
+        <div class="seg" id="planeSeg">
+          <button class="seg-btn" data-fill="axial" title="Fill every pane with axial slices">Ax</button>
+          <button class="seg-btn" data-fill="coronal" title="Fill every pane with coronal slices">Cor</button>
+          <button class="seg-btn" data-fill="sagittal" title="Fill every pane with sagittal slices">Sag</button>
+          <button class="seg-btn active" data-fill="mix" title="Each layout's own arrangement of planes">Mix</button>
+        </div>
         <button class="icon-btn" id="windowBtn" title="Window presets and greyscale">◐ Window ▾</button>
       </div>
 
@@ -28,10 +34,14 @@
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="crosshairBtn" title="Crosshair: show where the other planes cut this one">✛</button>
-        <button class="icon-btn active" id="linkBtn" title="Link panes on different series by patient position">🔗</button>
+        <button class="icon-btn" id="crosshairBtn" title="Crosshair: show where the other planes cut this one, and drag it to move all three">✛</button>
         <button class="icon-btn" id="focusBtn" title="Focus: click a point and every pane, plane and series moves to it (F)">🎯</button>
         <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
+      </div>
+
+      <div class="toolbar-group">
+        <button class="icon-btn" id="stackBtn" title="How many slices apart repeated panes sit">⇕ Stack 1 ▾</button>
+        <button class="icon-btn active" id="linkBtn" title="Sync: link panes on different series by patient position">🔗 Sync</button>
       </div>
 
       <div class="toolbar-group">
@@ -41,9 +51,9 @@
       </div>
 
       <div class="toolbar-group toolbar-group-right">
-        <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱 Series</button>
-        <button class="icon-btn" id="reportToggleBtn" title="Toggle the report panel">📝 Report</button>
-        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️ Tools</button>
+        <button class="icon-btn" id="seriesToggleBtn" title="Toggle series panel">🧱<span class="btn-label"> Series</span></button>
+        <button class="icon-btn" id="reportToggleBtn" title="Toggle the report panel">📝<span class="btn-label"> Report</span></button>
+        <button class="icon-btn active" id="panelToggleBtn" title="Toggle tools panel">⚙️<span class="btn-label"> Tools</span></button>
       </div>
     </header>
 
@@ -91,6 +101,8 @@
               <option value="">Insert…</option>
             </select>
           </div>
+          <p class="hint-text" id="templateCredit"></p>
+          <div class="report-warn" id="placeholderWarn" hidden></div>
 
           <label class="report-field">
             <span>Clinical history</span>
@@ -99,6 +111,10 @@
           <label class="report-field">
             <span>Technique</span>
             <textarea id="reportTechnique" rows="2" placeholder="Acquisition, contrast, reconstructions"></textarea>
+          </label>
+          <label class="report-field">
+            <span>Comparison</span>
+            <textarea id="reportComparison" rows="2" placeholder="Prior studies reviewed, with dates"></textarea>
           </label>
           <label class="report-field grow">
             <span>Findings</span>
@@ -126,6 +142,11 @@
           <p class="hint-text">
             Drafts are saved in this browser only, on this device. Anyone with access
             to this browser profile can read them. Delete the draft when you are done.
+          </p>
+          <p class="hint-text">
+            Every template states normal findings by default. Read the images, then
+            edit every line — a template inserted and signed unread is a normal report
+            on an abnormal study.
           </p>
         </div>
       </aside>
@@ -223,19 +244,11 @@
 
           <section class="tool-section">
             <h4>Panes</h4>
-            <div class="field-row">
-              <label>Stack</label>
-              <div class="seg" id="stackSeg">
-                <button class="seg-btn" data-step="0" title="Every repeated pane shows the same slice">Same</button>
-                <button class="seg-btn active" data-step="1" title="Repeated panes step one slice apart">1</button>
-                <button class="seg-btn" data-step="2" title="Repeated panes step two slices apart">2</button>
-                <button class="seg-btn" data-step="5" title="Repeated panes step five slices apart">5</button>
-                <button class="seg-btn" data-step="10" title="Repeated panes step ten slices apart">10</button>
-              </div>
-            </div>
             <p class="hint-text" id="stackNote"></p>
-            <p class="hint-text">Fill a grid with one plane from the layout menu, which
-              turns any grid into a filmstrip of consecutive slices.</p>
+            <p class="hint-text">Set the spacing with <strong>⇕ Stack</strong> in the
+              toolbar, and fill a grid with one plane using
+              <strong>Ax / Cor / Sag</strong> — together they turn any grid into a
+              filmstrip of consecutive slices.</p>
           </section>
 
           <section class="tool-section">
@@ -334,7 +347,7 @@
       <span id="statusText" class="muted">Ready</span>
       <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Shift+click: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Drag ✛ or Shift+drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
     </footer>
   </div>
 
@@ -368,6 +381,14 @@
     <div class="menu-head">Export</div>
     <button data-more="export">Save the active pane as PNG<span>exactly what is on screen, overlays included</span></button>
   </div>
+  <div class="menu" id="stackMenu" hidden>
+    <div class="menu-head">Slices between repeated panes</div>
+    <button data-step="0">Same slice<span>every repeated pane shows one cut</span></button>
+    <button data-step="1">1 slice apart<span>a filmstrip of consecutive slices</span></button>
+    <button data-step="2">2 slices apart</button>
+    <button data-step="5">5 slices apart</button>
+    <button data-step="10">10 slices apart</button>
+  </div>
   <div class="menu" id="layoutMenu" hidden>
     <div class="menu-head">Layout</div>
     <button data-layout="quad">▦ 2×2<span>axial · coronal · sagittal · 3D &nbsp;(1)</span></button>
@@ -376,11 +397,6 @@
     <button data-layout="vr">◈ 3D<span>volume rendering only &nbsp;(4)</span></button>
     <button data-layout="1x2">▯▯ 1×2<span>two panes, for comparison &nbsp;(5)</span></button>
     <button data-layout="2x3">▦▦ 2×3<span>six panes &nbsp;(6)</span></button>
-    <div class="menu-head">Fill the panes with</div>
-    <button data-fill="mix">Mixed planes<span>each layout's own arrangement</span></button>
-    <button data-fill="axial">All axial<span>turn the grid into a filmstrip</span></button>
-    <button data-fill="coronal">All coronal</button>
-    <button data-fill="sagittal">All sagittal</button>
   </div>
   <div class="menu menu-wide" id="toolMenu" hidden>
     <div class="menu-head">Measure</div>
@@ -423,6 +439,7 @@
   <script src="js/codecs.js"></script>
   <script src="js/volume.js"></script>
   <script src="js/measure.js"></script>
+  <script src="js/templates.js"></script>
   <script src="js/report.js"></script>
   <script src="js/vr.js"></script>
   <script src="js/app.js"></script>

@@ -30,7 +30,18 @@ radiologist's report and your official imaging system for clinical decisions.
   visible on a lung window (W1500) throws a brain window (W80) past its own
   width in a twitch — so the gesture feels identical on every preset, and the
   width cannot be slammed to zero by one long drag.
-- **Invert, zoom, pan, crosshair**, and a per-pane slice scrubber.
+- **Invert, zoom, pan**, and a per-pane slice scrubber.
+- **The crosshair is draggable.** It carries a grip at its intersection;
+  grab it and all three planes follow the cursor continuously, so you can
+  see where the other two land while you are still moving. Shift+drag works
+  from anywhere in the pane.
+
+  Only the grip grabs, and it is drawn at exactly the size it is hit-tested
+  at. Accepting the *arms* was tried and is wrong: they run the full width
+  and height of the pane, which turns a cross-shaped band through the middle
+  of the image into a region where a window/level drag silently moves the
+  crosshair instead, and where a measurement handle under an arm cannot be
+  picked up at all.
 - **Rotation** — 90° steps either way, or **free rotate** (`◷`): arm it and
   drag on a pane to turn it to any angle.
 
@@ -350,6 +361,7 @@ reconstructed.
 | `Enter` | Finish a polygon or polyline |
 | `Esc` | Abandon the shape being drawn, or close a menu |
 | `Delete` | Delete the selected measurement |
+| `Shift`+drag | Move the crosshair from anywhere in the pane |
 | `R` | Reset the view (zoom, pan, rotation, flip) |
 
 Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
@@ -364,10 +376,12 @@ row from 900 px up and leaves the height for the images:
 | Button | Holds |
 | --- | --- |
 | **📂 Open ▾** | Open files, open a folder, clear the loaded series |
-| **▦ 2×2 ▾** | Every layout, and which plane fills the grid |
+| **▦ 2×2 ▾** | Every layout |
+| **Ax · Cor · Sag · Mix** | Which plane fills the grid — separate buttons, because it is a thing you do while reading |
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
-| **✛ 🔗 🎯 ▶** | Crosshair · link series · focus point · cine |
+| **✛ 🎯 ▶** | Crosshair · focus point · cine |
+| **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
 | **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |
 | **⤾ Reset ▾** | The reset options below |
@@ -378,9 +392,9 @@ menu that hides the active state makes it the one setting on the toolbar you
 cannot read off the toolbar.
 
 Everything that is not needed every minute lives in the **⚙️ Tools** panel
-instead: slab thickness, bone cut and the sculpting brush, 3D rendering, the
-stack step, cine speed and direction, the focus point, oblique MPR, the
-measurement list and ROI histogram, volume geometry and the DICOM tag browser.
+instead: slab thickness, bone cut and the sculpting brush, 3D rendering, cine
+speed and direction, the focus point, oblique MPR, the measurement list and
+ROI histogram, volume geometry and the DICOM tag browser.
 
 Menus are fixed-position siblings of the toolbar, not children of it, and
 their height is clamped to the room actually below the button. Both are
@@ -471,6 +485,44 @@ RLE fixtures come from pydicom's own encoder.
 All parsing, reconstruction and rendering happens locally in your browser. No
 image data, metadata, or files are sent to any server — this page makes no
 network requests once loaded.
+
+## Report templates
+
+The report panel ships **19 templates**: six skeletons written for this
+viewer, and thirteen imported from
+[mdvthu/report-templates](https://github.com/mdvthu/report-templates) —
+CT pulmonary angiogram (two variants), CT stroke angiogram, and MRI ankle,
+cervical spine, elbow, foot, knee, lumbar spine, musculoskeletal pelvis,
+shoulder, thoracic spine and wrist.
+
+Those thirteen are **third-party work under the Apache License 2.0**,
+© 2024 Mark Thurston and © Thomas Rawet. Their wording is reproduced
+unchanged — punctuation, spacing and all, including the source's own
+"Perserved" in the thoracic spine template. `NOTICE.md` records the
+attribution the licence requires and every change that *was* made (format,
+section mapping, and nothing else); a test compares each template word for
+word against the source document, so "wording preserved" is checked rather
+than asserted.
+
+Inserting a template records its credit, which is printed at the foot of the
+exported report.
+
+### Placeholders
+
+Every template states normal findings by default. That is what makes them
+quick and what makes them hazardous: a template inserted and signed unread is
+a normal report on an abnormal study.
+
+So the bracketed spans their authors left to be filled — `[]`, `[T2|STIR]`,
+`[No PE]` — are treated as unfinished work:
+
+- counted and listed in the report panel as you type,
+- printed in the exported text under **UNFILLED PLACEHOLDERS**,
+- and **Mark final** refuses to sign a report still holding one without an
+  explicit confirmation naming what is outstanding.
+
+Inserting a template never finalises anything, and never silently overwrites
+text already written.
 
 ## Credits
 

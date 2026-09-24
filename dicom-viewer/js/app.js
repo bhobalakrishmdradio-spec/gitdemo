@@ -14,6 +14,7 @@
   var MEAS = window.CTMeasure;
   var CODECS = window.CTCodecs;
   var REPORT = window.CTReport;
+  var TPL = window.CTTemplates;
 
   /* ---------------------------------------------------------------------
    * Constants
@@ -44,7 +45,7 @@
    * clipped — it can look perfectly visible while being unclickable.
    */
   var MENUS = ["openMenu", "orientMenu", "resetMenu", "toolMenu",
-               "windowMenu", "moreMenu", "layoutMenu"];
+               "windowMenu", "moreMenu", "layoutMenu", "stackMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
   // The 3D texture is packed once over the full diagnostic HU range so the
@@ -155,21 +156,25 @@
   function syncLayoutControls() {
     var def = LAYOUTS[state.layout] || LAYOUTS.quad;
     if (dom.layoutBtn) {
-      var fill = state.planeFill !== "mix" && !def.fixed
-        ? " · " + PLANE_LABELS[state.planeFill] : "";
-      dom.layoutBtn.textContent = (def.glyph || "▦") + " " + def.label + fill + " ▾";
-      dom.layoutBtn.title = "Layout: " + def.label + (fill ? "," + fill : "") +
-        " — click to change";
+      dom.layoutBtn.textContent = (def.glyph || "▦") + " " + def.label + " ▾";
+      dom.layoutBtn.title = "Layout: " + def.label + " — click to change";
     }
-    if (!dom.layoutMenu) return;
-    Array.prototype.forEach.call(dom.layoutMenu.querySelectorAll("[data-layout]"), function (b) {
-      b.classList.toggle("on", b.dataset.layout === state.layout);
-    });
-    Array.prototype.forEach.call(dom.layoutMenu.querySelectorAll("[data-fill]"), function (b) {
+    if (dom.layoutMenu) {
+      Array.prototype.forEach.call(dom.layoutMenu.querySelectorAll("[data-layout]"), function (b) {
+        b.classList.toggle("on", b.dataset.layout === state.layout);
+      });
+    }
+    if (!dom.planeSeg) return;
+    Array.prototype.forEach.call(dom.planeSeg.querySelectorAll(".seg-btn"), function (b) {
       // A layout that defines its own panes cannot be filled with one plane;
-      // showing the option as choosable would be a lie.
+      // offering the button as choosable there would be a lie.
       b.disabled = !!def.fixed;
-      b.classList.toggle("on", !def.fixed && b.dataset.fill === state.planeFill);
+      b.classList.toggle("active", !def.fixed && b.dataset.fill === state.planeFill);
+      b.title = def.fixed
+        ? "The " + def.label + " layout defines its own planes"
+        : b.dataset.fill === "mix"
+          ? "Each layout's own arrangement of planes"
+          : "Fill every pane with " + b.dataset.fill + " slices";
     });
   }
 
@@ -329,7 +334,9 @@
     dom.annotOk = byId("annotOk");
     dom.annotCancel = byId("annotCancel");
     dom.calibrationNote = byId("calibrationNote");
-    dom.stackSeg = byId("stackSeg");
+    dom.planeSeg = byId("planeSeg");
+    dom.stackBtn = byId("stackBtn");
+    dom.stackMenu = byId("stackMenu");
     dom.stackNote = byId("stackNote");
     dom.obliqueInfo = byId("obliqueInfo");
     dom.obliqueReset = byId("obliqueResetBtn");
@@ -343,6 +350,8 @@
     dom.reportHeader = byId("reportHeader");
     dom.reportStatus = byId("reportStatus");
     dom.reportTemplate = byId("reportTemplate");
+    dom.templateCredit = byId("templateCredit");
+    dom.placeholderWarn = byId("placeholderWarn");
     dom.reportKeyList = byId("reportKeyList");
     dom.reportFields = {};
     REPORT.SECTIONS.forEach(function (sec) {
@@ -2131,6 +2140,21 @@
         ctx.fill();
       });
     }
+
+    // The grip at the intersection. Drawn at the size it is hit-tested at,
+    // so what can be grabbed is exactly what is shown — an invisible
+    // draggable region is a feature nobody finds.
+    var grip = crosshairCanvasPoint(geom);
+    if (grip) {
+      ctx.setLineDash([]);
+      ctx.lineWidth = Math.max(1.4, 1.4 * dpr);
+      ctx.strokeStyle = tilted ? "rgba(110, 242, 160, 0.95)" : "rgba(255, 210, 74, 0.95)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.beginPath();
+      ctx.arc(grip.x, grip.y, CROSSHAIR_GRIP_PX * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -2222,6 +2246,46 @@
   }
 
   /** Map a viewport click to indices on the two companion planes. */
+  /**
+   * Where this pane draws the crosshair intersection, in canvas pixels.
+   * Null when there is nothing to draw.
+   */
+  function crosshairCanvasPoint(geom) {
+    if (!geom || !geom.vol || geom.plane === "vr") return null;
+    var world = crosshairWorld(geom.vol, indexRecord(geom.uid));
+    var pp = worldToPlane(geom.plane, geom.slab, world, geom.index, geom.vol);
+    if (!pp || !isFinite(pp.x) || !isFinite(pp.y)) return null;
+    return planeToCanvas(geom.t, pp.x, pp.y);
+  }
+
+  /**
+   * Is the cursor on this pane's crosshair grip?
+   *
+   * Only the intersection counts, and only within a small radius. The arms
+   * were tried and are wrong: they run the full width and height of the
+   * pane, so accepting them turns a cross-shaped band through the middle of
+   * the image into a region where a window/level drag silently moves the
+   * crosshair instead, and where a measurement handle sitting under an arm
+   * cannot be picked up at all.
+   *
+   * The radius is in screen pixels, so the grip stays the same size to the
+   * hand at any zoom.
+   */
+  var CROSSHAIR_GRIP_PX = 11;
+
+  function hitTestCrosshair(i, clientX, clientY) {
+    if (!state.crosshair) return null;
+    var rec = cellEls[i], geom = rec && rec.geom;
+    if (!geom) return null;
+    var centre = crosshairCanvasPoint(geom);
+    if (!centre) return null;
+    var rect = rec.canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    var cx = (clientX - rect.left) * dpr, cy = (clientY - rect.top) * dpr;
+    return Math.hypot(centre.x - cx, centre.y - cy) <= CROSSHAIR_GRIP_PX * dpr
+      ? { centre: true } : null;
+  }
+
   function crosshairFromPoint(i, clientX, clientY) {
     if (!state.volume) return;
     var rec = cellEls[i], geom = rec && rec.geom;
@@ -3989,6 +4053,7 @@
     });
     dom.reportFinalBtn.textContent = data.status === "final" ? "Reopen draft" : "Mark final";
     renderKeyImages();
+    renderPlaceholderWarning();
   }
 
   /** Refresh only the saved-at line, so typing does not fight the textarea. */
@@ -4040,6 +4105,108 @@
     flushReport();
     renderReport();
     showToast("Key image attached: " + caption);
+  }
+
+  /**
+   * Fill the template list, grouped so a long collection stays navigable.
+   *
+   * Imported templates keep their own author's label; the group makes clear
+   * which modality they were written for without renaming them.
+   */
+  function buildTemplatePicker() {
+    if (!dom.reportTemplate) return;
+    var groups = {};
+    TPL.ORDER.forEach(function (k) {
+      var t = TPL.TEMPLATES[k];
+      if (!t) return;
+      (groups[t.modality] = groups[t.modality] || []).push([k, t.label]);
+    });
+    var html = '<option value="">Insert…</option>';
+    ["Any", "CT", "MRI"].forEach(function (mod) {
+      if (!groups[mod]) return;
+      html += '<optgroup label="' + escapeHtml(mod) + '">';
+      groups[mod].forEach(function (pair) {
+        html += '<option value="' + escapeHtml(pair[0]) + '">' +
+          escapeHtml(pair[1]) + "</option>";
+      });
+      html += "</optgroup>";
+    });
+    dom.reportTemplate.innerHTML = html;
+  }
+
+  /**
+   * Insert a template into the draft.
+   *
+   * Inserting never finalises and never silently overwrites: anything
+   * already written is confirmed first, and the template's attribution is
+   * recorded so the exported report carries it.
+   */
+  function insertTemplate(keyName) {
+    var tpl = TPL.get(keyName);
+    if (!tpl || !state.reportStudyUid) return false;
+    if (state.report.status === "final") {
+      showToast("This report is marked final. Reopen it first.", true);
+      return false;
+    }
+    readReportFields();
+
+    var targets = ["technique", "comparison", "findings", "impression"];
+    var filled = targets.filter(function (k) { return (state.report[k] || "").trim(); });
+    if (filled.length &&
+        !confirm("Replace the current technique, comparison, findings and impression?")) {
+      return false;
+    }
+    targets.forEach(function (k) { state.report[k] = tpl[k] || ""; });
+
+    var credit = TPL.credit(tpl);
+    if (credit && state.report.credits.indexOf(credit) < 0) state.report.credits.push(credit);
+
+    // Push state into the textareas before saving: flushReport() reads the
+    // fields back, so saving first would write the stale values over the
+    // template that was just inserted.
+    renderReport();
+    flushReport();
+    renderReportStatusOnly();
+    var open = TPL.placeholders(state.report, REPORT.SECTIONS).length;
+    showToast(open
+      ? tpl.label + " inserted — " + open + " placeholder" + (open === 1 ? "" : "s") + " to fill."
+      : tpl.label + " inserted.");
+    return true;
+  }
+
+  /**
+   * Show what is still unfilled, and who wrote the wording.
+   *
+   * A template's value is that it is fast; its risk is that it reads as a
+   * finished report while still holding the author's brackets. Counting them
+   * where the reader is typing is the cheapest place to catch that.
+   */
+  function renderPlaceholderWarning() {
+    if (!dom.placeholderWarn) return;
+    var data = state.report || REPORT.empty();
+    var open = TPL.placeholders(data, REPORT.SECTIONS);
+    if (!open.length || !state.reportStudyUid) {
+      dom.placeholderWarn.hidden = true;
+    } else {
+      var shown = open.slice(0, 8);
+      dom.placeholderWarn.hidden = false;
+      dom.placeholderWarn.innerHTML =
+        "<strong>" + open.length + " placeholder" + (open.length === 1 ? "" : "s") +
+        " still to fill.</strong><ul>" +
+        shown.map(function (h) {
+          return "<li>" + escapeHtml(h.section) + ": <code>" + escapeHtml(h.text) + "</code></li>";
+        }).join("") +
+        (open.length > shown.length ? "<li>… and " + (open.length - shown.length) + " more</li>" : "") +
+        "</ul>";
+    }
+    if (dom.templateCredit) {
+      dom.templateCredit.textContent = (data.credits || []).join("  ·  ");
+    }
+  }
+
+  /** How many placeholders remain; used by the finalise guard. */
+  function openPlaceholders() {
+    return TPL.placeholders(state.report || REPORT.empty(), REPORT.SECTIONS);
   }
 
   function reportText() {
@@ -4127,13 +4294,17 @@
 
 
 
-    if (dom.stackSeg) {
-      dom.stackSeg.addEventListener("click", function (e) {
-        var btn = e.target.closest(".seg-btn");
-        if (!btn) return;
-        setStackStep(parseInt(btn.dataset.step, 10) || 0);
-      });
-    }
+    wireMenu(dom.stackBtn, dom.stackMenu, "step", function (step) {
+      setStackStep(parseInt(step, 10) || 0);
+    });
+
+    // Axial / coronal / sagittal as their own buttons: choosing which plane
+    // fills the grid is a thing you do while reading, not a setting you go
+    // looking for in a menu.
+    dom.planeSeg.addEventListener("click", function (e) {
+      var btn = e.target.closest(".seg-btn");
+      if (btn && !btn.disabled) setPlaneFill(btn.dataset.fill);
+    });
 
     if (dom.obliqueReset) {
       dom.obliqueReset.addEventListener("click", resetOblique);
@@ -4260,31 +4431,18 @@
     }, 600);
     REPORT.SECTIONS.forEach(function (sec) {
       var el = dom.reportFields[sec.key];
-      if (el) el.addEventListener("input", saveSoon);
+      if (!el) return;
+      el.addEventListener("input", saveSoon);
+      el.addEventListener("input", function () {
+        readReportFields();
+        renderPlaceholderWarning();
+      });
     });
 
-    fillOptions(dom.reportTemplate, [["", "Insert…"]].concat(
-      Object.keys(REPORT.TEMPLATES).map(function (k) {
-        return [k, REPORT.TEMPLATES[k].label];
-      })));
+    buildTemplatePicker();
     dom.reportTemplate.addEventListener("change", function (e) {
-      var tpl = REPORT.TEMPLATES[e.target.value];
+      insertTemplate(e.target.value);
       e.target.value = "";
-      if (!tpl || !state.reportStudyUid) return;
-      readReportFields();
-      var filled = ["technique", "findings", "impression"].filter(function (k) {
-        return (state.report[k] || "").trim();
-      });
-      if (filled.length && !confirm("Replace the current technique, findings and impression?")) return;
-      state.report.technique = tpl.technique;
-      state.report.findings = tpl.findings;
-      state.report.impression = tpl.impression;
-      // Push state into the textareas before saving: flushReport() reads the
-      // fields back, so saving first would write the stale values over the
-      // template that was just inserted.
-      renderReport();
-      flushReport();
-      renderReportStatusOnly();
     });
 
     byId("reportGrabBtn").addEventListener("click", captureKeyImage);
@@ -4332,6 +4490,19 @@
         state.report.status = "draft";
       } else {
         if (REPORT.isEmpty(state.report)) return showToast("Nothing to finalise.", true);
+        // A template's brackets are the author's "fill this in". Signing a
+        // report that still holds them is the specific mistake templates
+        // make easy, so it takes a deliberate override.
+        var open = openPlaceholders();
+        if (open.length && !confirm(
+              open.length + " placeholder" + (open.length === 1 ? " is" : "s are") +
+              " still unfilled:\n\n" +
+              open.slice(0, 8).map(function (h) { return "  " + h.section + ": " + h.text; })
+                .join("\n") +
+              (open.length > 8 ? "\n  … and " + (open.length - 8) + " more" : "") +
+              "\n\nMark this report final anyway?")) {
+          return;
+        }
         state.report.status = "final";
       }
       flushReport();
@@ -4537,7 +4708,18 @@
         }
         return;
       }
+      // Shift starts a crosshair drag from wherever it is pressed; without
+      // it, the crosshair still has to be grabbed, so a plain click keeps
+      // meaning window/level.
       if (e.button === 0 && e.shiftKey) {
+        state.drag = { cell: i, mode: "crosshair" };
+        crosshairFromPoint(i, e.clientX, e.clientY);
+        return;
+      }
+      if (e.button === 0 && state.tool === MEAS.TOOLS.none && !state.focusPick &&
+          !hitTestMeasurement(i, e.clientX, e.clientY) &&
+          hitTestCrosshair(i, e.clientX, e.clientY)) {
+        state.drag = { cell: i, mode: "crosshair" };
         crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
@@ -4678,6 +4860,7 @@
 
   function onMouseMove(e) {
     updateHuReadout(e);
+    updateGrabCursor(e);
     if (state.pendingMeasure && state.measureCell !== undefined) {
       measureHover(state.measureCell, e.clientX, e.clientY);
     }
@@ -4689,6 +4872,11 @@
     if (drag.mode === "sculpt") {
       sculptAt(drag.cell, e.clientX, e.clientY, drag.stroke);
       renderAll();
+      return;
+    }
+
+    if (drag.mode === "crosshair") {
+      crosshairFromPoint(drag.cell, e.clientX, e.clientY);
       return;
     }
 
@@ -4780,6 +4968,40 @@
    * Read from the plane's own samples, so it is the scanner's number and not
    * whatever grey the current window happens to be painting.
    */
+  /**
+   * Show a move cursor over anything that can be dragged.
+   *
+   * Without it the crosshair and the measurement handles are invisible
+   * affordances: draggable, but with nothing on screen to say so.
+   */
+  function updateGrabCursor(e) {
+    if (state.drag) return;
+    var i = cellIndexAt(e.clientX, e.clientY);
+    if (i < 0) return;
+    var cell = state.cells[i], rec = cellEls[i];
+    if (!cell || !rec || cell.plane === "vr") return;
+    var grabbable = state.tool === MEAS.TOOLS.none && !state.focusPick &&
+      (!!hitTestMeasurement(i, e.clientX, e.clientY) ||
+       !!hitTestCrosshair(i, e.clientX, e.clientY));
+    var want = grabbable ? "move"
+      : state.focusPick ? "cell"
+      : state.tool === MEAS.TOOLS.none ? "crosshair" : "cell";
+    if (rec.root.style.cursor !== want) rec.root.style.cursor = want;
+  }
+
+  /** Which pane the cursor is over, or -1. */
+  function cellIndexAt(clientX, clientY) {
+    for (var i = 0; i < cellEls.length; i++) {
+      var rec = cellEls[i];
+      if (!rec || !rec.canvas) continue;
+      var r = rec.canvas.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   function updateHuReadout(e) {
     if (!dom.huReadout) return;
     if (!state.huProbe || !state.volume) { dom.huReadout.textContent = ""; return; }
@@ -5075,7 +5297,7 @@
     if (most < 2) {
       dom.stackNote.textContent =
         "No plane is repeated in this layout, so there is nothing to stack. " +
-        "Try the 2\u00d73 grid, or fill any grid with one plane from the layout menu.";
+        "Try the 2\u00d73 grid, or fill any grid with one plane using Ax / Cor / Sag.";
       return;
     }
     if (!state.stackStep) {
@@ -5101,9 +5323,16 @@
   }
 
   function syncStackSeg() {
-    if (!dom.stackSeg) return;
-    Array.prototype.forEach.call(dom.stackSeg.querySelectorAll(".seg-btn"), function (btn) {
-      btn.classList.toggle("active", parseInt(btn.dataset.step, 10) === state.stackStep);
+    if (dom.stackBtn) {
+      dom.stackBtn.textContent = "⇕ Stack " + (state.stackStep ? state.stackStep : "same") + " ▾";
+      dom.stackBtn.title = state.stackStep
+        ? "Repeated panes sit " + state.stackStep + " slice" +
+          (state.stackStep > 1 ? "s" : "") + " apart — click to change"
+        : "Repeated panes all show the same slice — click to change";
+    }
+    if (!dom.stackMenu) return;
+    Array.prototype.forEach.call(dom.stackMenu.querySelectorAll("[data-step]"), function (btn) {
+      btn.classList.toggle("on", parseInt(btn.dataset.step, 10) === state.stackStep);
     });
   }
 
@@ -5277,6 +5506,11 @@
     measurementLines: measurementLines,
     moveGrip: moveGrip,
     hitTestMeasurement: hitTestMeasurement,
+    hitTestCrosshair: hitTestCrosshair,
+    setStackStep: setStackStep,
+    insertTemplate: insertTemplate,
+    openPlaceholders: openPlaceholders,
+    reportText: reportText,
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
     cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
     cellCount: function () { return cellEls.length; },

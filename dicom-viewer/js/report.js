@@ -27,89 +27,37 @@
   var SECTIONS = [
     { key: "history", label: "Clinical history" },
     { key: "technique", label: "Technique" },
+    // Comparison is its own section because the imported templates have one,
+    // and folding it into Findings buries the single line that says whether
+    // a prior was looked at.
+    { key: "comparison", label: "Comparison" },
     { key: "findings", label: "Findings" },
     { key: "impression", label: "Impression" },
   ];
 
-  /* Starter text, not a substitute for reading the images. Each is a
-     skeleton of headings a report of that kind usually covers. */
-  var TEMPLATES = {
-    ctHead: {
-      label: "CT head",
-      technique: "Non-contrast axial CT of the brain.",
-      findings: [
-        "Brain parenchyma: no acute infarct, haemorrhage or mass effect.",
-        "Ventricles and sulci: normal size and configuration.",
-        "Extra-axial spaces: no collection.",
-        "Posterior fossa: unremarkable.",
-        "Skull and sinuses: unremarkable.",
-      ].join("\n"),
-      impression: "No acute intracranial abnormality.",
-    },
-    ctChest: {
-      label: "CT chest",
-      technique: "Volumetric CT of the thorax.",
-      findings: [
-        "Lungs: no consolidation, mass or interstitial abnormality.",
-        "Pleura: no effusion or pneumothorax.",
-        "Mediastinum and hila: no lymphadenopathy.",
-        "Heart and great vessels: unremarkable.",
-        "Bones and chest wall: unremarkable.",
-      ].join("\n"),
-      impression: "No significant abnormality in the chest.",
-    },
-    ctAbdomen: {
-      label: "CT abdomen / pelvis",
-      technique: "CT of the abdomen and pelvis.",
-      findings: [
-        "Liver, gallbladder and biliary tree:",
-        "Pancreas, spleen and adrenals:",
-        "Kidneys and ureters:",
-        "Bowel and mesentery:",
-        "Pelvic organs:",
-        "Vessels, nodes and peritoneum:",
-        "Bones:",
-      ].join("\n"),
-      impression: "",
-    },
-    mrBrain: {
-      label: "MRI brain",
-      technique: "Multiplanar multisequence MRI of the brain.",
-      findings: [
-        "Parenchyma and signal abnormality:",
-        "Grey-white differentiation:",
-        "Ventricles and CSF spaces:",
-        "Posterior fossa and brainstem:",
-        "Vascular flow voids:",
-        "Orbits, sinuses and mastoids:",
-      ].join("\n"),
-      impression: "",
-    },
-    mrSpine: {
-      label: "MRI spine",
-      technique: "Multiplanar MRI of the spine.",
-      findings: [
-        "Alignment and vertebral bodies:",
-        "Discs, level by level:",
-        "Spinal canal and exit foramina:",
-        "Cord signal:",
-        "Paraspinal soft tissues:",
-      ].join("\n"),
-      impression: "",
-    },
-    blank: { label: "Blank", technique: "", findings: "", impression: "" },
-  };
+  /**
+   * Templates live in their own module: the imported collection carries
+   * third-party copyright and its own licence, which does not belong mixed
+   * into this file's storage code.
+   */
+  function templates() {
+    return (global.CTTemplates && global.CTTemplates.TEMPLATES) || {};
+  }
 
   function key(studyUid) { return PREFIX + studyUid; }
 
   function empty() {
-    return {
+    var out = {
       version: VERSION,
-      history: "", technique: "", findings: "", impression: "",
       status: "draft",
       keyImages: [],
+      // Attribution for any template inserted, so a report built from
+      // third-party wording carries its credit into the exported text.
+      credits: [],
       updated: null,
     };
+    SECTIONS.forEach(function (s) { out[s.key] = ""; });
+    return out;
   }
 
   /**
@@ -128,6 +76,7 @@
       });
       out.status = parsed.status === "final" ? "final" : "draft";
       out.keyImages = Array.isArray(parsed.keyImages) ? parsed.keyImages : [];
+      out.credits = Array.isArray(parsed.credits) ? parsed.credits : [];
       out.updated = parsed.updated || null;
       return out;
     } catch (err) {
@@ -142,6 +91,7 @@
       version: VERSION,
       status: data.status === "final" ? "final" : "draft",
       keyImages: data.keyImages || [],
+      credits: data.credits || [],
       updated: new Date().toISOString(),
     };
     SECTIONS.forEach(function (s) { record[s.key] = data[s.key] || ""; });
@@ -204,14 +154,28 @@
       lines.push("");
     }
 
+    // Unfilled placeholders are called out in the exported text as well as
+    // on screen: a report is most dangerous once it has left the viewer.
+    var open = (global.CTTemplates ? global.CTTemplates.placeholders(data, SECTIONS) : []);
+    if (open.length) {
+      lines.push("UNFILLED PLACEHOLDERS (" + open.length + ")");
+      open.forEach(function (h) { lines.push("  " + h.section + ": " + h.text); });
+      lines.push("");
+    }
+
     lines.push(data.status === "final" ? "[Final]" : "[Draft — not finalised]");
     if (data.updated) lines.push("Last edited: " + new Date(data.updated).toLocaleString());
+
+    if (data.credits && data.credits.length) {
+      lines.push("");
+      data.credits.forEach(function (c) { lines.push(c); });
+    }
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
   }
 
   global.CTReport = {
     SECTIONS: SECTIONS,
-    TEMPLATES: TEMPLATES,
+    templates: templates,
     empty: empty,
     load: load,
     save: save,

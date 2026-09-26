@@ -99,7 +99,8 @@
     var def = LAYOUTS[key] || LAYOUTS.quad;
     var total = def.cols * def.rows;
 
-    if (!def.fixed && state.planeFill && state.planeFill !== "mix") {
+    if (!def.fixed && state.planeFill && state.planeFill !== "mix" &&
+        state.planeFill !== "seq") {
       var same = [];
       for (var k = 0; k < total; k++) same.push(state.planeFill);
       return same;
@@ -113,22 +114,115 @@
     return out;
   }
 
-  /** Point every pane at one plane, or back to the layout's own mixture. */
+  /**
+   * Point every pane at one plane, at one sequence each, or back to the
+   * layout's own mixture.
+   *
+   * "seq" is the MR reading layout: one *series* per pane, each shown in the
+   * plane it was acquired in. Reformatting a 4 mm sagittal T2 into a coronal
+   * image is technically possible and diagnostically useless, so the sections
+   * a sequence was taken in are what the grid lays out, not reconstructions
+   * of them.
+   */
   function setPlaneFill(fill) {
     state.planeFill = fill;
     var def = LAYOUTS[state.layout] || LAYOUTS.quad;
     if (def.fixed || fill === "mix") {
       applyLayout(state.layout);          // rebuild the layout's own arrangement
-    } else {
-      state.cells.forEach(function (cell) {
-        cell.plane = fill;
+      syncPlaneFill();
+      return;
+    }
+    if (fill === "seq") { fillWithSequences(); return; }
+
+    state.cells.forEach(function (cell) {
+      cell.plane = fill;
+      cell.seriesUid = null;
+      cell.pinned = false;
+      cell.offset = 0;
+    });
+    restack();
+    rebuildCells();
+    syncPlaneFill();
+  }
+
+  /** Series in this study that can be reconstructed, current one first. */
+  function stackableSeries() {
+    var current = getCurrentGroup();
+    var study = current && current.slices.length
+      ? current.slices[0].instance.studyUID : null;
+    return state.seriesOrder.filter(function (uid) {
+      var g = state.seriesMap[uid];
+      if (!g || g.slices.length < 2) return false;
+      if (!study) return true;
+      return g.slices[0].instance.studyUID === study;
+    }).sort(function (a, b) {
+      // The series on screen leads, so the pane you were reading stays first.
+      if (a === state.currentSeriesUID) return -1;
+      if (b === state.currentSeriesUID) return 1;
+      return 0;
+    });
+  }
+
+  /** The plane a series was acquired in, or null when it cannot be told. */
+  function nativePlaneOf(uid) {
+    var vol = uid === state.currentSeriesUID ? state.volume : state.volumes[uid];
+    if (!vol) return null;
+    var hit = V.acquisitionPlane(vol);
+    return hit ? hit.plane : null;
+  }
+
+  /**
+   * Give each pane its own sequence.
+   *
+   * Volumes are built on demand and one at a time, because reconstructing
+   * six MR series at once on a laptop is a long freeze with no feedback.
+   */
+  function fillWithSequences() {
+    var uids = stackableSeries();
+    if (!uids.length) {
+      showToast("Load a study with more than one series first.", true);
+      state.planeFill = "mix";
+      syncPlaneFill();
+      return;
+    }
+    var want = uids.slice(0, state.cells.length);
+    var missing = want.filter(function (u) {
+      return u !== state.currentSeriesUID && !state.volumes[u];
+    });
+
+    var assign = function () {
+      state.cells.forEach(function (cell, i) {
+        var uid = want[i % want.length];
+        cell.seriesUid = uid === state.currentSeriesUID ? null : uid;
+        cell.plane = nativePlaneOf(uid) || cell.plane || "axial";
         cell.pinned = false;
         cell.offset = 0;
       });
       restack();
       rebuildCells();
-    }
-    syncPlaneFill();
+      syncPlaneFill();
+      var n = Math.min(want.length, state.cells.length);
+      setStatus("Showing " + n + " sequence" + (n === 1 ? "" : "s") +
+        ", each in the plane it was acquired in.");
+    };
+
+    if (!missing.length) return assign();
+
+    setBusy(true, "Reconstructing " + missing.length + " series…");
+    var at = 0;
+    var step = function () {
+      if (at >= missing.length) { setBusy(false); assign(); return; }
+      var uid = missing[at++];
+      var group = state.seriesMap[uid];
+      setBusy(true, "Reconstructing " + (group.description || "series") +
+        " (" + at + " of " + missing.length + ")…");
+      afterPaint(function () {
+        try { rememberVolume(uid, V.build(group.slices, decodeForVolume)); }
+        catch (err) { /* a series that will not build is simply skipped */ }
+        step();
+      });
+    };
+    step();
   }
 
   /**
@@ -138,6 +232,16 @@
   function syncPlaneFill() {
     var def = LAYOUTS[state.layout] || LAYOUTS.quad;
     var planes = state.cells.map(function (c) { return c.plane; });
+    // One sequence per pane is a choice about *series*, so it cannot be
+    // inferred from the planes — two sagittal sequences look like "all
+    // sagittal". It holds until something else is picked.
+    var bySeries = state.cells.length > 1 && state.cells.some(function (c) {
+      return c.seriesUid;
+    });
+    if (state.planeFill === "seq" && bySeries) {
+      syncLayoutControls();
+      return;
+    }
     // A single-pane layout is trivially "uniform", but inferring a whole-grid
     // plane choice from it would silently turn 1x1 into "All axial" and cost
     // the 3D pane on the way back to 2x2.
@@ -165,16 +269,23 @@
       });
     }
     if (!dom.planeSeg) return;
+    var oneSeries = stackableSeries().length < 2;
     Array.prototype.forEach.call(dom.planeSeg.querySelectorAll(".seg-btn"), function (b) {
+      var seq = b.dataset.fill === "seq";
       // A layout that defines its own panes cannot be filled with one plane;
-      // offering the button as choosable there would be a lie.
-      b.disabled = !!def.fixed;
+      // and one sequence per pane needs more than one sequence. Offering
+      // either as choosable when it cannot work would be a lie.
+      b.disabled = !!def.fixed || (seq && oneSeries);
       b.classList.toggle("active", !def.fixed && b.dataset.fill === state.planeFill);
       b.title = def.fixed
         ? "The " + def.label + " layout defines its own planes"
-        : b.dataset.fill === "mix"
-          ? "Each layout's own arrangement of planes"
-          : "Fill every pane with " + b.dataset.fill + " slices";
+        : seq
+          ? (oneSeries
+              ? "Only one series in this study — nothing to lay out"
+              : "One sequence per pane, each in the plane it was acquired in")
+          : b.dataset.fill === "mix"
+            ? "Each layout's own arrangement of planes"
+            : "Fill every pane with " + b.dataset.fill + " slices";
     });
   }
 
@@ -307,6 +418,7 @@
     dom.windowMenu = byId("windowMenu");
     dom.windowPresets = byId("windowPresets");
     dom.moreBtn = byId("moreBtn");
+    dom.shotBtn = byId("shotBtn");
     dom.moreMenu = byId("moreMenu");
     dom.navBtn = byId("navBtn");
     dom.layoutBtn = byId("layoutBtn");
@@ -1382,6 +1494,7 @@
       selectSeries(state.seriesOrder[0]);
     } else {
       renderSeriesList();
+      syncLayoutControls();
     }
   }
 
@@ -1635,6 +1748,10 @@
     updateVolumeInfo();
     swapReportToStudy();
     syncModalityControls();
+    // Whether one sequence per pane is even possible depends on how many
+    // series are loaded, so the plane buttons have to be refreshed when
+    // that changes — not only when the layout does.
+    syncLayoutControls();
     updateObliqueInfo();
     updateGeometryWarnings();
     updateCalibrationNote();
@@ -2298,14 +2415,52 @@
     // Go through millimetres so the click lands correctly on a tilted plane.
     var world = planeToWorld(geom.plane, geom.slab, p.x, p.y, geom.index, geom.vol);
     var want = indicesFromWorld(world, geom.vol);
-    var rec = indexRecord(geom.uid);
+    var idx = indexRecord(geom.uid);
     MPR_PLANES.forEach(function (q) {
       if (q === geom.plane) return;    // clicking in-plane must not move this cut
       var count = V.planeCount(geom.vol, q);
-      rec[q] = Math.max(0, Math.min(want[q], count - 1));
+      idx[q] = Math.max(0, Math.min(want[q], count - 1));
     });
+    // Every other loaded sequence follows to the same place in the patient,
+    // which is the point of moving the crosshair at all: one gesture, and
+    // every section on screen is showing the same anatomy.
+    if (state.link) linkSeriesToLocal(geom.uid, geom.vol, world);
     renderAll();
     syncSliders();
+  }
+
+  /**
+   * Bring every other loaded series to a point given in one series' own
+   * millimetres.
+   *
+   * Shared by the crosshair and the focus point.
+   *
+   * The mapping goes through patient coordinates, which makes it exact for
+   * *any* pair of orientations: a point picked on an axial T2 expressed in
+   * a sagittal T1's own axes is still the same place in the patient. An
+   * earlier version required the two series to have been acquired the same
+   * way round, which was simply wrong — and the wrong way: it quietly
+   * demoted a sagittal sequence to slice-level matching by a Z that, for a
+   * sagittal stack, is the same on every slice and so locates nothing.
+   *
+   * The genuine fallback is narrower: a series with no Image Position /
+   * Orientation (Patient) at all. There, matching the axial level by Z is
+   * the most that can honestly be done.
+   */
+  function linkSeriesToLocal(fromUid, fromVol, local) {
+    var patient = V.toPatient(fromVol, local);
+    if (!patient) return;
+    Object.keys(state.volumes).forEach(function (uid) {
+      if (uid === fromUid) return;
+      var vol = state.volumes[uid];
+      if (!vol || vol === fromVol) return;
+      if (V.hasPatientFrame(vol)) {
+        applyLocalTo(uid, vol, V.fromPatient(vol, patient));
+      } else {
+        var hit = V.sliceNearestZ(vol, patient[2]);
+        if (hit) indexRecord(uid).axial = hit.index;
+      }
+    });
   }
 
 
@@ -2360,25 +2515,7 @@
     if (home) applyLocalTo(f.uid, home, f.local);
 
     // 2. Every other loaded series, if linking is on.
-    if (state.link) {
-      Object.keys(state.volumes).forEach(function (uid) {
-        if (uid === f.uid) return;
-        var vol = state.volumes[uid];
-        if (!vol || vol === home) return;
-        var local = null;
-        if (f.patient && V.sameFrame(home, vol)) {
-          local = V.fromPatient(vol, f.patient);      // in-plane as well as level
-        }
-        if (local) {
-          applyLocalTo(uid, vol, local);
-        } else if (f.patient) {
-          // Different orientation, or no patient frame: the most that can
-          // honestly be matched is the slice level.
-          var hit = V.sliceNearestZ(vol, f.patient[2]);
-          if (hit) indexRecord(uid).axial = hit.index;
-        }
-      });
-    }
+    if (state.link && home) linkSeriesToLocal(f.uid, home, f.local);
 
     // 3. Pinned panes hold their own slice, so they have to be told directly.
     state.cells.forEach(function (cell) {
@@ -2443,9 +2580,7 @@
   /** The focus point in one pane's own volume frame, or null. */
   function localForCell(f, geom) {
     if (geom.uid === f.uid) return f.local;
-    if (!f.patient) return null;
-    var home = volumeFor(f.uid);
-    if (!home || !V.sameFrame(home, geom.vol)) return null;
+    if (!f.patient || !V.hasPatientFrame(geom.vol)) return null;
     return V.fromPatient(geom.vol, f.patient);
   }
 
@@ -2485,8 +2620,11 @@
       var vol = state.volumes[uid];
       if (uid === f.uid || !vol || !home || vol === home) return;
       var how = !f.patient ? "not linked"
-        : V.sameFrame(home, vol) ? "in-plane match"
-        : "slice level only (different orientation)";
+        : V.hasPatientFrame(vol)
+          ? (V.sameFrame(home, vol) ? "in-plane match"
+             : "matched in patient coordinates (" +
+               (V.acquisitionPlane(vol) || {}).plane + " acquisition)")
+          : "slice level only (no Image Position/Orientation)";
       // Snapping to the nearest slice always succeeds, even when the other
       // series does not reach this level at all. Saying only "match" there
       // would be the most misleading thing on the screen.
@@ -3227,6 +3365,11 @@
     state.tool = tool;
     if (tool === MEAS.TOOLS.none) {
       setStatus("Navigate: drag a measurement's handle to reshape it, or its centre grip to move it.");
+    } else if (tool === "crosshair") {
+      // A crosshair you cannot see is one you cannot aim.
+      if (!state.crosshair) { state.crosshair = true; renderAll(); }
+      setStatus("Crosshair: drag anywhere to move the + — every plane, pane and " +
+        "linked sequence follows it.");
     } else if (tool === "sculpt") setStatus("Sculpt: drag on any plane to cut tissue away.");
     else if (MEAS.isVariable(tool)) {
       setStatus(MEAS.label(tool) + ": click each point, then double-click, press Enter, " +
@@ -3249,7 +3392,14 @@
   /** Keep the toolbar buttons and the overflow menu showing the live tool. */
   function syncToolControls() {
     var navigating = state.tool === MEAS.TOOLS.none;
+    // The crosshair has its own button, so the Measure button must not
+    // borrow its state — nor fall back to "Navigate", which is what an
+    // unknown tool name used to make it say while the crosshair was armed.
+    var measuring = !navigating && state.tool !== "crosshair";
     if (dom.navBtn) dom.navBtn.classList.toggle("active", navigating);
+    if (dom.crosshairBtn) {
+      dom.crosshairBtn.classList.toggle("active", state.tool === "crosshair");
+    }
     if (dom.toolMenu) {
       Array.prototype.forEach.call(dom.toolMenu.querySelectorAll("[data-tool]"), function (btn) {
         btn.classList.toggle("on", btn.dataset.tool === state.tool);
@@ -3258,11 +3408,11 @@
     // The button names the tool it is holding. A menu that hides which tool
     // is armed is how a reader ends up drawing an ROI they meant to probe.
     if (dom.toolMoreBtn) {
-      dom.toolMoreBtn.classList.toggle("active", !navigating);
-      dom.toolMoreBtn.textContent = navigating
-        ? "📏 Measure ▾" : MEAS.glyph(state.tool) + " " + MEAS.label(state.tool) + " ▾";
-      dom.toolMoreBtn.title = navigating
-        ? "Measure and annotate" : "Active tool: " + MEAS.label(state.tool);
+      dom.toolMoreBtn.classList.toggle("active", measuring);
+      dom.toolMoreBtn.textContent = measuring
+        ? MEAS.glyph(state.tool) + " " + MEAS.label(state.tool) + " ▾" : "📏 Measure ▾";
+      dom.toolMoreBtn.title = measuring
+        ? "Active tool: " + MEAS.label(state.tool) : "Measure and annotate";
     }
   }
 
@@ -3344,11 +3494,17 @@
       : fmt(pitch) + "mm";
     var tilt = tiltOf(plane);
     var offBy = linkGapFor(cell);
+    // Say when a pane is showing a reconstruction rather than the slices as
+    // acquired. On a thick MR stack that is the difference between a
+    // diagnostic image and a smear, and the pixels alone do not admit it.
+    var native = V.acquisitionPlane(vol);
+    var reformatted = native && native.plane !== plane;
     rec.br.textContent =
       (cellIndex(cell) + 1) + " / " + count +
       (cell.pinned ? "  pinned" : cell.offset ? "  " + (cell.offset > 0 ? "+" : "") + cell.offset : "") +
       (offBy ? "\n⚠ " + offBy : "") +
       "\n" + thicknessLabel +
+      (reformatted ? "\nreformatted from " + native.plane : "") +
       (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
       "\n" + Math.round(cell.view.zoom * 100) + "%";
   }
@@ -3737,14 +3893,35 @@
    * gap is bigger than the pane's own slice spacing, else null.
    */
   function linkGapFor(cell) {
-    if (!state.link || !cell.seriesUid || cell.plane !== "axial") return null;
+    if (!state.link || !cell.seriesUid) return null;
     var vol = cellVolume(cell);
-    if (!vol || !state.volume) return null;
-    var here = V.sliceZ(vol, cellIndex(cell));
-    var there = V.sliceZ(state.volume, state.index.axial);
-    if (here === null || there === null) return null;
-    var gap = Math.abs(here - there);
-    if (gap <= Math.max(vol.spacingZ, 0.5)) return null;
+    if (!vol || !state.volume || vol === state.volume) return null;
+
+    // Measure the gap between where the two series' cuts actually meet, in
+    // patient millimetres.
+    //
+    // Comparing slice Z alone was wrong for anything but an axial
+    // acquisition: a sagittal stack's slices all share one Z, so the
+    // "current level" it compared against was a constant, and a correctly
+    // linked axial pane was labelled 57 mm outside the series.
+    if (!V.hasPatientFrame(vol) || !V.hasPatientFrame(state.volume)) {
+      // Without patient frames, Z is all there is — and only an axial pane
+      // can be judged by it.
+      if (cell.plane !== "axial") return null;
+      var here = V.sliceZ(vol, cellIndex(cell));
+      var there = V.sliceZ(state.volume, state.index.axial);
+      if (here === null || there === null) return null;
+      var zGap = Math.abs(here - there);
+      return zGap <= Math.max(vol.spacingZ, 0.5)
+        ? null : "off by " + zGap.toFixed(1) + " mm — outside this series";
+    }
+
+    var mine = V.toPatient(vol, crosshairWorld(vol, indexRecord(cellSeriesUid(cell))));
+    var cur = V.toPatient(state.volume, crosshairWorld(state.volume, state.index));
+    if (!mine || !cur) return null;
+    var gap = Math.hypot(mine[0] - cur[0], mine[1] - cur[1], mine[2] - cur[2]);
+    // One slice of tolerance: the two stacks rarely sample the same levels.
+    if (gap <= Math.max(vol.spacingZ, 1.0)) return null;
     return "off by " + gap.toFixed(1) + " mm — outside this series";
   }
 
@@ -3896,6 +4073,7 @@
       var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
       if (b) b.classList.toggle("on", !!on);
     };
+    set("crosshairShow", state.crosshair);
     set("hu", state.huProbe);
     set("markers", state.showAnnotations);
     // Offering "go to the focus point" when there is none is worse than not
@@ -4342,10 +4520,11 @@
         : "Unlinked: each series scrolls on its own.");
     });
 
+    // The + is a tool, not a visibility switch: pressing it arms dragging
+    // the crosshair. Whether the lines are drawn at all is a display
+    // preference, and lives with the other display toggles under More.
     dom.crosshairBtn.addEventListener("click", function () {
-      state.crosshair = !state.crosshair;
-      dom.crosshairBtn.classList.toggle("active", state.crosshair);
-      renderAll();
+      setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair");
     });
 
     // Rotate / flip act on the active pane, keeping each pane's display
@@ -4377,8 +4556,25 @@
     // Hiding is deliberately not deleting: the checklist asks for the two to
     // be separate actions, and a reader who hides an ROI to look underneath
     // should not lose it.
+    // One press saves the active pane — the common case when something on
+    // screen is worth keeping. The variants live under More, so the
+    // screenshot stays a single button on the bar.
+    dom.shotBtn.addEventListener("click", function () { saveScreenshot("pane"); });
+
     wireMenu(dom.moreBtn, dom.moreMenu, "more", function (what) {
-      if (what === "hu") {
+      if (what === "shotPane") {
+        saveScreenshot("pane");
+      } else if (what === "shotGrid") {
+        saveScreenshot("grid");
+      } else if (what === "copyPane") {
+        copyScreenshot("pane");
+      } else if (what === "shotReport") {
+        captureKeyImage();
+      } else if (what === "crosshairShow") {
+        state.crosshair = !state.crosshair;
+        if (!state.crosshair && state.tool === "crosshair") setTool(MEAS.TOOLS.none);
+        renderAll();
+      } else if (what === "hu") {
         state.huProbe = !state.huProbe;
         if (!state.huProbe) dom.huReadout.textContent = "";
       } else if (what === "markers") {
@@ -4388,8 +4584,6 @@
         if (!goToFocus(true)) showToast("No focus point yet — press 🎯, then click one.", true);
       } else if (what === "focusClear") {
         clearFocus();
-      } else if (what === "export") {
-        exportActiveViewport();
       }
       syncMoreMenu();
     });
@@ -4716,6 +4910,14 @@
         crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
+      // With the crosshair tool armed, dragging anywhere in the pane moves
+      // it — which is the whole point: put the + on the finding and every
+      // section on screen is showing that finding.
+      if (e.button === 0 && state.tool === "crosshair") {
+        state.drag = { cell: i, mode: "crosshair" };
+        crosshairFromPoint(i, e.clientX, e.clientY);
+        return;
+      }
       if (e.button === 0 && state.tool === MEAS.TOOLS.none && !state.focusPick &&
           !hitTestMeasurement(i, e.clientX, e.clientY) &&
           hitTestCrosshair(i, e.clientX, e.clientY)) {
@@ -4983,7 +5185,8 @@
     var grabbable = state.tool === MEAS.TOOLS.none && !state.focusPick &&
       (!!hitTestMeasurement(i, e.clientX, e.clientY) ||
        !!hitTestCrosshair(i, e.clientX, e.clientY));
-    var want = grabbable ? "move"
+    var want = state.tool === "crosshair" ? "move"
+      : grabbable ? "move"
       : state.focusPick ? "cell"
       : state.tool === MEAS.TOOLS.none ? "crosshair" : "cell";
     if (rec.root.style.cursor !== want) rec.root.style.cursor = want;
@@ -5074,6 +5277,8 @@
         break;
       case "n": case "N":
         setTool(MEAS.TOOLS.none); break;
+      case "x": case "X":
+        setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair"); break;
       case "r": case "R":
         applyReset("view"); break;
       case "1": setLayout("quad"); break;
@@ -5227,38 +5432,110 @@
    * (crosshair, orientation markers, measurements) over the image so what is
    * saved matches what is on screen.
    */
-  function exportActiveViewport() {
-    var i = state.activeCell;
+  /* ---------------------------------------------------------------------
+   * Screenshots
+   *
+   * What is captured is the pixels as rendered, with the overlays drawn on
+   * the annotation canvas — crosshair, orientation letters, measurements.
+   * The patient banner is DOM text sitting above the canvas, so it is not
+   * in the image; a screenshot is still the patient's imaging, and nothing
+   * here de-identifies anything.
+   * ------------------------------------------------------------------- */
+
+  /** Draw one pane into a context at (x, y, w, h). Returns false if empty. */
+  function paintPane(ctx, i, x, y, w, h) {
     var cell = state.cells[i], rec = cellEls[i];
-    if (!cell || !rec || !rec.canvas) return;
-    var plane = cell.plane;
+    if (!cell || !rec || !rec.canvas) return false;
+    if (cell.plane === "vr") {
+      if (!renderer) return false;
+      renderer.render();                       // make sure the buffer is current
+      ctx.drawImage(rec.canvas, x, y, w, h);
+      return true;
+    }
+    if (!rec.geom) return false;
+    ctx.drawImage(rec.canvas, x, y, w, h);
+    ctx.drawImage(rec.cross, x, y, w, h);
+    return true;
+  }
 
-    var out = document.createElement("canvas");
-    var src = rec.canvas;
-    out.width = src.width;
-    out.height = src.height;
-    var ctx = out.getContext("2d");
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, out.width, out.height);
+  /**
+   * Compose a screenshot.
+   *
+   * `scope` is "pane" for the active pane, or "grid" for every pane laid out
+   * exactly as it is on screen — which is the one worth keeping when the
+   * point being made is the relationship between the sections.
+   */
+  function buildScreenshot(scope) {
+    if (scope === "grid") {
+      var gridRect = dom.viewGrid.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      var out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(gridRect.width * dpr));
+      out.height = Math.max(1, Math.round(gridRect.height * dpr));
+      var ctx = out.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, out.width, out.height);
 
-    if (plane === "vr") {
-      if (!renderer) return showToast("Nothing to export from the 3D view yet.", true);
-      renderer.render();                       // ensure the buffer is current
-      ctx.drawImage(src, 0, 0);
-    } else {
-      if (!rec.geom) return showToast("Nothing to export yet.", true);
-      ctx.drawImage(src, 0, 0);
-      ctx.drawImage(rec.cross, 0, 0);
+      var drew = 0;
+      state.cells.forEach(function (cell, i) {
+        var rec = cellEls[i];
+        if (!rec || !rec.canvas) return;
+        var r = rec.canvas.getBoundingClientRect();
+        if (paintPane(ctx, i,
+              (r.left - gridRect.left) * dpr, (r.top - gridRect.top) * dpr,
+              r.width * dpr, r.height * dpr)) {
+          drew++;
+          // A hairline between panes, so a grid of similar slices does not
+          // read as one image once it is out of the viewer.
+          ctx.strokeStyle = "rgba(255,255,255,0.18)";
+          ctx.lineWidth = Math.max(1, dpr);
+          ctx.strokeRect((r.left - gridRect.left) * dpr, (r.top - gridRect.top) * dpr,
+            r.width * dpr, r.height * dpr);
+        }
+      });
+      return drew ? out : null;
     }
 
-    var group = getCurrentGroup();
-    var stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    var name = "ct-console-" + plane + "-" +
-      (group ? group.description.replace(/[^\w-]+/g, "_").slice(0, 40) : "view") +
-      "-" + stamp + ".png";
+    var rec = cellEls[state.activeCell];
+    if (!rec || !rec.canvas) return null;
+    var one = document.createElement("canvas");
+    one.width = rec.canvas.width;
+    one.height = rec.canvas.height;
+    var c = one.getContext("2d");
+    c.fillStyle = "#000";
+    c.fillRect(0, 0, one.width, one.height);
+    return paintPane(c, state.activeCell, 0, 0, one.width, one.height) ? one : null;
+  }
 
+  /**
+   * Name a screenshot after what is actually in it.
+   *
+   * Both halves come from the *active pane's* own series. Taking the plane
+   * from the pane and the description from whichever series happens to be
+   * current names a shot of the axial T2 after the sagittal T1 — which is
+   * worse than no name at all, because it reads as if it were true.
+   */
+  function screenshotName(scope) {
+    var cell = state.cells[state.activeCell];
+    var uid = cell ? cellSeriesUid(cell) : null;
+    var group = state.seriesMap[uid] || getCurrentGroup();
+    var what = scope === "grid" ? "grid" : (cell ? cell.plane : "view");
+    var who = scope === "grid"
+      ? (getCurrentGroup() ? String(getCurrentGroup().studyDescription ||
+          getCurrentGroup().description || "study") : "study")
+      : (group ? String(group.description || "series") : "view");
+    var stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return "ct-console-" + what + "-" +
+      who.replace(/[^\w-]+/g, "_").slice(0, 40) + "-" + stamp + ".png";
+  }
+
+  /** Save a screenshot to a file. */
+  function saveScreenshot(scope) {
+    var out = buildScreenshot(scope);
+    if (!out) return showToast("Nothing to capture yet — open a study first.", true);
+    var name = screenshotName(scope);
     out.toBlob(function (blob) {
-      if (!blob) return showToast("Export failed.", true);
+      if (!blob) return showToast("Screenshot failed.", true);
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
@@ -5267,9 +5544,34 @@
       a.click();
       document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
-      showToast("Exported " + name);
+      showToast("Saved " + name);
     }, "image/png");
   }
+
+  /**
+   * Put a screenshot on the clipboard.
+   *
+   * Clipboard image writing is not available everywhere — it needs a secure
+   * context and a permitted gesture — so a failure says so and points at the
+   * save, rather than appearing to succeed.
+   */
+  function copyScreenshot(scope) {
+    var out = buildScreenshot(scope);
+    if (!out) return showToast("Nothing to capture yet — open a study first.", true);
+    if (!navigator.clipboard || !window.ClipboardItem) {
+      return showToast("This browser will not put images on the clipboard — use Save instead.", true);
+    }
+    out.toBlob(function (blob) {
+      if (!blob) return showToast("Screenshot failed.", true);
+      navigator.clipboard.write([new window.ClipboardItem({ "image/png": blob })]).then(
+        function () { showToast("Copied to the clipboard."); },
+        function () { showToast("The clipboard refused the image — use Save instead.", true); }
+      );
+    }, "image/png");
+  }
+
+  /** Kept as the old name, so the More menu and its test still work. */
+  function exportActiveViewport() { saveScreenshot("pane"); }
 
   /** Surface geometry problems found during reconstruction. */
   function updateGeometryWarnings() {
@@ -5420,7 +5722,6 @@
       state.drag = null;
     });
 
-    dom.crosshairBtn.classList.toggle("active", state.crosshair);
     dom.linkBtn.classList.toggle("active", state.link);
     syncOrientMenu();
     syncLayoutControls();
@@ -5473,6 +5774,8 @@
     setCellPlane: setCellPlane,
     selectSeries: selectSeries,
     setPlaneFill: setPlaneFill,
+    nativePlaneOf: nativePlaneOf,
+    stackableSeries: stackableSeries,
     syncLayoutControls: syncLayoutControls,
     setCellIndex: setCellIndex,
     setActiveCell: setActiveCell,
@@ -5508,6 +5811,10 @@
     hitTestMeasurement: hitTestMeasurement,
     hitTestCrosshair: hitTestCrosshair,
     setStackStep: setStackStep,
+    saveScreenshot: saveScreenshot,
+    copyScreenshot: copyScreenshot,
+    buildScreenshot: buildScreenshot,
+    screenshotName: screenshotName,
     insertTemplate: insertTemplate,
     openPlaceholders: openPlaceholders,
     reportText: reportText,

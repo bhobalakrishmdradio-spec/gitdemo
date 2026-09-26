@@ -323,6 +323,38 @@
   /** True when a volume knows where it sits in the patient. */
   function hasPatientFrame(volume) { return !!(volume && volume.frame); }
 
+  /**
+   * The plane this series was actually acquired in, from the direction its
+   * slices advance.
+   *
+   * This matters most for MR, where a series is a stack of thick slices in
+   * one plane rather than an isotropic volume: a sagittal T2 with 4 mm gaps
+   * reformats into a coronal image that is technically correct and
+   * diagnostically useless. Knowing the native plane lets the viewer show
+   * each sequence the way it was taken, and say when it is doing otherwise.
+   *
+   * Returns { plane, obliquity } — obliquity is the angle in degrees between
+   * the slice normal and the nearest cardinal axis, so a genuinely oblique
+   * acquisition is not quietly filed as axial.
+   */
+  function acquisitionPlane(volume) {
+    var f = volume && volume.frame;
+    if (!f) return null;
+    var n = f.sliceDir;
+    var axes = [
+      { plane: PLANES.sagittal, v: Math.abs(n[0]) },   // normal along x
+      { plane: PLANES.coronal, v: Math.abs(n[1]) },    // normal along y
+      { plane: PLANES.axial, v: Math.abs(n[2]) },      // normal along z
+    ];
+    var best = axes[0];
+    for (var i = 1; i < axes.length; i++) if (axes[i].v > best.v) best = axes[i];
+    var cos = Math.min(1, Math.max(0, best.v));
+    return {
+      plane: best.plane,
+      obliquity: (Math.acos(cos) * 180) / Math.PI,
+    };
+  }
+
   /* ---------------------------------------------------------------------
    * Plane geometry
    * ------------------------------------------------------------------- */
@@ -919,6 +951,7 @@
     fromPatient: fromPatient,
     sameFrame: sameFrame,
     hasPatientFrame: hasPatientFrame,
+    acquisitionPlane: acquisitionPlane,
     sliceNearestZ: sliceNearestZ,
     hasPositions: hasPositions,
     planeCount: planeCount,

@@ -31,19 +31,47 @@ radiologist's report and your official imaging system for clinical decisions.
   width in a twitch — so the gesture feels identical on every preset, and the
   width cannot be slammed to zero by one long drag.
 - **Invert, zoom, pan**, and a per-pane slice scrubber.
-- **The crosshair is draggable.** It carries a grip at its intersection;
-  grab it and all three planes follow the cursor continuously, so you can
-  see where the other two land while you are still moving. Shift+drag works
-  from anywhere in the pane.
+- **The crosshair is a tool you drag.** Press **✛** (or `X`) and drag
+  anywhere in any pane: the `+` follows the cursor, and every plane, every
+  pane and every linked sequence moves with it. Put it on a finding and the
+  whole screen is showing that finding.
 
-  Only the grip grabs, and it is drawn at exactly the size it is hit-tested
-  at. Accepting the *arms* was tried and is wrong: they run the full width
-  and height of the pane, which turns a cross-shaped band through the middle
-  of the image into a region where a window/level drag silently moves the
-  crosshair instead, and where a measurement handle under an arm cannot be
-  picked up at all.
+  With the tool off, the crosshair still carries a grip at its intersection
+  that can be grabbed under **✥ Navigate**, and `Shift`+drag works from
+  anywhere. Only the grip grabs, and it is drawn at exactly the size it is
+  hit-tested at. Accepting the *arms* was tried and is wrong: they run the
+  full width and height of the pane, which turns a cross-shaped band through
+  the middle of the image into a region where a window/level drag silently
+  moves the crosshair instead, and where a measurement handle under an arm
+  cannot be picked up at all.
+
+  Whether the lines are drawn at all is a display preference, under
+  **⋯ More → Crosshair lines**.
 - **Rotation** — 90° steps either way, or **free rotate** (`◷`): arm it and
   drag on a pane to turn it to any angle.
+
+### Reading MR: sections as the layout
+
+An MR study is a set of sequences, each a stack of thick slices in one plane
+— not one isotropic volume. Reformatting a 4 mm sagittal T2 into a coronal
+image is possible and diagnostically useless, so MR gets a layout of its own.
+
+**Seq** gives every pane a different *sequence*, each shown in the plane it
+was actually acquired in. The acquisition plane is read from Image
+Orientation (Patient) rather than from the series description, so a
+mislabelled series is still laid out correctly. Volumes are reconstructed on
+demand, one at a time, with progress shown.
+
+Any pane showing a plane other than the one its series was acquired in says
+so — *"reformatted from sagittal"* — because on a thick stack that is the
+difference between a diagnostic image and a smear, and the pixels alone do
+not admit it.
+
+With **🔗 Sync** on, moving the crosshair in any sequence moves all of them
+to the same place in the patient. That mapping goes through patient
+coordinates, so it is exact between any pair of orientations: put the `+` on
+a lesion in the axial T2 and the sagittal T1, the sagittal T2 and the coronal
+STIR all jump to the slice containing it.
 
 ### Modality
 
@@ -356,6 +384,7 @@ reconstructed.
 | `1` … `6` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 |
 | `I` | Invert grayscale |
 | `N` | Navigate tool (drag handles to edit measurements) |
+| `X` | Arm the crosshair tool — drag anywhere to move the + |
 | `F` | Arm the focus point |
 | `G` | Go to the focus point |
 | `Enter` | Finish a polygon or polyline |
@@ -377,10 +406,11 @@ row from 900 px up and leaves the height for the images:
 | --- | --- |
 | **📂 Open ▾** | Open files, open a folder, clear the loaded series |
 | **▦ 2×2 ▾** | Every layout |
-| **Ax · Cor · Sag · Mix** | Which plane fills the grid — separate buttons, because it is a thing you do while reading |
+| **Ax · Cor · Sag · Seq · Mix** | Which plane fills the grid, or one sequence per pane — separate buttons, because it is a thing you do while reading |
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
-| **✛ 🎯 ▶** | Crosshair · focus point · cine |
+| **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
+| **📸** | Screenshot the active pane. **⋯ More** holds all-panes, copy-to-clipboard and attach-to-report |
 | **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
 | **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |
@@ -485,6 +515,24 @@ RLE fixtures come from pydicom's own encoder.
 All parsing, reconstruction and rendering happens locally in your browser. No
 image data, metadata, or files are sent to any server — this page makes no
 network requests once loaded.
+
+## Screenshots
+
+**📸** saves the active pane as a PNG — the pixels as rendered, with the
+overlays on top: crosshair, orientation letters, measurements. **⋯ More**
+adds *Save all panes* (the whole grid laid out as you see it, with hairlines
+between panes so a grid of similar slices does not read as one image),
+*Copy this pane to the clipboard*, and *Attach this pane to the report*.
+
+The file is named after the pane it came from — its own plane and its own
+series. Both halves, deliberately: taking the plane from the active pane and
+the description from whichever series happened to be "current" produced
+names like `axial-SAG_T1`, which is worse than no name because it reads as
+if it were true.
+
+The patient banner is DOM text above the canvas, so it is **not** in the
+image. That is not de-identification — a screenshot is still the patient's
+imaging.
 
 ## Report templates
 

@@ -23,6 +23,7 @@
           <button class="seg-btn" data-fill="axial" title="Fill every pane with axial slices">Ax</button>
           <button class="seg-btn" data-fill="coronal" title="Fill every pane with coronal slices">Cor</button>
           <button class="seg-btn" data-fill="sagittal" title="Fill every pane with sagittal slices">Sag</button>
+          <button class="seg-btn" data-fill="seq" title="One sequence per pane, each in the plane it was acquired in — the MR reading layout">Seq</button>
           <button class="seg-btn active" data-fill="mix" title="Each layout's own arrangement of planes">Mix</button>
         </div>
         <button class="icon-btn" id="windowBtn" title="Window presets and greyscale">◐ Window ▾</button>
@@ -34,7 +35,7 @@
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="crosshairBtn" title="Crosshair: show where the other planes cut this one, and drag it to move all three">✛</button>
+        <button class="icon-btn" id="crosshairBtn" title="Crosshair tool: drag the + anywhere and every plane, pane and linked sequence moves to it (X)">✛</button>
         <button class="icon-btn" id="focusBtn" title="Focus: click a point and every pane, plane and series moves to it (F)">🎯</button>
         <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
       </div>
@@ -45,6 +46,7 @@
       </div>
 
       <div class="toolbar-group">
+        <button class="icon-btn" id="shotBtn" title="Screenshot the active pane — saves a PNG. More options under ⋯ More.">📸</button>
         <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
         <button class="icon-btn" id="moreBtn" title="More display and export options">⋯ More ▾</button>
         <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
@@ -347,7 +349,7 @@
       <span id="statusText" class="muted">Ready</span>
       <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · Drag ✛ or Shift+drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · ✛ then drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
     </footer>
   </div>
 
@@ -372,14 +374,19 @@
     <button data-window="reset">Back to the study's own W/L<span>from the DICOM header</span></button>
   </div>
   <div class="menu" id="moreMenu" hidden>
+    <div class="menu-head">Screenshot</div>
+    <button data-more="shotPane">Save this pane<span>exactly what is on screen, overlays included</span></button>
+    <button data-more="shotGrid">Save all panes<span>the whole grid, laid out as you see it</span></button>
+    <button data-more="copyPane">Copy this pane to the clipboard</button>
+    <button data-more="shotReport">Attach this pane to the report<span>as a key image</span></button>
+    <div class="menu-head">Show</div>
+    <button data-more="crosshairShow">Crosshair lines<span>where the other planes cut this one</span></button>
     <div class="menu-head">Readout</div>
     <button data-more="hu">Value under the cursor<span>live readout in the status bar</span></button>
     <button data-more="markers">Measurements and annotations<span>show or hide every marker</span></button>
     <div class="menu-head">Focus point</div>
     <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (G)</span></button>
     <button data-more="focusClear">Clear the focus point</button>
-    <div class="menu-head">Export</div>
-    <button data-more="export">Save the active pane as PNG<span>exactly what is on screen, overlays included</span></button>
   </div>
   <div class="menu" id="stackMenu" hidden>
     <div class="menu-head">Slices between repeated panes</div>

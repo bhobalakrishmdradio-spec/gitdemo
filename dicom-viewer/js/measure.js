@@ -40,6 +40,7 @@
     arrow: "arrow",              // annotation
     text: "text",                // annotation
     freehand: "freehand",        // annotation
+    redact: "redact",            // covers burned-in text; see TOOL_INFO
     sculpt: "sculpt",            // not a measurement; here so the UI can share one group
   };
 
@@ -67,6 +68,15 @@
     text:        { label: "Text",           glyph: "T", points: 1, annotation: true, wantsText: true },
     freehand:    { label: "Draw",           glyph: "✎", points: 0, trace: true, min: 2,
                    annotation: true },
+    /*
+     * Redaction covers a rectangle of the image, for burned-in text a
+     * scanner has written into the pixel data. It is an annotation rather
+     * than a measurement — it reports nothing — but it is the only one that
+     * changes what the image looks like, on screen and in a screenshot
+     * alike, so that what is saved is what was checked.
+     */
+    redact:      { label: "Redact",         glyph: "▬", points: 2, annotation: true,
+                   redact: true },
     sculpt:      { label: "Sculpt",         glyph: "✂", points: 0 },
   };
 
@@ -423,6 +433,16 @@
     var tool = measurement.tool;
     var meta = info(tool);
 
+    if (meta.redact) {
+      var rr = regionOf({ tool: TOOLS.rect, points: pts }, slab, cal);
+      return {
+        primary: "Redacted",
+        detail: rr ? (rr.x1 - rr.x0 + 1) + " × " + (rr.y1 - rr.y0 + 1) + " px covered" : null,
+        raw: null,
+        annotation: true,
+      };
+    }
+
     if (meta.annotation) {
       return {
         primary: measurement.text || meta.label,
@@ -537,6 +557,9 @@
 
   /** True when a tool draws a mark but measures nothing. */
   function isAnnotation(tool) { return !!info(tool).annotation; }
+
+  /** True when a tool hides part of the image rather than marking it. */
+  function isRedaction(tool) { return !!info(tool).redact; }
 
   /** True when a tool needs a caption typed before it means anything. */
   function wantsText(tool) { return !!info(tool).wantsText; }
@@ -681,6 +704,7 @@
     reportsIntensity: reportsIntensity,
     isRoi: isRoi,
     isAnnotation: isAnnotation,
+    isRedaction: isRedaction,
     isVariable: isVariable,
     isTrace: isTrace,
     wantsText: wantsText,

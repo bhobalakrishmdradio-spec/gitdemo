@@ -410,7 +410,7 @@ row from 900 px up and leaves the height for the images:
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
-| **📸** | Screenshot the active pane. **⋯ More** holds all-panes, copy-to-clipboard and attach-to-report |
+| **📸** | Screenshot the active pane. **⋯ More** holds all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
 | **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
 | **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |
@@ -530,9 +530,53 @@ the description from whichever series happened to be "current" produced
 names like `axial-SAG_T1`, which is worse than no name because it reads as
 if it were true.
 
-The patient banner is DOM text above the canvas, so it is **not** in the
-image. That is not de-identification — a screenshot is still the patient's
-imaging.
+### Where the file goes
+
+**📸** always writes a file, to your downloads. **⋯ More → Save this pane
+as…** opens the browser's save dialog so you can choose the folder, and
+falls back to a download if the dialog will not open.
+
+The split is deliberate. The save dialog can refuse for reasons that cannot
+be told apart from the person cancelling it — no transient activation, an
+embedding that forbids it — so a button that sometimes silently produces no
+file is worse than one that always downloads. Nothing is uploaded either
+way; the image is composed in the tab and never leaves it.
+
+### Patient details in a screenshot
+
+The patient banner is DOM text above the canvas, so by default it is **not**
+in the image. **⋯ More → Include patient details** writes a banner of name,
+ID, date, modality and series across the foot of the shot — off by default,
+because this is the one place the viewer will *add* identity to an image.
+
+The identity that can be in a screenshot without being asked for is **burned
+into the pixels**: some scanners write the name, ID and date into the image
+data itself. Where the DICOM declares it, in Burned In Annotation
+(0028,0301), saving a screenshot warns once per session and points at the
+Redact tool. Absence of that tag proves nothing — plenty of equipment burns
+text in and never sets it.
+
+### Redact
+
+**📏 Measure → ▬ Redact** covers a rectangle of the image. Two clicks place
+it; it behaves like any other annotation — drag its handles, hide it,
+delete it, and it is saved with the series.
+
+What it draws is a **mosaic, not a blur**. A Gaussian blur of small text is
+partly invertible; averaging a block down to a single value throws the
+information away. The cell is sized in *source* pixels rather than screen
+pixels, which matters more than it sounds: an earlier version used a fixed
+screen-pixel cell, and at 7× zoom one cell covered 1.2 source pixels, so the
+averaging changed nothing and the burned-in name stayed perfectly legible in
+the saved file. A test now burns real block text into a fixture and checks
+every mosaic cell is uniform inside — no detail below the cell survives.
+
+The redaction is drawn **on screen as well as in the screenshot**, so what
+gets saved is what you checked.
+
+**None of this is de-identification.** It covers what you tell it to cover
+in the one image you are saving. The DICOM files are untouched, the header
+is untouched, and a screenshot is still the patient's imaging.
 
 ## Report templates
 

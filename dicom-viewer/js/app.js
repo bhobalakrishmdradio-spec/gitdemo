@@ -373,6 +373,11 @@
     focusPoint: null,
     focusPick: false,
 
+    // Screenshots. Identity is never added unless asked for, and the
+    // burned-in warning is shown once per session rather than every time.
+    screenshotIdentity: false,
+    burnedInAcknowledged: false,
+
     huProbe: true,              // live value readout under the cursor
     freeRotate: false,          // drag rotates the pane to any angle
     seriesFilter: "",
@@ -1150,6 +1155,10 @@
       seriesNumber: parseInt(str(dataSet, "x00200011", ""), 10),
       seriesDescription: str(dataSet, "x0008103e", ""),
       modality: str(dataSet, "x00080060", ""),
+      // (0028,0301) Burned In Annotation. "YES" means the scanner wrote text
+      // into the pixels. Absence proves nothing — plenty of equipment that
+      // burns text in never sets it.
+      burnedIn: str(dataSet, "x00280301", "").toUpperCase(),
       sopInstanceUID: str(dataSet, "x00080018", ""),
 
       _frameCache: {},
@@ -2182,6 +2191,10 @@
     if (!geom || !geom.vol) return;
 
     var dpr = window.devicePixelRatio || 1;
+    // Redaction goes down first, so nothing drawn afterwards can be covered
+    // by it — and so a crosshair arm crossing a redacted box is still
+    // visible, which is how you can tell the box is a box and not a hole.
+    drawRedactions(ctx, geom, rec, dpr);
     if (state.crosshair) drawCrosshair(ctx, geom, dpr);
     drawFocus(ctx, geom, dpr);
     if (!rec.root.classList.contains("compact")) drawOrientationMarkers(ctx, geom, dpr);
@@ -2841,7 +2854,11 @@
       ctx.fillStyle = colour;
       var tool = m.tool, T = MEAS.TOOLS;
 
-      if (tool === T.point) {
+      if (tool === T.redact) {
+        // The mosaic and its outline are drawn by drawRedactions(), which
+        // runs first so nothing can be painted over it. Nothing to add but
+        // the handles, below.
+      } else if (tool === T.point) {
         // A crosshair tick rather than a blob, so the pixel stays visible.
         var c0 = pts[0], arm = 7 * dpr;
         ctx.beginPath();
@@ -2937,6 +2954,7 @@
 
       if (isPending) return;
       if (tool === T.text) return;                 // its caption is the label
+      if (tool === T.redact) return;               // its own outline says enough
 
       var res = MEAS.evaluate(m, geom.slab, cal);
       if (res.annotation && !m.text) return;       // an arrow with nothing to say
@@ -2969,6 +2987,101 @@
       ctx.fillText(text, at.x + pad, at.y);
       ctx.restore();
     }
+  }
+
+  /* ---------------------------------------------------------------------
+   * Redaction
+   *
+   * Burned-in text is the only patient identity that can be in a
+   * screenshot: the patient banner is DOM text above the canvas, not pixels
+   * in it. Some scanners write the name, ID and date into the pixel data
+   * itself, and DICOM says so in Burned In Annotation (0028,0301) — but
+   * only when the scanner bothered to set it, so absence proves nothing.
+   *
+   * What is drawn is a mosaic, not a blur. A Gaussian blur of small text is
+   * partly invertible; averaging a block down to one value throws the
+   * information away. And it is drawn on screen as well as in the
+   * screenshot, so what gets saved is what was checked.
+   * ------------------------------------------------------------------- */
+
+  /** Redaction boxes belonging to the cut a pane is showing. */
+  function redactionsFor(geom) {
+    return state.measurements.filter(function (m) {
+      return m.tool === MEAS.TOOLS.redact && !m.hidden &&
+        m.plane === geom.plane && m.seriesUid === geom.uid &&
+        m.sliceIndex === sliceKeyFor(geom.plane, geom.index);
+    });
+  }
+
+  /**
+   * Cover each redaction box with a mosaic of the pixels underneath.
+   *
+   * Sampled from the rendered image canvas, so it covers whatever is
+   * actually on screen — including a 3D view, where there is no slab to
+   * read from.
+   */
+  function drawRedactions(ctx, geom, rec, dpr) {
+    if (!state.showAnnotations) return;
+    var list = redactionsFor(geom);
+    if (!list.length || !rec.canvas) return;
+
+    /*
+     * Size the mosaic cell in *source* pixels, not screen pixels.
+     *
+     * A fixed screen-pixel cell is worthless: at 7x zoom one screen cell of
+     * 9 px covers 1.2 source pixels, so averaging it changes nothing and
+     * the burned-in name stays perfectly readable in the saved file. The
+     * cell has to be coarse relative to the data underneath, whatever the
+     * zoom — so it is derived from how many device pixels one source pixel
+     * currently occupies.
+     */
+    var perSourceX = Math.abs(geom.t.scale * geom.t.spacingX) || 1;
+    var perSourceY = Math.abs(geom.t.scale * geom.t.spacingY) || 1;
+    var SOURCE_PX_PER_CELL = 10;
+    var blockX = Math.max(12, Math.round(SOURCE_PX_PER_CELL * perSourceX));
+    var blockY = Math.max(12, Math.round(SOURCE_PX_PER_CELL * perSourceY));
+
+    ctx.save();
+    list.forEach(function (m) {
+      // The box is axis-aligned in plane coordinates; on a rotated pane its
+      // screen shape is a quadrilateral, so cover the bounding box of the
+      // four transformed corners rather than assuming it stays a rectangle.
+      var p0 = m.points[0], p1 = m.points[1];
+      var corners = [
+        planeToCanvas(geom.t, p0.x, p0.y), planeToCanvas(geom.t, p1.x, p0.y),
+        planeToCanvas(geom.t, p1.x, p1.y), planeToCanvas(geom.t, p0.x, p1.y),
+      ];
+      var lo = { x: Infinity, y: Infinity }, hi = { x: -Infinity, y: -Infinity };
+      corners.forEach(function (c) {
+        lo.x = Math.min(lo.x, c.x); hi.x = Math.max(hi.x, c.x);
+        lo.y = Math.min(lo.y, c.y); hi.y = Math.max(hi.y, c.y);
+      });
+      var x = Math.max(0, Math.floor(lo.x)), y = Math.max(0, Math.floor(lo.y));
+      var w = Math.min(rec.canvas.width, Math.ceil(hi.x)) - x;
+      var h = Math.min(rec.canvas.height, Math.ceil(hi.y)) - y;
+      if (w < 2 || h < 2) return;
+
+      // Down-sample then draw back with smoothing off: each output cell is
+      // one averaged colour, and the detail is gone rather than smeared.
+      // At least one cell, and never so many that the text survives: a box
+      // narrower than one cell collapses to a single averaged colour, which
+      // is the safe direction to fail in.
+      var small = document.createElement("canvas");
+      small.width = Math.max(1, Math.floor(w / blockX));
+      small.height = Math.max(1, Math.floor(h / blockY));
+      var sctx = small.getContext("2d");
+      sctx.imageSmoothingEnabled = true;
+      sctx.drawImage(rec.canvas, x, y, w, h, 0, 0, small.width, small.height);
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(small, 0, 0, small.width, small.height, x, y, w, h);
+      ctx.imageSmoothingEnabled = true;
+
+      ctx.strokeStyle = "rgba(255, 93, 93, 0.85)";
+      ctx.lineWidth = Math.max(1, dpr);
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    });
+    ctx.restore();
   }
 
   function drawArrow(ctx, from, to, dpr) {
@@ -3266,7 +3379,9 @@
       var slab = visibleSlabFor(m);
       var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
       var value;
-      if (MEAS.isAnnotation(m.tool)) {
+      if (MEAS.isRedaction(m.tool)) {
+        value = res ? res.primary : "Redacted";
+      } else if (MEAS.isAnnotation(m.tool)) {
         value = m.text || MEAS.label(m.tool);
       } else if (res) {
         var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
@@ -3274,8 +3389,9 @@
       } else {
         value = "—";
       }
-      var detail = res && res.detail && !MEAS.isAnnotation(m.tool) ? res.detail
-        : seriesShortName(m.seriesUid);
+      var detail = res && res.detail &&
+        (!MEAS.isAnnotation(m.tool) || MEAS.isRedaction(m.tool))
+        ? res.detail : seriesShortName(m.seriesUid);
       html +=
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
         (m.hidden ? " hidden-row" : "") + '" data-id="' + m.id + '">' +
@@ -4073,6 +4189,7 @@
       var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
       if (b) b.classList.toggle("on", !!on);
     };
+    set("shotIdentity", state.screenshotIdentity);
     set("crosshairShow", state.crosshair);
     set("hu", state.huProbe);
     set("markers", state.showAnnotations);
@@ -4566,10 +4683,17 @@
         saveScreenshot("pane");
       } else if (what === "shotGrid") {
         saveScreenshot("grid");
+      } else if (what === "shotAs") {
+        saveScreenshot("pane", true);
       } else if (what === "copyPane") {
         copyScreenshot("pane");
       } else if (what === "shotReport") {
         captureKeyImage();
+      } else if (what === "shotIdentity") {
+        state.screenshotIdentity = !state.screenshotIdentity;
+        showToast(state.screenshotIdentity
+          ? "Screenshots will carry the patient banner."
+          : "Screenshots will not carry patient details.");
       } else if (what === "crosshairShow") {
         state.crosshair = !state.crosshair;
         if (!state.crosshair && state.tool === "crosshair") setTool(MEAS.TOOLS.none);
@@ -5493,6 +5617,7 @@
             r.width * dpr, r.height * dpr);
         }
       });
+      if (drew && state.screenshotIdentity) paintIdentity(ctx, out.width, out.height, "grid");
       return drew ? out : null;
     }
 
@@ -5504,7 +5629,9 @@
     var c = one.getContext("2d");
     c.fillStyle = "#000";
     c.fillRect(0, 0, one.width, one.height);
-    return paintPane(c, state.activeCell, 0, 0, one.width, one.height) ? one : null;
+    if (!paintPane(c, state.activeCell, 0, 0, one.width, one.height)) return null;
+    if (state.screenshotIdentity) paintIdentity(c, one.width, one.height, "pane");
+    return one;
   }
 
   /**
@@ -5515,6 +5642,64 @@
    * current names a shot of the axial T2 after the sagittal T1 — which is
    * worse than no name at all, because it reads as if it were true.
    */
+  /**
+   * Draw the study identity across the foot of a screenshot.
+   *
+   * Off by default. This is the one place the viewer will *add* patient
+   * identity to an image, so it is an explicit choice each time rather than
+   * something that happens because a checkbox was left on.
+   */
+  function paintIdentity(ctx, w, h, scope) {
+    var cell = state.cells[state.activeCell];
+    var uid = cell ? cellSeriesUid(cell) : null;
+    var group = state.seriesMap[uid] || getCurrentGroup();
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    if (!inst) return;
+    var ds = inst.dataSet;
+    var line1 = [formatPersonName(str(ds, "x00100010", "")),
+                 str(ds, "x00100020", "") ? "ID " + str(ds, "x00100020", "") : "",
+                 formatDicomDate(str(ds, "x00080020", ""))]
+      .filter(Boolean).join("   ·   ");
+    var line2 = [inst.modality || "", group.description || "",
+                 scope === "grid" ? "" : (cell ? PLANE_LABELS[cell.plane] : "")]
+      .filter(Boolean).join("   ·   ");
+
+    var pad = Math.max(8, Math.round(h * 0.012));
+    var size = Math.max(11, Math.round(h * 0.022));
+    var band = size * 2 + pad * 2.6;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(0, h - band, w, band);
+    ctx.fillStyle = "#e8e6df";
+    ctx.textBaseline = "top";
+    ctx.font = "600 " + size + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.fillText(line1, pad, h - band + pad);
+    ctx.font = size * 0.86 + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.fillStyle = "#b9b5ab";
+    ctx.fillText(line2, pad, h - band + pad + size * 1.15);
+    ctx.restore();
+  }
+
+  /**
+   * Series in shot that declare burned-in text in their pixel data.
+   *
+   * Used to warn before a screenshot leaves the viewer. It is a warning and
+   * not a guarantee in either direction: a scanner that burns text in
+   * without setting (0028,0301) will not appear here.
+   */
+  function burnedInSeries(scope) {
+    var cells = scope === "grid" ? state.cells : [state.cells[state.activeCell]];
+    var seen = {};
+    cells.forEach(function (cell) {
+      if (!cell || cell.plane === "vr") return;
+      var uid = cellSeriesUid(cell);
+      var group = state.seriesMap[uid];
+      var inst = group && group.slices.length ? group.slices[0].instance : null;
+      if (inst && inst.burnedIn === "YES") seen[group.description || uid] = true;
+    });
+    return Object.keys(seen);
+  }
+
   function screenshotName(scope) {
     var cell = state.cells[state.activeCell];
     var uid = cell ? cellSeriesUid(cell) : null;
@@ -5529,23 +5714,86 @@
       who.replace(/[^\w-]+/g, "_").slice(0, 40) + "-" + stamp + ".png";
   }
 
-  /** Save a screenshot to a file. */
-  function saveScreenshot(scope) {
+  /**
+   * Save a screenshot to a local file.
+   *
+   * Where a browser offers it, this opens a real save dialog so the file
+   * goes where it is wanted and is written straight to disk; otherwise it
+   * falls back to an ordinary download. Nothing is uploaded either way —
+   * the image is composed in this tab and never leaves it.
+   */
+  function saveScreenshot(scope, pick) {
+    var warn = burnedInSeries(scope);
+    if (warn.length && !state.burnedInAcknowledged) {
+      if (!confirm(
+            "This series declares burned-in annotation — the scanner may have " +
+            "written patient details into the pixels:\n\n  " + warn.join("\n  ") +
+            "\n\nCover anything identifying with the Redact tool " +
+            "(📏 Measure → ▬ Redact) before sharing the image.\n\nSave anyway?")) {
+        return;
+      }
+      // Asked once per session; saying it before every shot trains people
+      // to dismiss it without reading.
+      state.burnedInAcknowledged = true;
+    }
+
     var out = buildScreenshot(scope);
     if (!out) return showToast("Nothing to capture yet — open a study first.", true);
     var name = screenshotName(scope);
     out.toBlob(function (blob) {
       if (!blob) return showToast("Screenshot failed.", true);
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
-      showToast("Saved " + name);
+      if (pick) pickLocalFile(blob, name);
+      else downloadBlob(blob, name);
     }, "image/png");
+  }
+
+  /** Write a blob out as an ordinary download. Works everywhere. */
+  function downloadBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    showToast("Saved " + name);
+  }
+
+  /**
+   * Offer a save dialog so the file lands where it is wanted.
+   *
+   * This is a separate action from the screenshot button rather than an
+   * upgrade to it, deliberately. The picker can refuse for reasons that
+   * cannot be told apart from the user cancelling it — no transient
+   * activation, an embedding that forbids it — and a button that sometimes
+   * silently produces no file is worse than one that always downloads.
+   * So: the button always writes a file, and "Save as…" is where the
+   * dialog lives.
+   */
+  function pickLocalFile(blob, name) {
+    if (!window.showSaveFilePicker || !window.isSecureContext) {
+      showToast("This browser has no save dialog — saved to your downloads instead.");
+      return downloadBlob(blob, name);
+    }
+    window.showSaveFilePicker({
+      suggestedName: name,
+      types: [{ description: "PNG image", accept: { "image/png": [".png"] } }],
+    }).then(function (handle) {
+      return handle.createWritable().then(function (w) {
+        return w.write(blob).then(function () { return w.close(); })
+          .then(function () { showToast("Saved to " + handle.name); });
+      });
+    }).catch(function (err) {
+      if (err && err.name === "AbortError") {
+        // Either the person cancelled, or the browser would not open the
+        // dialog. Both leave them with nothing, so say which file is
+        // waiting and put it somewhere.
+        showToast("Save dialog closed — saved to your downloads instead.");
+        return downloadBlob(blob, name);
+      }
+      downloadBlob(blob, name);
+    });
   }
 
   /**
@@ -5812,6 +6060,8 @@
     hitTestCrosshair: hitTestCrosshair,
     setStackStep: setStackStep,
     saveScreenshot: saveScreenshot,
+    burnedInSeries: burnedInSeries,
+    redactionsFor: redactionsFor,
     copyScreenshot: copyScreenshot,
     buildScreenshot: buildScreenshot,
     screenshotName: screenshotName,

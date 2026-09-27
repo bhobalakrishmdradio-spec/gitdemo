@@ -74,3 +74,17 @@ report final while any remain without an explicit override.
 
 **This is not a medical device and is not validated for diagnosis.** A
 template inserted and signed unread is a normal report on an abnormal study.
+
+---
+
+## A note on redaction
+
+The Redact tool covers a rectangle of one screenshot with a mosaic. It is
+there so a burned-in patient name does not travel with an image you are
+sharing, and it is checked by a test that burns real text into a fixture and
+confirms nothing below the mosaic cell survives.
+
+It is **not de-identification**. It covers what you tell it to cover, in the
+one image being saved. It does not read the pixels, does not find text you
+did not box, and does not touch the DICOM files or their headers. Do not
+rely on this viewer to anonymise anything.

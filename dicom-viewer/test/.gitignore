@@ -1,0 +1,5 @@
+# Generated fixtures: synthetic DICOM, rebuilt by fixtures/make_*.py.
+fixtures/*/
+# Files the suites write while running.
+*.png
+tmp/

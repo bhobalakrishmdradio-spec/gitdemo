@@ -610,16 +610,6 @@
     return state.cells[state.activeCell] || state.cells[0] || null;
   }
 
-  /** The active pane's plane, or the first MPR pane, or axial. */
-  function activeMprPlane() {
-    var cell = activeCell();
-    if (cell && cell.plane !== "vr") return cell.plane;
-    for (var i = 0; i < state.cells.length; i++) {
-      if (state.cells[i].plane !== "vr") return state.cells[i].plane;
-    }
-    return "axial";
-  }
-
   /**
    * Only one pane may hold the 3D view — it is a single WebGL context.
    * `keep` names the pane that just claimed it, if any; otherwise the first
@@ -3472,8 +3462,6 @@
       " (yellow line)";
   }
 
-  function toolGlyph(tool) { return MEAS.glyph(tool); }
-
   function setTool(tool) {
     // Switching tools abandons anything half-drawn rather than finishing it
     // with the wrong shape's rules.
@@ -5534,14 +5522,6 @@
       state.freeRotate || !!(cell && (cell.view.rotation || cell.view.flipH || cell.view.flipV)));
   }
 
-  /** Step the active pane's rotation, snapped to whole degrees. */
-  function nudgeRotation(delta) {
-    withActiveMprCell(function (cell, i) {
-      cell.view.rotation = (((cell.view.rotation || 0) + delta) % 360 + 360) % 360;
-      renderCell(i);
-    });
-  }
-
   /** Run fn against the active pane, or the first 2D pane if 3D is focused. */
   function withActiveMprCell(fn) {
     var i = state.activeCell;
@@ -5817,9 +5797,6 @@
       );
     }, "image/png");
   }
-
-  /** Kept as the old name, so the More menu and its test still work. */
-  function exportActiveViewport() { saveScreenshot("pane"); }
 
   /** Surface geometry problems found during reconstruction. */
   function updateGeometryWarnings() {

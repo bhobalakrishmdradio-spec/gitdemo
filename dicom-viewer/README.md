@@ -432,6 +432,27 @@ deliberate: a menu inside a scrolling container is clipped while still
 looking fine and still passing a scripted click, which is how the Reset menu
 was once unreachable by an actual cursor.
 
+## Running the tests
+
+Every claim this README makes is checked in `test/`, in a real browser,
+against synthetic data whose right answer is known in advance.
+
+```sh
+python3 test/fixtures/make_phantom.py        # and the other make_*.py
+(cd dicom-viewer && python3 -m http.server 8412) &
+node test/run.js
+```
+
+26 suites: four in Node for the arithmetic, twenty in a browser for the
+behaviour, and two probes for the chrome. `test/README.md` says what each
+fixture pins down and what you need installed. The fixtures are generated,
+not committed — a checkout builds them in a minute.
+
+Several bugs in this codebase passed a green suite and were caught only by
+looking at what actually came out: a redaction mosaic that left the patient's
+name perfectly legible, a hash that sampled one byte in ninety-nine, a menu
+that was visible and unclickable. Where that happened, the test file says so.
+
 ## Project structure
 
 ```

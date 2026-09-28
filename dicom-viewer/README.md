@@ -442,7 +442,7 @@ row from 900 px up and leaves the height for the images:
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
-| **📸** | Screenshot the active pane. **⋯ More** holds all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
+| **📸** | Screenshot the active pane — to the share sheet on a phone or tablet, to a file elsewhere. **⋯ More** holds send-to-Photos, all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
 | **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
@@ -584,17 +584,40 @@ the description from whichever series happened to be "current" produced
 names like `axial-SAG_T1`, which is worse than no name because it reads as
 if it were true.
 
+### Getting it into Photos
+
+On a phone or tablet, **📸** opens the system share sheet — choose **Save
+Image** (iOS) or **Save to Photos** (Android) and the screenshot lands in
+your photo library. On a desktop browser the same button writes a PNG,
+because no desktop browser can hand a file to a share sheet.
+
+A web page **cannot** write to the photo library directly. There is no API
+for it on any platform, and there should not be. The share sheet is the only
+route, and it is one tap. A plain download does not get there — on iOS it
+lands in Files, which is why the camera button used to look as though it had
+done nothing useful.
+
+**⋯ More** names both paths explicitly — *Send this pane to Photos…* and
+*Save this pane* — so neither is reachable only by guessing what this device
+does. The "send to Photos" entries disable themselves, with the reason
+shown, on a browser that cannot share files.
+
+Every fallback leaves you with the image and says why in the same message:
+*"Too large for the share sheet. Saved …"*, *"Sharing failed. Saved …"*.
+Closing the share sheet yourself is not a failure and writes nothing.
+
 ### Where the file goes
 
-**📸** always writes a file, to your downloads. **⋯ More → Save this pane
-as…** opens the browser's save dialog so you can choose the folder, and
-falls back to a download if the dialog will not open.
+**⋯ More → Save this pane as…** opens the browser's save dialog so you can
+choose the folder, and falls back to a download if the dialog will not open.
+The camera button never uses that dialog, deliberately: it can refuse for
+reasons that cannot be told apart from the person cancelling it — no
+transient activation, an embedding that forbids it — so a button that
+sometimes silently produces no file is worse than one that always writes
+something.
 
-The split is deliberate. The save dialog can refuse for reasons that cannot
-be told apart from the person cancelling it — no transient activation, an
-embedding that forbids it — so a button that sometimes silently produces no
-file is worse than one that always downloads. Nothing is uploaded either
-way; the image is composed in the tab and never leaves it.
+Nothing is uploaded on any path; the image is composed in the tab and never
+leaves it except through the share sheet you choose.
 
 ### Patient details in a screenshot
 

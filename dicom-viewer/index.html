@@ -47,7 +47,7 @@
       </div>
 
       <div class="toolbar-group">
-        <button class="icon-btn" id="shotBtn" title="Screenshot the active pane — saves a PNG. More options under ⋯ More.">📸</button>
+        <button class="icon-btn" id="shotBtn" title="Screenshot the active pane. On a phone or tablet this opens the share sheet, where Save Image puts it in Photos; elsewhere it saves a PNG.">📸</button>
         <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
         <button class="icon-btn" id="moreBtn" title="More display and export options">⋯ More ▾</button>
         <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
@@ -376,6 +376,8 @@
   </div>
   <div class="menu" id="moreMenu" hidden>
     <div class="menu-head">Screenshot</div>
+    <button data-more="shotShare">Send this pane to Photos…<span>opens the share sheet — choose Save Image</span></button>
+    <button data-more="shotShareGrid">Send all panes to Photos…<span>the whole grid, as one image</span></button>
     <button data-more="shotPane">Save this pane<span>exactly what is on screen, overlays included</span></button>
     <button data-more="shotGrid">Save all panes<span>the whole grid, laid out as you see it</span></button>
     <button data-more="shotAs">Save this pane as…<span>choose where the file goes</span></button>

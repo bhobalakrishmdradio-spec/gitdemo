@@ -24,6 +24,7 @@ const BROWSER = [
   'browser-compare.js', 'browser-sculpt-cine.js', 'browser-worklist.js',
   'browser-annot.js', 'browser-focus.js', 'browser-templates.js',
   'browser-mrstudy.js', 'browser-redact.js', 'browser-compare-prior.js',
+  'browser-share.js',
   'browser-sweep.js',
 ];
 /* Not assertions about the viewer's behaviour, but about its chrome. */

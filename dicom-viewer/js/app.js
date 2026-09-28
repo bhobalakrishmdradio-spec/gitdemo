@@ -4083,19 +4083,25 @@
    * row with room to spare. `onPick` receives the dataset key of whichever
    * item was chosen.
    */
-  function wireMenu(btn, menu, key, onPick, keepOpen) {
+  function wireMenu(btn, menu, key, onPick, opts) {
     if (!btn || !menu) return;
+    opts = opts || {};
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
       var wasHidden = menu.hidden;
       closeMenus();
-      if (wasHidden) openMenuUnder(menu, btn);
+      if (!wasHidden) return;
+      // Refresh before it is measured and placed: an item enabled or
+      // disabled after the menu is on screen is one the reader has already
+      // decided not to press.
+      if (opts.onOpen) opts.onOpen();
+      openMenuUnder(menu, btn);
     });
     menu.addEventListener("click", function (e) {
       var item = e.target.closest("[data-" + key + "]");
       if (!item || item.disabled) return;
       onPick(item.dataset[key], item);
-      if (!keepOpen) menu.hidden = true;
+      if (!opts.keepOpen) menu.hidden = true;
     });
   }
 
@@ -4399,6 +4405,20 @@
       var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
       if (b) b.classList.toggle("on", !!on);
     };
+    var sharable = canSharePng();
+    ["shotShare", "shotShareGrid"].forEach(function (k) {
+      var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
+      if (!b) return;
+      // Offering "send to Photos" on a desktop browser that cannot share a
+      // file would be an instruction that quietly does something else.
+      b.disabled = !sharable;
+      var note = b.querySelector("span");
+      if (note) {
+        note.textContent = !sharable ? "this browser cannot share files"
+          : k === "shotShareGrid" ? "the whole grid, as one image"
+          : "opens the share sheet — choose Save Image";
+      }
+    });
     set("shotIdentity", state.screenshotIdentity);
     set("crosshairShow", state.crosshair);
     set("hu", state.huProbe);
@@ -4903,13 +4923,17 @@
     // One press saves the active pane — the common case when something on
     // screen is worth keeping. The variants live under More, so the
     // screenshot stays a single button on the bar.
-    dom.shotBtn.addEventListener("click", function () { saveScreenshot("pane"); });
+    dom.shotBtn.addEventListener("click", function () { captureScreenshot("pane"); });
 
     wireMenu(dom.moreBtn, dom.moreMenu, "more", function (what) {
       if (what === "shotPane") {
         saveScreenshot("pane");
       } else if (what === "shotGrid") {
         saveScreenshot("grid");
+      } else if (what === "shotShare") {
+        shareScreenshot("pane");
+      } else if (what === "shotShareGrid") {
+        shareScreenshot("grid");
       } else if (what === "shotAs") {
         saveScreenshot("pane", true);
       } else if (what === "copyPane") {
@@ -4937,7 +4961,7 @@
         clearFocus();
       }
       syncMoreMenu();
-    });
+    }, { onOpen: syncMoreMenu });
 
     dom.annotOk.addEventListener("click", function () { commitText(true); });
     dom.annotCancel.addEventListener("click", function () { commitText(false); });
@@ -5943,33 +5967,119 @@
    * falls back to an ordinary download. Nothing is uploaded either way —
    * the image is composed in this tab and never leaves it.
    */
-  function saveScreenshot(scope, pick) {
+  /**
+   * Ask once before an image with possible burned-in identity leaves the
+   * viewer. Returns false when the answer is no.
+   */
+  function confirmBurnedIn(scope) {
     var warn = burnedInSeries(scope);
-    if (warn.length && !state.burnedInAcknowledged) {
-      if (!confirm(
-            "This series declares burned-in annotation — the scanner may have " +
-            "written patient details into the pixels:\n\n  " + warn.join("\n  ") +
-            "\n\nCover anything identifying with the Redact tool " +
-            "(📏 Measure → ▬ Redact) before sharing the image.\n\nSave anyway?")) {
-        return;
-      }
-      // Asked once per session; saying it before every shot trains people
-      // to dismiss it without reading.
-      state.burnedInAcknowledged = true;
+    if (!warn.length || state.burnedInAcknowledged) return true;
+    if (!confirm(
+          "This series declares burned-in annotation — the scanner may have " +
+          "written patient details into the pixels:\n\n  " + warn.join("\n  ") +
+          "\n\nCover anything identifying with the Redact tool " +
+          "(📏 Measure → ▬ Redact) before sharing the image.\n\nContinue?")) {
+      return false;
     }
+    // Asked once per session; saying it before every shot trains people to
+    // dismiss it without reading.
+    state.burnedInAcknowledged = true;
+    return true;
+  }
 
+  /** Compose the screenshot and hand the PNG blob to `then`. */
+  function withScreenshotBlob(scope, then) {
+    if (!confirmBurnedIn(scope)) return;
     var out = buildScreenshot(scope);
     if (!out) return showToast("Nothing to capture yet — open a study first.", true);
     var name = screenshotName(scope);
     out.toBlob(function (blob) {
       if (!blob) return showToast("Screenshot failed.", true);
-      if (pick) pickLocalFile(blob, name);
-      else downloadBlob(blob, name);
+      then(blob, name);
     }, "image/png");
   }
 
-  /** Write a blob out as an ordinary download. Works everywhere. */
-  function downloadBlob(blob, name) {
+  function saveScreenshot(scope, pick) {
+    withScreenshotBlob(scope, function (blob, name) {
+      if (pick) pickLocalFile(blob, name);
+      else downloadBlob(blob, name);
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+   * Getting a screenshot into Photos
+   *
+   * A web page cannot write to the photo library — there is no API for it,
+   * on any platform, and there should not be. What it can do is hand the
+   * file to the operating system's share sheet, where "Save Image" (iOS) or
+   * "Save to Photos" (Android) puts it in Photos. That is one tap, and it is
+   * the only honest route.
+   *
+   * A plain download does not get there: on iOS it lands in Files, which is
+   * why pressing the camera button on a phone appeared to do nothing useful.
+   * So the button shares where sharing a file is possible — a phone or a
+   * tablet — and downloads where it is not, which is every desktop browser.
+   * ------------------------------------------------------------------- */
+
+  /** True when this browser can put an actual PNG into the share sheet. */
+  function canSharePng() {
+    try {
+      if (!navigator.share || !navigator.canShare || typeof File !== "function") return false;
+      // Feature-detect with a real file: several browsers expose share()
+      // for text and links while refusing files, and only canShare() with a
+      // file in hand tells the two apart.
+      var probe = new File([new Uint8Array([0])], "probe.png", { type: "image/png" });
+      return !!navigator.canShare({ files: [probe] });
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * Offer the screenshot to the share sheet.
+   *
+   * Falls back to a file whenever sharing is unavailable or fails, so the
+   * person is never left with nothing — the one outcome worse than the
+   * image going somewhere they did not expect.
+   */
+  function shareScreenshot(scope) {
+    withScreenshotBlob(scope, function (blob, name) {
+      if (!canSharePng()) {
+        return downloadBlob(blob, name, "This browser cannot share files.");
+      }
+      var file = new File([blob], name, { type: "image/png" });
+      if (!navigator.canShare({ files: [file] })) {
+        return downloadBlob(blob, name, "Too large for the share sheet.");
+      }
+      navigator.share({ files: [file], title: name }).then(function () {
+        showToast("Shared. Choose Save Image to put it in Photos.");
+      }).catch(function (err) {
+        if (err && err.name === "AbortError") return;      // they closed it
+        downloadBlob(blob, name, "Sharing failed.");
+      });
+    });
+  }
+
+  /**
+   * What the camera button does.
+   *
+   * Sharing on a device that has a photo library, a file everywhere else.
+   * Both paths are also in the More menu by name, so neither is reachable
+   * only by guessing which one this device does.
+   */
+  function captureScreenshot(scope) {
+    if (canSharePng()) shareScreenshot(scope);
+    else saveScreenshot(scope);
+  }
+
+  /**
+   * Write a blob out as an ordinary download. Works everywhere.
+   *
+   * `reason` explains a fallback, and is shown in the same toast as the
+   * outcome rather than before it: two toasts in a row means the second
+   * overwrites the first, and it is the explanation that gets lost.
+   */
+  function downloadBlob(blob, name, reason) {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
@@ -5978,7 +6088,7 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
-    showToast("Saved " + name);
+    showToast((reason ? reason + " " : "") + "Saved " + name);
   }
 
   /**
@@ -5994,8 +6104,7 @@
    */
   function pickLocalFile(blob, name) {
     if (!window.showSaveFilePicker || !window.isSecureContext) {
-      showToast("This browser has no save dialog — saved to your downloads instead.");
-      return downloadBlob(blob, name);
+      return downloadBlob(blob, name, "This browser has no save dialog.");
     }
     window.showSaveFilePicker({
       suggestedName: name,
@@ -6010,8 +6119,7 @@
         // Either the person cancelled, or the browser would not open the
         // dialog. Both leave them with nothing, so say which file is
         // waiting and put it somewhere.
-        showToast("Save dialog closed — saved to your downloads instead.");
-        return downloadBlob(blob, name);
+        return downloadBlob(blob, name, "Save dialog closed.");
       }
       downloadBlob(blob, name);
     });
@@ -6286,6 +6394,9 @@
     matchingSeries: matchingSeries,
     comparisonLabel: comparisonLabel,
     saveScreenshot: saveScreenshot,
+    shareScreenshot: shareScreenshot,
+    captureScreenshot: captureScreenshot,
+    canSharePng: canSharePng,
     burnedInSeries: burnedInSeries,
     redactionsFor: redactionsFor,
     copyScreenshot: copyScreenshot,

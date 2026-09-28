@@ -91,6 +91,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-mrstudy.js` | MR sequence layout, crosshair across sequences, screenshots |
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
 | `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
+| `browser-share.js` | Sending a screenshot to Photos, and every way that can fail |
 | `browser-sweep.js` | Presses every control there is and fails on any error |
 | `probe-bar.js` | The toolbar stays one row and nothing is out of reach |
 | `probe-menus.js` | Every menu opens on screen with every item hit-testable |

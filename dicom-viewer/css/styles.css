@@ -428,6 +428,10 @@ select, input[type="number"] {
   text-transform: uppercase; color: var(--text-muted);
 }
 .menu-head:first-child { padding-top: 4px; }
+/* A menu sometimes has to explain why it is empty; that is not a button. */
+.menu-note {
+  padding: 4px 10px 8px; font-size: 11px; line-height: 1.5; color: var(--text-muted);
+}
 
 /* ---------- Status bar ---------- */
 .statusbar {

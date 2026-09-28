@@ -50,6 +50,37 @@ radiologist's report and your official imaging system for clinical decisions.
 - **Rotation** — 90° steps either way, or **free rotate** (`◷`): arm it and
   drag on a pane to turn it to any angle.
 
+### Comparing an old scan with a new one
+
+Press **⇄ Compare** (or `C`) with a study open. The most recent other study
+for **the same patient** opens in the pane beside it, both panes on the same
+plane, with linking on. Right-click the button to pick a different one — the
+menu lists that patient's studies with their dates, because the prior you
+want is not always the most recent.
+
+What it works out for you, and what it refuses to guess:
+
+- **Same patient, by Patient ID.** Two studies are only ever offered
+  together when they share a Patient ID, or a patient name when neither has
+  an ID. Putting another patient's scan beside the current study is the
+  worst thing this could do, so the test fixture deliberately contains a
+  second patient imaged on the same dates and asserts they are never
+  offered.
+- **The diagnostic series, not the scout.** Same modality first, then the
+  closest series description, then the longest stack. A three-slice
+  localiser would open without complaint and show nothing.
+- **Lined up by position, not slice number.** The two studies rarely share a
+  slice thickness or a starting level; scrolling either pane moves both to
+  the same place in the patient.
+- **Each pane shows its own study date**, and the bound pane says what it
+  actually is — `[prior]`, `[later study]`, `[same study]`, or
+  `[other study]` when a date is missing and "earlier" is not knowable. It
+  will not call a study prior on the strength of it merely being the other
+  one: on a follow-up, a wrong label invites reading the growth backwards.
+
+With the two open, press **🎯** and click the finding to put both panes on
+it, or **✛** and drag the crosshair there.
+
 ### Reading MR: sections as the layout
 
 An MR study is a set of sequences, each a stack of thick slices in one plane
@@ -385,6 +416,7 @@ reconstructed.
 | `I` | Invert grayscale |
 | `N` | Navigate tool (drag handles to edit measurements) |
 | `X` | Arm the crosshair tool — drag anywhere to move the + |
+| `C` | Open this patient's prior beside the current study |
 | `F` | Arm the focus point |
 | `G` | Go to the focus point |
 | `Enter` | Finish a polygon or polyline |
@@ -411,6 +443,7 @@ row from 900 px up and leaves the height for the images:
 | **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
 | **📸** | Screenshot the active pane. **⋯ More** holds all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
+| **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
 | **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
 | **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |

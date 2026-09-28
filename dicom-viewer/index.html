@@ -41,8 +41,9 @@
       </div>
 
       <div class="toolbar-group">
+        <button class="icon-btn" id="compareBtn" title="Open this patient's prior scan beside the current one (C)">⇄<span class="btn-label"> Compare</span></button>
         <button class="icon-btn" id="stackBtn" title="How many slices apart repeated panes sit">⇕ Stack 1 ▾</button>
-        <button class="icon-btn active" id="linkBtn" title="Sync: link panes on different series by patient position">🔗 Sync</button>
+        <button class="icon-btn active" id="linkBtn" title="Sync: link panes on different series by patient position">🔗<span class="btn-label"> Sync</span></button>
       </div>
 
       <div class="toolbar-group">
@@ -349,7 +350,7 @@
       <span id="statusText" class="muted">Ready</span>
       <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · ✛ then drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · Double-click: expand pane</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · ✛ then drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · C: compare · Double-click: expand pane</span>
     </footer>
   </div>
 
@@ -390,6 +391,7 @@
     <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (G)</span></button>
     <button data-more="focusClear">Clear the focus point</button>
   </div>
+  <div class="menu menu-wide" id="compareMenu" hidden></div>
   <div class="menu" id="stackMenu" hidden>
     <div class="menu-head">Slices between repeated panes</div>
     <button data-step="0">Same slice<span>every repeated pane shows one cut</span></button>

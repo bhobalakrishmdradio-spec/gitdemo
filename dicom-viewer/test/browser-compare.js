@@ -126,8 +126,38 @@ const load = async (page, dir) => {
   check('pane 0 and pane 1 render different pixels', differ.a !== differ.b);
   const labelled = await page.evaluate(() =>
     window.__ctConsole.cellEl(1).querySelector('.vp-tr').textContent);
-  check('the comparison pane is labelled', /comparison/.test(labelled) && /PRIOR/.test(labelled),
+  /* The label says what the pane actually holds. "Prior" is only correct
+     when that study is genuinely earlier — a comparison pane can just as
+     easily carry a later study or another series of the same one, and on a
+     follow-up a wrong label invites reading the growth backwards.
+
+     This study carries no Study Date, so "earlier" is not knowable here.
+     Saying "other study" rather than guessing is the behaviour under test. */
+  const curDate = await page.evaluate(() =>
+    window.__ctConsole.state.seriesMap[window.__ctConsole.state.currentSeriesUID].studyDate);
+  check('the current study really has no date, so this tests the unknown case',
+    !curDate, JSON.stringify(curDate));
+  check('the comparison pane is labelled, without claiming to know which is older',
+    /\[other study\]/.test(labelled) && /PRIOR thin/.test(labelled),
     labelled.replace(/\n/g, ' | '));
+  check('it still carries that study\'s own date',
+    /\d{4}-\d{2}-\d{2}/.test(labelled), labelled.replace(/\n/g, ' | '));
+  check('and when both dates are known the label follows them',
+    await page.evaluate(() => {
+      const C = window.__ctConsole;
+      const cur = C.state.seriesMap[C.state.currentSeriesUID];
+      const saved = cur.studyDate;
+      cur.studyDate = '20250701';
+      const got = {
+        older: C.comparisonLabel({ studyUID: 'x', studyDate: '20240101' }),
+        newer: C.comparisonLabel({ studyUID: 'y', studyDate: '20260101' }),
+        sameDay: C.comparisonLabel({ studyUID: 'z', studyDate: '20250701' }),
+        sameStudy: C.comparisonLabel({ studyUID: cur.studyUID, studyDate: '20250701' }),
+      };
+      cur.studyDate = saved;
+      return got.older === 'prior' && got.newer === 'later study' &&
+             got.sameDay === 'same day' && got.sameStudy === 'same study';
+    }));
 
   console.log('\n6. Measurements on the prior use the prior\'s own calibration');
   const cal = await page.evaluate(() => {

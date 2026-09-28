@@ -20,6 +20,7 @@ python3 test/fixtures/make_mr.py
 python3 test/fixtures/make_mr_study.py
 python3 test/fixtures/make_multiecho.py
 python3 test/fixtures/make_burned.py
+python3 test/fixtures/make_followup.py
 python3 test/fixtures/make_compressed_series.py
 python3 test/fixtures/make_codec_fixtures.py   # needs pylibjpeg-libjpeg
 
@@ -59,6 +60,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `series-mrstudy` | Four MR sequences in three acquisition planes, one marker at a known patient coordinate in all four | That each sequence is laid out as acquired, and that moving the crosshair puts every sequence on the same anatomy |
 | `series-echo` | Dual-echo MR | Echoes must not interleave into one stack |
 | `series-burned` | CT with the patient name written into the pixel data, in a known rectangle | That redaction destroys it rather than covering it |
+| `series-followup` | One patient scanned three times with a lesion that grows 8 → 14 → 22 mm, each study at a different thickness and start, each with a useless scout series — plus a second patient scanned on the same dates | That Compare picks this patient's own prior and never the other patient's, picks the diagnostic series and not the scout, and lines the two up by position rather than slice number |
 | `series-raw`, `series-rle`, `series-jpegls` | The same pixels in three transfer syntaxes | Both decoders must return the raw values exactly |
 | `codec` | Bare RLE and JPEG-lossless bitstreams, with a manifest | Decoding, byte for byte, against streams an independent C decoder validated |
 
@@ -88,6 +90,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-templates.js` | Templates, placeholders, and the finalise guard |
 | `browser-mrstudy.js` | MR sequence layout, crosshair across sequences, screenshots |
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
+| `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
 | `browser-sweep.js` | Presses every control there is and fails on any error |
 | `probe-bar.js` | The toolbar stays one row and nothing is out of reach |
 | `probe-menus.js` | Every menu opens on screen with every item hit-testable |

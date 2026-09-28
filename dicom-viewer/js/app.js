@@ -45,7 +45,8 @@
    * clipped — it can look perfectly visible while being unclickable.
    */
   var MENUS = ["openMenu", "orientMenu", "resetMenu", "toolMenu",
-               "windowMenu", "moreMenu", "layoutMenu", "stackMenu"];
+               "windowMenu", "moreMenu", "layoutMenu", "stackMenu",
+               "compareMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
   // The 3D texture is packed once over the full diagnostic HU range so the
@@ -452,6 +453,8 @@
     dom.annotCancel = byId("annotCancel");
     dom.calibrationNote = byId("calibrationNote");
     dom.planeSeg = byId("planeSeg");
+    dom.compareBtn = byId("compareBtn");
+    dom.compareMenu = byId("compareMenu");
     dom.stackBtn = byId("stackBtn");
     dom.stackMenu = byId("stackMenu");
     dom.stackNote = byId("stackNote");
@@ -1494,6 +1497,7 @@
     } else {
       renderSeriesList();
       syncLayoutControls();
+      syncCompareMenu();
     }
   }
 
@@ -1751,6 +1755,7 @@
     // series are loaded, so the plane buttons have to be refreshed when
     // that changes — not only when the layout does.
     syncLayoutControls();
+    syncCompareMenu();
     updateObliqueInfo();
     updateGeometryWarnings();
     updateCalibrationNote();
@@ -2466,6 +2471,198 @@
     });
   }
 
+
+
+  /* ---------------------------------------------------------------------
+   * Compare with a prior
+   *
+   * Everything needed to read an old scan beside a new one already
+   * existed — the 1x2 layout, per-pane series binding, linking by patient
+   * position — but it took five steps to assemble, in an order you had to
+   * know. This is that sequence behind one button.
+   *
+   * It is deliberately conservative about what it calls the same patient:
+   * two studies are only offered together when they share a Patient ID, or
+   * a patient name when neither carries an ID. Putting the wrong patient's
+   * prior on screen beside the current study is the worst thing this
+   * feature could do.
+   * ------------------------------------------------------------------- */
+
+  /** What identifies the patient a series belongs to, or null. */
+  function patientKeyOf(group) {
+    var inst = group && group.slices && group.slices.length
+      ? group.slices[0].instance
+      : (group && group.instances && group.instances.length ? group.instances[0] : null);
+    if (!inst || !inst.dataSet) return null;
+    var id = str(inst.dataSet, "x00100020", "").trim();
+    if (id) return "id:" + id.toUpperCase();
+    var name = str(inst.dataSet, "x00100010", "").trim();
+    return name ? "name:" + name.toUpperCase() : null;
+  }
+
+  /** Human-readable patient label for a series group. */
+  function patientLabelOf(group) {
+    var inst = group && group.slices && group.slices.length
+      ? group.slices[0].instance : null;
+    if (!inst || !inst.dataSet) return "";
+    var name = formatPersonName(str(inst.dataSet, "x00100010", ""));
+    var id = str(inst.dataSet, "x00100020", "");
+    return name || (id ? "ID " + id : "");
+  }
+
+  /**
+   * Studies of the patient on screen, other than the one on screen.
+   *
+   * Sorted newest first, so the most recent prior is the obvious default.
+   * A study with no date sorts last rather than being guessed at.
+   */
+  function priorStudies() {
+    var current = getCurrentGroup();
+    if (!current) return [];
+    var key = patientKeyOf(current);
+    if (!key) return [];
+    var currentStudy = current.studyUID;
+
+    var out = [];
+    studyGroups().forEach(function (study) {
+      if (study.uid === currentStudy) return;
+      var usable = study.series.filter(function (g) {
+        return g.instances.length >= 2 && patientKeyOf(g) === key;
+      });
+      if (!usable.length) return;
+      out.push({
+        uid: study.uid,
+        date: study.date || "",
+        description: study.description || "",
+        series: usable,
+      });
+    });
+    out.sort(function (a, b) {
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return b.date.localeCompare(a.date);        // newest first
+    });
+    return out;
+  }
+
+  /**
+   * Which series of a prior study to show beside the current one.
+   *
+   * Same modality first, because a CT beside an MR is rarely the
+   * comparison anyone wants; then the closest description, so an axial T2
+   * lands beside an axial T2; then the longest stack, which is usually the
+   * diagnostic series rather than a scout or a localiser.
+   */
+  function matchingSeries(study, reference) {
+    var refMod = reference ? (reference.modality || "") : "";
+    var refDesc = (reference ? reference.description || "" : "").toLowerCase();
+    var refWords = refDesc.split(/[^a-z0-9]+/).filter(function (w) { return w.length > 2; });
+
+    var scored = study.series.map(function (g) {
+      var score = 0;
+      if (refMod && g.modality === refMod) score += 1000;
+      var desc = (g.description || "").toLowerCase();
+      refWords.forEach(function (w) { if (desc.indexOf(w) >= 0) score += 40; });
+      score += Math.min(30, g.instances.length / 10);
+      return { group: g, score: score };
+    });
+    scored.sort(function (a, b) { return b.score - a.score; });
+    return scored.length ? scored[0].group : null;
+  }
+
+  /**
+   * Put the current study and one prior side by side.
+   *
+   * The left pane keeps whatever is on screen; the right takes the prior.
+   * Both are shown in the plane the current series was acquired in, so a
+   * sagittal MR is compared sagittally rather than reformatted.
+   */
+  function compareWithPrior(studyUid) {
+    var current = getCurrentGroup();
+    if (!current) return showToast("Open a study first.", true);
+
+    var priors = priorStudies();
+    if (!priors.length) {
+      return showToast(
+        "No other study for this patient is loaded. Open the prior scan as well, " +
+        "then press Compare.", true);
+    }
+    var prior = studyUid
+      ? priors.filter(function (p) { return p.uid === studyUid; })[0]
+      : priors[0];
+    if (!prior) return showToast("That study is no longer loaded.", true);
+
+    var pick = matchingSeries(prior, current);
+    if (!pick) return showToast("That study has no series long enough to reconstruct.", true);
+
+    state.link = true;
+    if (dom.linkBtn) dom.linkBtn.classList.add("active");
+    applyLayout("1x2");
+
+    var plane = nativePlaneOf(state.currentSeriesUID) || "axial";
+    state.planeFill = plane;
+    state.cells.forEach(function (cell) {
+      cell.plane = plane;
+      cell.pinned = false;
+      cell.offset = 0;
+      cell.seriesUid = null;
+    });
+    restack();
+    rebuildCells();
+    syncPlaneFill();
+
+    setCellSeries(1, pick.uid);
+    setActiveCell(0);
+
+    var when = function (d) { return d ? formatDicomDate(d) : "undated"; };
+    setStatus("Comparing " + patientLabelOf(current) + ": " +
+      (current.description || "current") + " (" + when(current.studyDate) + ") " +
+      "beside " + (pick.description || prior.description || "prior") +
+      " (" + when(prior.date) + "). Scrolling either pane moves both.");
+    showToast("Prior from " + when(prior.date) + " opened on the right.");
+    return true;
+  }
+
+  /**
+   * Fill the Compare menu with this patient's other studies.
+   *
+   * Dates and descriptions are shown because "prior" is not always the
+   * newest other study — a reader may want the one before that.
+   */
+  function syncCompareMenu() {
+    if (!dom.compareMenu) return;
+    var priors = priorStudies();
+    var current = getCurrentGroup();
+    if (dom.compareBtn) {
+      dom.compareBtn.disabled = !current;
+      dom.compareBtn.title = !current ? "Open a study first"
+        : priors.length ? "Compare with " + patientLabelOf(current) + "'s prior scan"
+        : "No other study for this patient is loaded";
+    }
+    if (!priors.length) {
+      dom.compareMenu.innerHTML = current
+        ? '<div class="menu-head">Compare</div>' +
+          '<div class="menu-note">No other study for this patient is loaded.<br>' +
+          'Open the prior scan too, then press Compare.</div>'
+        : '<div class="menu-head">Compare</div>' +
+          '<div class="menu-note">Open a study first.</div>';
+      return;
+    }
+    var html = '<div class="menu-head">' +
+      escapeHtml(patientLabelOf(current) || "This patient") + "'s other studies</div>";
+    priors.forEach(function (p) {
+      var n = p.series.reduce(function (a, g) { return a + g.instances.length; }, 0);
+      html += '<button data-prior="' + escapeHtml(p.uid) + '">' +
+        escapeHtml(p.date ? formatDicomDate(p.date) : "Undated") +
+        "<span>" + escapeHtml(p.description || "no description") +
+        " · " + p.series.length + " series, " + n + " images</span></button>";
+    });
+    html += '<div class="menu-head">Then</div>' +
+      '<div class="menu-note">Scrolling either pane moves both, matched by ' +
+      'position in the patient. Press 🎯 and click a finding to put every ' +
+      'pane on it.</div>';
+    dom.compareMenu.innerHTML = html;
+  }
 
   /* ---------------------------------------------------------------------
    * Focus point
@@ -3580,8 +3777,14 @@
       var name = formatPersonName(str(first.dataSet, "x00100010", ""));
       var id = str(first.dataSet, "x00100020", "");
       rec.tl.textContent = (name ? name + "\n" : "") + (id ? "ID: " + id : "");
-      rec.tr.textContent = (first.modality || "") + "\n" + (group.description || "") +
-        (cell.seriesUid ? "\n[comparison]" : "");
+      // The study date belongs on the pane, not only in the series panel.
+      // Two panes of the same patient and the same series description are
+      // told apart by their date and nothing else — which is the whole
+      // question when an old scan is beside a new one.
+      var when = formatDicomDate(group.studyDate || "");
+      rec.tr.textContent = (first.modality || "") +
+        (when ? "  " + when : "") + "\n" + (group.description || "") +
+        (cell.seriesUid ? "\n[" + comparisonLabel(group) + "]" : "");
     }
 
     var win = cellWindow(cell);
@@ -3611,6 +3814,25 @@
       (reformatted ? "\nreformatted from " + native.plane : "") +
       (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
       "\n" + Math.round(cell.view.zoom * 100) + "%";
+  }
+
+  /**
+   * What to call a pane bound to something other than the current series.
+   *
+   * "Prior" is only true when the pane's study is genuinely earlier. It can
+   * just as easily hold a later study or another series of the same one, and
+   * a pane that says "prior" when it is neither is worse than a vague label:
+   * on a follow-up it invites reading the growth backwards.
+   */
+  function comparisonLabel(group) {
+    var current = getCurrentGroup();
+    if (!current || !group) return "comparison";
+    if (group.studyUID === current.studyUID) return "same study";
+    var a = group.studyDate || "", b = current.studyDate || "";
+    if (!a || !b) return "other study";
+    if (a < b) return "prior";
+    if (a > b) return "later study";
+    return "same day";
   }
 
   function modeLabel(mode) {
@@ -4577,6 +4799,23 @@
 
 
 
+    // One press takes the most recent prior; the menu is for choosing
+    // another, and for saying why there is nothing to compare with.
+    dom.compareBtn.addEventListener("click", function () { compareWithPrior(null); });
+    dom.compareBtn.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      syncCompareMenu();
+      if (dom.compareMenu.hidden) openMenuUnder(dom.compareMenu, dom.compareBtn);
+      else dom.compareMenu.hidden = true;
+    });
+    dom.compareMenu.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-prior]");
+      if (!btn) return;
+      compareWithPrior(btn.dataset.prior);
+      dom.compareMenu.hidden = true;
+    });
+
     wireMenu(dom.stackBtn, dom.stackMenu, "step", function (step) {
       setStackStep(parseInt(step, 10) || 0);
     });
@@ -5391,6 +5630,8 @@
         setTool(MEAS.TOOLS.none); break;
       case "x": case "X":
         setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair"); break;
+      case "c": case "C":
+        compareWithPrior(null); break;
       case "r": case "R":
         applyReset("view"); break;
       case "1": setLayout("quad"); break;
@@ -5851,7 +6092,9 @@
 
   function syncStackSeg() {
     if (dom.stackBtn) {
-      dom.stackBtn.textContent = "⇕ Stack " + (state.stackStep ? state.stackStep : "same") + " ▾";
+      // The word is hidden on a narrow window, the number never is.
+      dom.stackBtn.innerHTML = '⇕ <span class="btn-label">Stack </span>' +
+        (state.stackStep ? state.stackStep : "same") + " ▾";
       dom.stackBtn.title = state.stackStep
         ? "Repeated panes sit " + state.stackStep + " slice" +
           (state.stackStep > 1 ? "s" : "") + " apart — click to change"
@@ -5953,6 +6196,7 @@
     syncWindowControls();
     syncMoreMenu();
     syncToolControls();
+    syncCompareMenu();
     updateFocusStatus();
     updateWLInputs();
     updateBoneStatus();
@@ -6036,6 +6280,11 @@
     hitTestMeasurement: hitTestMeasurement,
     hitTestCrosshair: hitTestCrosshair,
     setStackStep: setStackStep,
+    compareWithPrior: compareWithPrior,
+    priorStudies: priorStudies,
+    patientKeyOf: patientKeyOf,
+    matchingSeries: matchingSeries,
+    comparisonLabel: comparisonLabel,
     saveScreenshot: saveScreenshot,
     burnedInSeries: burnedInSeries,
     redactionsFor: redactionsFor,

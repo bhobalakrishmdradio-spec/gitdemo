@@ -21,6 +21,7 @@ python3 test/fixtures/make_mr_study.py
 python3 test/fixtures/make_multiecho.py
 python3 test/fixtures/make_burned.py
 python3 test/fixtures/make_followup.py
+python3 test/fixtures/make_hostile.py
 python3 test/fixtures/make_compressed_series.py
 python3 test/fixtures/make_codec_fixtures.py   # needs pylibjpeg-libjpeg
 
@@ -62,6 +63,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `series-burned` | CT with the patient name written into the pixel data, in a known rectangle | That redaction destroys it rather than covering it |
 | `series-followup` | One patient scanned three times with a lesion that grows 8 → 14 → 22 mm, each study at a different thickness and start, each with a useless scout series — plus a second patient scanned on the same dates | That Compare picks this patient's own prior and never the other patient's, picks the diagnostic series and not the scout, and lines the two up by position rather than slice number |
 | `series-raw`, `series-rle`, `series-jpegls` | The same pixels in three transfer syntaxes | Both decoders must return the raw values exactly |
+| `series-hostile` | CT whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry HTML and script payloads | That header text is shown literally and never parsed as markup, anywhere it is displayed |
 | `codec` | Bare RLE and JPEG-lossless bitstreams, with a manifest | Decoding, byte for byte, against streams an independent C decoder validated |
 
 ## The suites
@@ -92,6 +94,9 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
 | `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
 | `browser-share.js` | Sending a screenshot to Photos, and every way that can fail |
+| `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |
+| `browser-crop.js` | 3D cropping removes the voxels it says it does, one side at a time, and resets |
+| `browser-security.js` | Hostile DICOM text, untrusted stored reports, and no network or eval anywhere |
 | `browser-sweep.js` | Presses every control there is and fails on any error |
 | `probe-bar.js` | The toolbar stays one row and nothing is out of reach |
 | `probe-menus.js` | Every menu opens on screen with every item hit-testable |

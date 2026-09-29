@@ -219,6 +219,19 @@ covering the image with text.
   volume's own range, since MR signal has no absolute scale.
 - **3D MIP** through the whole volume.
 - Adjustable opacity; drag to rotate, wheel to zoom.
+- **Cropping along three anatomical axes.** Each axis has a pair of handles
+  that cut the volume from one side and the other independently — enough to
+  take the front off a skull, keep a single slab, or open a window into the
+  middle of the body. The sliders are labelled by the cut they make
+  (*Sagittal*, *Coronal*, *Axial*) rather than by axis number, derived from
+  the series' own `Image Orientation (Patient)`; a series tilted more than
+  about 25° off an anatomical axis is marked `≈`, and one that gives no
+  orientation at all falls back to `Axis 1/2/3` rather than guessing.
+  **Reset crop** sits beside the sliders and in the **Reset ▾** menu.
+
+  Cropping hides voxels from the 3D render. It does not alter the stored
+  pixel data, the 2D planes, or any measurement — which the tests check by
+  hashing the axial plane before and after.
 
 ### Hounsfield Units and measurements
 
@@ -265,6 +278,19 @@ covering the image with text.
   click meant to place a point can never silently drag someone else's ROI.
 - **Hiding is not deleting** — the eye beside each row hides one marker,
   **⋯ More** hides them all, and both leave the measurement intact.
+- **Undo and redo** — `Ctrl`/`⌘`+`Z` and `Ctrl`/`⌘`+`Shift`+`Z`, with buttons
+  in the Measurements panel and at the top of the **📏 Measure** menu. It
+  covers drawing, moving, reshaping, retyping, hiding, deleting and *Delete
+  all*, and each step is named for what it will undo ("reshaping Distance",
+  "clearing 2 measurements").
+
+  The unit of history is the whole annotation list, snapshotted, so undoing a
+  mis-drag restores the measurement's **numbers** and not merely its shape —
+  a calliper that comes back 3 mm short would be worse than no undo at all.
+  Sixty steps are kept. A grab that moves nothing records no step. Opening a
+  series clears the history, so an undo can never delete work that was just
+  restored from storage, or resurrect one patient's ROI over another's.
+  Sculpting is separate: it edits voxels, and has its own stroke-level undo.
 - **Persistence** — measurements are saved per *series* in this browser and
   come back when the series is reopened. Per series, not per study: an ROI
   drawn on the arterial phase means nothing on the venous one.
@@ -331,6 +357,7 @@ measurements because the zoom needed straightening is a real cost.
 | Straighten planes | Removes any oblique tilt |
 | Reset panes | Rebuilds the current layout's panes, dropping per-pane windows, pins and stack offsets |
 | Clear focus point | Stops pulling the panes to one place |
+| Reset 3D crop | Brings back the whole volume in the 3D pane |
 | Clear measurements | Removes every marker and ROI |
 | Reset everything | All of the above; the study stays loaded |
 
@@ -424,6 +451,16 @@ reconstructed.
 | `Delete` | Delete the selected measurement |
 | `Shift`+drag | Move the crosshair from anywhere in the pane |
 | `R` | Reset the view (zoom, pan, rotation, flip) |
+| `Ctrl`/`⌘`+`Z` | Undo the last annotation change |
+| `Ctrl`/`⌘`+`Shift`+`Z`, `Ctrl`+`Y` | Redo it |
+| `?` | Show the shortcut list |
+
+Press `?` for that table inside the viewer. It is generated from the same
+list the key handler dispatches from, so a shortcut cannot be documented
+without being bound, or rebound without the list following it. Keys do
+nothing while the cursor is in a text box, and every other `Ctrl`/`⌘`
+chord is left to the browser — `Ctrl`+`R` reloads rather than resetting
+the view.
 
 Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
@@ -440,13 +477,13 @@ row from 900 px up and leaves the height for the images:
 | **▦ 2×2 ▾** | Every layout |
 | **Ax · Cor · Sag · Seq · Mix** | Which plane fills the grid, or one sequence per pane — separate buttons, because it is a thing you do while reading |
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
-| **✥** / **📏 Measure ▾** | Navigate, and every measurement, ROI and annotation tool |
+| **✥** / **📏 Measure ▾** | Navigate, undo and redo, and every measurement, ROI and annotation tool |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
 | **📸** | Screenshot the active pane — to the share sheet on a phone or tablet, to a file elsewhere. **⋯ More** holds send-to-Photos, all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
 | **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
-| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export |
+| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export, the shortcut list |
 | **⤾ Reset ▾** | The reset options below |
 
 Each button names what it is holding — the layout button reads `▦ 2×2`, the
@@ -455,9 +492,10 @@ menu that hides the active state makes it the one setting on the toolbar you
 cannot read off the toolbar.
 
 Everything that is not needed every minute lives in the **⚙️ Tools** panel
-instead: slab thickness, bone cut and the sculpting brush, 3D rendering, cine
-speed and direction, the focus point, oblique MPR, the measurement list and
-ROI histogram, volume geometry and the DICOM tag browser.
+instead: slab thickness, bone cut and the sculpting brush, 3D rendering and
+its crop sliders, cine speed and direction, the focus point, oblique MPR, the
+measurement list with undo/redo and the ROI histogram, volume geometry and
+the DICOM tag browser.
 
 Menus are fixed-position siblings of the toolbar, not children of it, and
 their height is clamped to the room actually below the button. Both are
@@ -476,8 +514,8 @@ python3 test/fixtures/make_phantom.py        # and the other make_*.py
 node test/run.js
 ```
 
-26 suites: four in Node for the arithmetic, twenty in a browser for the
-behaviour, and two probes for the chrome. `test/README.md` says what each
+31 suites: four in Node for the arithmetic, twenty-five in a browser for
+the behaviour, and two probes for the chrome. `test/README.md` says what each
 fixture pins down and what you need installed. The fixtures are generated,
 not committed — a checkout builds them in a minute.
 
@@ -496,6 +534,8 @@ dicom-viewer/
   js/codecs.js                  # RLE and JPEG Lossless pixel decoders
   js/volume.js                  # Volume build, orthogonal + oblique reslicing, slab/MIP, bone mask
   js/measure.js                 # Distance / angle / ROI math and calibration
+  js/report.js                  # Report drafts, key images, storage
+  js/templates.js               # CT and MRI report templates
   js/vr.js                      # WebGL2 raymarching volume renderer
   js/vendor/dicomParser.min.js  # Third-party DICOM parser (MIT license)
 ```
@@ -564,11 +604,48 @@ RLE fixtures come from pydicom's own encoder.
 | ROI over a 300 HU lesion (σ=8 noise), decoded from JPEG | 300 HU | 299.1 ± 8.7 HU |
 | Corrupt or truncated streams | reported | raised, never silently wrong |
 
-## Privacy
+## Privacy and security
 
 All parsing, reconstruction and rendering happens locally in your browser. No
 image data, metadata, or files are sent to any server — this page makes no
-network requests once loaded.
+network requests once loaded, and loads nothing from a third-party origin:
+every script and stylesheet is served from the same directory as the page,
+including the DICOM parser.
+
+`test/browser-security.js` asserts that, rather than taking it on trust. It
+checks that the page issues no request after load, that there is no `eval`
+or `Function` constructor anywhere in the source, and that no element points
+at an off-origin URL.
+
+**Header text is data, not markup.** A DICOM file is an untrusted input:
+anyone can write anything into `PatientName`, and a viewer that drops that
+string into the page unescaped hands the file's author script execution
+against every study you subsequently open in that browser. Every place a
+header string reaches the DOM escapes it. `test/fixtures/make_hostile.py`
+builds a study whose `PatientName`, `PatientID`, `SeriesDescription`,
+`AccessionNumber`, `InstitutionName`, `Manufacturer` and `BodyPartExamined`
+carry `<img src=x onerror=…>`, `"><script>…</script>` and
+`</span><svg onload=…>` payloads; the suite loads it, opens the worklist,
+the tag browser, the series list and a screenshot, and requires that no
+markup is parsed, no handler fires — and that the text is still **shown
+literally** rather than silently stripped, because a radiologist needs to
+see that a file's header is malformed.
+
+**Browser storage is not a trust boundary.** Reports and measurements are
+kept in `localStorage`, which anything on this origin can write and which
+can be hand-edited or corrupted. A stored key image is read back through a
+validator that accepts only a bounded `data:image/(png|jpeg|webp);base64,…`
+URL — a value like `x" onerror="…` would otherwise have become script when
+it was put into an `<img src>` — and it is escaped again on the way out,
+because one of the two being right is not a guarantee. A report holds at
+most 24 key images.
+
+**A failed save is reported, not swallowed.** Storage can be full or
+blocked. If a report fails to save, a toast says so and the status line
+reads `⚠ NOT SAVING — storage full or blocked` until a save succeeds. It is
+the one failure in this viewer that costs work rather than convenience, and
+a draft that quietly stops saving while you keep typing is the worst way to
+lose it.
 
 ## Screenshots
 
@@ -692,6 +769,24 @@ So the bracketed spans their authors left to be filled — `[]`, `[T2|STIR]`,
 
 Inserting a template never finalises anything, and never silently overwrites
 text already written.
+
+### Measurements into the report
+
+**＋ Insert measurements** appends every measurement to *Findings*, each with
+its value, plane, slice and series, under a `Measurements:` heading:
+
+```
+Measurements:
+- Distance — 40.0 mm (axial slice 13, Portal venous 1.0mm)
+- Ellipse ROI — 42.1 ± 9.8 HU (coronal slice 96, Portal venous 1.0mm)
+```
+
+Appended, never substituted — your own sentences stay where they are.
+
+Only measurements that can be evaluated at that moment are included. A
+measurement whose cut no pane is currently showing has no slab to measure
+against, and the button says so rather than writing a line with a guessed
+number in it. Annotations are left out: an arrow has nothing to report.
 
 ## Credits
 

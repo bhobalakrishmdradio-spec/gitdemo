@@ -24,7 +24,7 @@ const BROWSER = [
   'browser-compare.js', 'browser-sculpt-cine.js', 'browser-worklist.js',
   'browser-annot.js', 'browser-focus.js', 'browser-templates.js',
   'browser-mrstudy.js', 'browser-redact.js', 'browser-compare-prior.js',
-  'browser-share.js',
+  'browser-share.js', 'browser-crop.js', 'browser-undo.js', 'browser-security.js',
   'browser-sweep.js',
 ];
 /* Not assertions about the viewer's behaviour, but about its chrome. */
@@ -32,7 +32,7 @@ const PROBES = ['probe-bar.js', 'probe-menus.js'];
 
 const NEEDED_FIXTURES = ['phantom', 'series-prior', 'series-mr', 'series-mrstudy',
                          'series-burned', 'series-raw', 'series-rle', 'series-jpegls',
-                         'series-echo', 'series-followup'];
+                         'series-echo', 'series-followup', 'series-hostile'];
 /* The codec bitstreams are not DICOM, so they are checked separately. */
 const NEEDED_FILES = [path.join('codec', 'manifest.json')];
 

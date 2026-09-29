@@ -75,8 +75,9 @@
         if (typeof parsed[s.key] === "string") out[s.key] = parsed[s.key];
       });
       out.status = parsed.status === "final" ? "final" : "draft";
-      out.keyImages = Array.isArray(parsed.keyImages) ? parsed.keyImages : [];
-      out.credits = Array.isArray(parsed.credits) ? parsed.credits : [];
+      out.keyImages = readKeyImages(parsed.keyImages);
+      out.credits = (Array.isArray(parsed.credits) ? parsed.credits : [])
+        .filter(function (c) { return typeof c === "string"; }).slice(0, 40);
       out.updated = parsed.updated || null;
       return out;
     } catch (err) {
@@ -85,12 +86,41 @@
     }
   }
 
+  /** How many captures one report may hold; see readKeyImages(). */
+  var MAX_KEY_IMAGES = 24;
+
+  /**
+   * Read key images back from storage, defensively.
+   *
+   * Everything here came out of localStorage, which is not a trust
+   * boundary: anything running on this origin can write it, and a
+   * hand-edited or corrupted store is ordinary. The thumbnail is then put
+   * into an <img src>, so a value like `x" onerror="…` would be script
+   * execution rather than a broken image. Only a bounded data: URL for an
+   * image is accepted, and the caption is forced to a string.
+   */
+  function readKeyImages(raw) {
+    if (!Array.isArray(raw)) return [];
+    var out = [];
+    for (var i = 0; i < raw.length && out.length < MAX_KEY_IMAGES; i++) {
+      var k = raw[i];
+      if (!k || typeof k.thumb !== "string") continue;
+      if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(k.thumb)) continue;
+      if (k.thumb.length > 2 * 1024 * 1024) continue;
+      out.push({
+        thumb: k.thumb,
+        caption: typeof k.caption === "string" ? k.caption.slice(0, 200) : "",
+      });
+    }
+    return out;
+  }
+
   function save(studyUid, data) {
     if (!studyUid) return false;
     var record = {
       version: VERSION,
       status: data.status === "final" ? "final" : "draft",
-      keyImages: data.keyImages || [],
+      keyImages: (data.keyImages || []).slice(0, MAX_KEY_IMAGES),
       credits: data.credits || [],
       updated: new Date().toISOString(),
     };
@@ -99,6 +129,9 @@
       global.localStorage.setItem(key(studyUid), JSON.stringify(record));
       return record.updated;
     } catch (err) {
+      // Quota exhausted, or storage blocked. The caller has to say so: a
+      // report that silently stops saving is the one failure here that
+      // costs work rather than convenience.
       return false;
     }
   }
@@ -175,6 +208,8 @@
 
   global.CTReport = {
     SECTIONS: SECTIONS,
+    MAX_KEY_IMAGES: MAX_KEY_IMAGES,
+    readKeyImages: readKeyImages,
     templates: templates,
     empty: empty,
     load: load,

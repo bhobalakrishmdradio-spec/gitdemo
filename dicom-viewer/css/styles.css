@@ -173,6 +173,16 @@ select, input[type="number"] {
 .field-row > input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .field-value { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
 .hint-text { margin: 4px 0 0; font-size: 11px; color: var(--text-muted); line-height: 1.45; }
+
+/* 3D crop: two handles per anatomical axis, on one line each. */
+.crop-block { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.crop-axis { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.crop-axis-name { min-width: 52px; font-size: 12px; color: var(--text-muted); }
+.crop-axis input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.crop-axis input.crop-hi { accent-color: #f0a35e; }
+.crop-axis-value { min-width: 62px; text-align: right; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.crop-block .field-value.cropping { color: var(--accent); font-weight: 600; }
 .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; color: var(--text); min-width: 0; }
 .switch input { accent-color: var(--accent); }
 
@@ -231,6 +241,8 @@ select, input[type="number"] {
   border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
   font: inherit; font-size: 12px;
 }
+
+.report-status.failing { color: var(--danger); font-weight: 700; }
 
 /* ---------- Report placeholder warning ---------- */
 .report-warn {
@@ -511,4 +523,40 @@ select, input[type="number"] {
 }
 @media (max-width: 860px) {
   .statusbar .small { display: none; }
+}
+
+/* ---------- The shortcut list ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+  width: min(620px, 100%); max-height: 100%; display: flex; flex-direction: column;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.modal-head h3 { margin: 0; font-size: 14px; }
+.modal-body { padding: 4px 14px 12px; overflow-y: auto; }
+.modal-foot { padding: 0 14px 12px; margin: 0; }
+.help-group {
+  margin: 14px 0 6px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-muted);
+}
+.help-list {
+  margin: 0; display: grid; grid-template-columns: max-content 1fr;
+  gap: 5px 14px; align-items: baseline;
+}
+.help-list dt { display: flex; gap: 4px; flex-wrap: wrap; }
+.help-list dd { margin: 0; font-size: 12px; }
+.help-list kbd {
+  font: inherit; font-size: 11px; line-height: 1.6;
+  padding: 1px 6px; border-radius: 4px;
+  background: var(--panel-bg-alt); border: 1px solid var(--border);
+  color: var(--overlay-text); white-space: nowrap;
 }

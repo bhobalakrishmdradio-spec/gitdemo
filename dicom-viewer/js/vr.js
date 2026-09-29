@@ -41,12 +41,17 @@
     "uniform int uMode;",       // 0 = composite VR, 1 = MIP
     "uniform float uOpacity;",  // global opacity scale
     "uniform vec2 uClip;",      // normalised sample range to keep [lo, hi]
+    "uniform vec3 uCropLo;",    // crop box, as a fraction of the volume 0..1
+    "uniform vec3 uCropHi;",
     "",
-    "// Ray vs axis-aligned box, slab method.",
-    "bool intersectBox(vec3 ro, vec3 rd, vec3 half_, out float t0, out float t1) {",
+    "// Ray vs axis-aligned box, slab method. The box is given by two",
+    "// opposite corners rather than half-extents, so the crop can be",
+    "// asymmetric — cutting the front off a head is not the same as",
+    "// shrinking it evenly from both sides.",
+    "bool intersectBox(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float t0, out float t1) {",
     "  vec3 inv = 1.0 / rd;",
-    "  vec3 a = (-half_ - ro) * inv;",
-    "  vec3 b = ( half_ - ro) * inv;",
+    "  vec3 a = (bMin - ro) * inv;",
+    "  vec3 b = (bMax - ro) * inv;",
     "  vec3 lo = min(a, b);",
     "  vec3 hi = max(a, b);",
     "  t0 = max(max(lo.x, lo.y), lo.z);",
@@ -78,8 +83,13 @@
     "  vec3 ro = (uInvView * vec4(0.0, 0.0, 0.0, 1.0)).xyz;",
     "  vec3 rd = normalize((uInvView * vec4(dirCam, 0.0)).xyz);",
     "",
+    "  // March only the cropped part of the volume. Cropping the ray rather",
+    "  // than discarding samples inside the loop keeps the step count down",
+    "  // and makes the cut face solid instead of stippled.",
+    "  vec3 cropMin = mix(-uBoxSize, uBoxSize, clamp(uCropLo, 0.0, 1.0));",
+    "  vec3 cropMax = mix(-uBoxSize, uBoxSize, clamp(uCropHi, 0.0, 1.0));",
     "  float t0, t1;",
-    "  if (!intersectBox(ro, rd, uBoxSize, t0, t1)) {",
+    "  if (!intersectBox(ro, rd, min(cropMin, cropMax), max(cropMin, cropMax), t0, t1)) {",
     "    fragColor = vec4(0.0);",
     "    return;",
     "  }",
@@ -324,6 +334,9 @@
     this.opacity = 1.0;
     this.mode = "vr";
     this.clip = [0.0, 1.0];
+    // Crop box as fractions of the volume along its own three axes.
+    this.cropLo = [0.0, 0.0, 0.0];
+    this.cropHi = [1.0, 1.0, 1.0];
     this.quality = 1.0;
   }
 
@@ -396,6 +409,43 @@
     this.distance = Math.max(0.7, Math.min(8, this.distance * factor));
   };
 
+  var MIN_CROP_SPAN = 0.01;
+
+  /**
+   * Crop the volume to a sub-box, given as fractions 0..1 along the
+   * volume's own three axes (columns, rows, slices).
+   *
+   * The two corners are sorted, so dragging the low handle past the high
+   * one narrows the slab rather than inverting it and blanking the view.
+   * A degenerate axis (lo == hi) would leave nothing to march, so each
+   * axis keeps a sliver of at least MIN_CROP_SPAN.
+   */
+  VolumeRenderer.prototype.setCrop = function (lo, hi) {
+    for (var a = 0; a < 3; a++) {
+      var l = clamp01(lo && lo[a]);
+      var h = clamp01(hi && hi[a], 1);
+      if (l > h) { var t = l; l = h; h = t; }
+      if (h - l < MIN_CROP_SPAN) {
+        var mid = (l + h) / 2;
+        l = Math.max(0, mid - MIN_CROP_SPAN / 2);
+        h = Math.min(1, l + MIN_CROP_SPAN);
+        l = Math.max(0, h - MIN_CROP_SPAN);
+      }
+      this.cropLo[a] = l;
+      this.cropHi[a] = h;
+    }
+  };
+
+  VolumeRenderer.prototype.resetCrop = function () {
+    this.cropLo = [0.0, 0.0, 0.0];
+    this.cropHi = [1.0, 1.0, 1.0];
+  };
+
+  function clamp01(v, fallback) {
+    var n = typeof v === "number" && isFinite(v) ? v : (fallback || 0);
+    return Math.max(0, Math.min(1, n));
+  }
+
   VolumeRenderer.prototype.resize = function () {
     var rect = this.canvas.getBoundingClientRect();
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -434,6 +484,8 @@
     gl.uniform1i(this.uniforms.uMode, this.mode === "mip" ? 1 : 0);
     gl.uniform1f(this.uniforms.uOpacity, this.opacity);
     gl.uniform2fv(this.uniforms.uClip, this.clip);
+    gl.uniform3fv(this.uniforms.uCropLo, this.cropLo);
+    gl.uniform3fv(this.uniforms.uCropHi, this.cropHi);
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);

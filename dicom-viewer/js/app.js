@@ -368,9 +368,21 @@
     vrPreset: "bone",
     vrOpacity: 1,
 
+    // 3D crop box, as fractions 0..1 along the volume's own three axes
+    // (columns, rows, slices — not patient axes; see cropAxisLabels).
+    vrCropLo: [0, 0, 0],
+    vrCropHi: [1, 1, 1],
+
     // One anatomical point every pane is asked to show. See the Focus
     // section: stored in patient millimetres when the series says where it
     // is, so comparison series can be brought to the same anatomy.
+    // Annotation history. Snapshots, not inverse operations: a measurement
+    // can be moved, reshaped, retyped, hidden and deleted, and getting an
+    // inverse right for each of those is far more code to get subtly wrong
+    // than storing the short list they all act on.
+    measureUndo: [],
+    measureRedo: [],
+
     focusPoint: null,
     focusPick: false,
 
@@ -395,6 +407,7 @@
     // The report is bound to one study; see swapReportToStudy().
     reportStudyUid: null,
     report: null,
+    reportSaveFailed: false,      // storage refused the last write
   };
 
   var dom = {};
@@ -446,6 +459,13 @@
     dom.roiHistogram = byId("roiHistogram");
     dom.histogramNote = byId("histogramNote");
     dom.toolMenu = byId("toolMenu");
+    dom.helpModal = byId("helpModal");
+    dom.helpBody = byId("helpBody");
+    dom.helpCloseBtn = byId("helpCloseBtn");
+    dom.undoMeasureBtn = byId("undoMeasureBtn");
+    dom.redoMeasureBtn = byId("redoMeasureBtn");
+    dom.menuUndoBtn = byId("menuUndoBtn");
+    dom.menuRedoBtn = byId("menuRedoBtn");
     dom.toolMoreBtn = byId("toolMoreBtn");
     dom.annotInput = byId("annotInput");
     dom.annotField = byId("annotField");
@@ -503,6 +523,18 @@
     dom.vrMode = byId("vrMode");
     dom.vrPreset = byId("vrPreset");
     dom.vrOpacity = byId("vrOpacity");
+    dom.vrCropState = byId("vrCropState");
+    dom.vrCropReset = byId("vrCropReset");
+    dom.cropLo = [];
+    dom.cropHi = [];
+    dom.cropName = [];
+    dom.cropValue = [];
+    for (var ci = 0; ci < 3; ci++) {
+      dom.cropLo.push(document.querySelector('input.crop-lo[data-axis="' + ci + '"]'));
+      dom.cropHi.push(document.querySelector('input.crop-hi[data-axis="' + ci + '"]'));
+      dom.cropName.push(byId("vrCropName" + ci));
+      dom.cropValue.push(byId("vrCropValue" + ci));
+    }
     dom.volumeInfo = byId("volumeInfo");
     dom.metaTable = byId("metaTable");
     dom.statusText = byId("statusText");
@@ -813,6 +845,7 @@
 
   /** Push pane state back into its controls. */
   function syncCellControls() {
+    syncCropControls();
     state.cells.forEach(function (cell, i) {
       var rec = cellEls[i];
       if (!rec) return;
@@ -2991,6 +3024,10 @@
     if (!added.length) return;
     state.measurements = state.measurements.concat(added);
     if (state.measureStoredUids.indexOf(uid) < 0) state.measureStoredUids.push(uid);
+    // Opening a series is a boundary, not an edit. The snapshots taken
+    // before it do not contain what was just restored, so undoing across it
+    // would quietly throw that series' saved work away.
+    forgetMeasureHistory();
     renderMeasurementList();
     renderAllOverlays();
   }
@@ -3313,6 +3350,7 @@
 
   /** Stamp a new measurement with where it belongs and keep it. */
   function commitMeasurement(m) {
+    pushUndo("adding " + measureName(m));
     state.measurements.push(m);
     state.selectedMeasurement = m.id;
     state.pendingMeasure = null;
@@ -3513,7 +3551,10 @@
     dom.annotField.focus();
     dom.annotField.select();
 
-    state.textTarget = { m: m, wasNew: wasNew };
+    // Remember how deep the history was: cancelling a brand-new caption
+    // should leave no step behind at all, not an "adding" step followed by
+    // a "deleting" one.
+    state.textTarget = { m: m, wasNew: wasNew, undoDepth: state.measureUndo.length };
   }
 
   function commitText(keep) {
@@ -3523,9 +3564,15 @@
     if (!target) return;
     var text = dom.annotField.value.trim();
     if (!keep || (!text && target.wasNew)) {
-      if (target.wasNew) deleteMeasurement(target.m.id);
+      if (target.wasNew) {
+        deleteMeasurement(target.m.id, true);
+        dropUndoTo(target.undoDepth - 1);
+      }
       renderAllOverlays();
       return;
+    }
+    if (!target.wasNew && target.m.text !== text) {
+      pushUndo("retyping " + measureName(target.m));
     }
     target.m.text = text;
     persistMeasurements();
@@ -3595,6 +3642,15 @@
     });
     dom.measureList.innerHTML = html;
     renderHistogram();
+  }
+
+  /** One measurement by id, or null. */
+  function measurementById(id) {
+    if (!id) return null;
+    for (var i = 0; i < state.measurements.length; i++) {
+      if (state.measurements[i].id === id) return state.measurements[i];
+    }
+    return null;
   }
 
   /** The selected measurement, or null. */
@@ -3717,22 +3773,139 @@
     }
   }
 
-  function deleteMeasurement(id) {
-    state.measurements = state.measurements.filter(function (m) { return m.id !== id; });
+  /* ---------------------------------------------------------------------
+   * Undo and redo, for annotations
+   *
+   * A reader who mis-drags a 22 mm lesion's calliper has lost a real
+   * measurement, and re-measuring it is not the same as getting the old one
+   * back. Every change to the annotation list goes through here.
+   *
+   * The unit of history is the whole list, snapshotted as JSON. That costs
+   * a little memory — a few kilobytes a step, bounded below — and buys a
+   * guarantee an inverse-operation design does not: whatever a step did,
+   * undoing it restores exactly the list that existed before.
+   *
+   * What it deliberately does not cover: sculpting (which edits voxels, and
+   * has its own stroke-level undo), and anything outside the annotation
+   * list. Loading a different study clears both stacks, so an undo can
+   * never resurrect one patient's measurements on top of another's.
+   * ------------------------------------------------------------------- */
+  var UNDO_LIMIT = 60;
+
+  function snapshotMeasurements() {
+    return JSON.stringify(state.measurements);
+  }
+
+  /** Record a step whose "before" is the list as it stands right now. */
+  function pushUndo(label) {
+    pushUndoSnapshot(label, snapshotMeasurements());
+  }
+
+  /** Record a step whose "before" was captured earlier — e.g. a drag. */
+  function pushUndoSnapshot(label, snap) {
+    state.measureUndo.push({ label: label, snap: snap });
+    if (state.measureUndo.length > UNDO_LIMIT) state.measureUndo.shift();
+    // A new action makes the redo branch unreachable.
+    state.measureRedo.length = 0;
+    syncUndoControls();
+  }
+
+  /** Forget the most recent step, for an action that turned out to be a no-op. */
+  function dropUndoTo(depth) {
+    if (state.measureUndo.length > depth) state.measureUndo.length = depth;
+    syncUndoControls();
+  }
+
+  function applySnapshot(snap) {
+    var list;
+    try { list = JSON.parse(snap); } catch (err) { list = null; }
+    state.measurements = Array.isArray(list) ? list : [];
+    // A half-drawn shape and an open caption box belong to the state being
+    // left behind, not the one being restored.
+    state.pendingMeasure = null;
+    if (dom.annotInput) dom.annotInput.hidden = true;
+    state.textTarget = null;
+    if (!state.measurements.some(function (m) { return m.id === state.selectedMeasurement; })) {
+      state.selectedMeasurement = null;
+    }
+    persistMeasurements();
+    renderMeasurementList();
+    renderAllOverlays();
+  }
+
+  function undoMeasurement() {
+    if (!state.measureUndo.length) { showToast("Nothing to undo.", true); return false; }
+    var step = state.measureUndo.pop();
+    state.measureRedo.push({ label: step.label, snap: snapshotMeasurements() });
+    applySnapshot(step.snap);
+    syncUndoControls();
+    showToast("Undone: " + step.label + ".");
+    return true;
+  }
+
+  function redoMeasurement() {
+    if (!state.measureRedo.length) { showToast("Nothing to redo.", true); return false; }
+    var step = state.measureRedo.pop();
+    state.measureUndo.push({ label: step.label, snap: snapshotMeasurements() });
+    applySnapshot(step.snap);
+    syncUndoControls();
+    showToast("Redone: " + step.label + ".");
+    return true;
+  }
+
+  /** Drop the history — on loading a different study, or clearing the viewer. */
+  function forgetMeasureHistory() {
+    state.measureUndo.length = 0;
+    state.measureRedo.length = 0;
+    syncUndoControls();
+  }
+
+  function syncUndoControls() {
+    var u = state.measureUndo[state.measureUndo.length - 1];
+    var r = state.measureRedo[state.measureRedo.length - 1];
+    [[dom.undoMeasureBtn, u, "Undo"], [dom.redoMeasureBtn, r, "Redo"],
+     [dom.menuUndoBtn, u, "Undo"], [dom.menuRedoBtn, r, "Redo"]]
+      .forEach(function (pair) {
+        var el = pair[0], step = pair[1], word = pair[2];
+        if (!el) return;
+        el.disabled = !step;
+        var note = el.querySelector("span");
+        if (note) note.textContent = step ? step.label : "nothing to " + word.toLowerCase();
+        el.title = step ? word + " " + step.label : "Nothing to " + word.toLowerCase() + ".";
+      });
+  }
+
+  function deleteMeasurement(id, skipUndo) {
+    var m = measurementById(id);
+    if (!skipUndo) pushUndo("deleting " + measureName(m));
+    state.measurements = state.measurements.filter(function (x) { return x.id !== id; });
     if (state.selectedMeasurement === id) state.selectedMeasurement = null;
     persistMeasurements();
     renderMeasurementList();
     renderAllOverlays();
   }
 
+  /** What to call a measurement in an undo label. */
+  function measureName(m) {
+    if (!m) return "a measurement";
+    var name = MEAS.label(m.tool) || "measurement";
+    return m.text ? name + ' "' + m.text.slice(0, 24) + '"' : name;
+  }
+
   function toggleMeasurementHidden(id) {
-    state.measurements.forEach(function (m) { if (m.id === id) m.hidden = !m.hidden; });
+    var m = measurementById(id);
+    pushUndo((m && m.hidden ? "showing " : "hiding ") + measureName(m));
+    state.measurements.forEach(function (x) { if (x.id === id) x.hidden = !x.hidden; });
     persistMeasurements();
     renderMeasurementList();
     renderAllOverlays();
   }
 
   function clearMeasurements() {
+    if (state.measurements.length) {
+      pushUndo("clearing " + state.measurements.length + " measurement" +
+        (state.measurements.length === 1 ? "" : "s"));
+    }
     state.measurements = [];
     state.pendingMeasure = null;
     state.selectedMeasurement = null;
@@ -3749,9 +3922,50 @@
         var res = slab ? MEAS.evaluate(m, slab, calibrationFor(m.plane, slab)) : null;
         if (!res) return null;
         var unit = MEAS.reportsIntensity(m.tool) ? intensitySuffix(slab) : "";
+        // Spelled out rather than abbreviated as the on-screen list is: a
+        // report is read by someone who is not looking at that list.
+        var where = typeof m.sliceIndex === "number"
+          ? m.plane + " slice " + (m.sliceIndex + 1)
+          : m.plane + ", oblique cut";
         return MEAS.label(m.tool) + " — " + res.primary + (unit ? " " + unit : "") +
-          " (" + m.plane + " " + sliceLabel(m) + ", " + seriesShortName(m.seriesUid) + ")";
+          " (" + where + ", " + seriesShortName(m.seriesUid) + ")";
       }).filter(Boolean);
+  }
+
+  /**
+   * Append the measurements to Findings, as text.
+   *
+   * Appended, never substituted: the reader's own sentences stay, and the
+   * numbers arrive under a heading that says where each came from. Only
+   * measurements that can be evaluated right now are included — one whose
+   * cut is not currently shown has no slab to measure against, and a line
+   * that guessed at its value would be worse than a line that is absent.
+   * Annotations are left out; an arrow has nothing to report.
+   */
+  function insertMeasurements() {
+    if (!state.reportStudyUid) {
+      return showToast("No study open, so there is no report to add to.", true);
+    }
+    if (state.report.status === "final") {
+      return showToast("This report is marked final. Reopen it first.", true);
+    }
+    var lines = measurementLines();
+    if (!lines.length) {
+      var have = state.measurements.filter(function (m) { return !MEAS.isAnnotation(m.tool); }).length;
+      return showToast(have
+        ? "Those measurements are on cuts no pane is showing, so they cannot be " +
+          "evaluated. Bring one up and try again."
+        : "No measurements to insert.", true);
+    }
+    readReportFields();
+    var block = "Measurements:\n" + lines.map(function (l) { return "- " + l; }).join("\n");
+    var current = (state.report.findings || "").replace(/\s+$/, "");
+    state.report.findings = current ? current + "\n\n" + block : block;
+    renderReport();
+    flushReport();
+    renderReportStatusOnly();
+    showToast(lines.length + " measurement" + (lines.length === 1 ? "" : "s") +
+      " added to Findings.");
   }
 
   /* ---------------------------------------------------------------------
@@ -4034,6 +4248,7 @@
 
     r.mode = state.vrMode;
     r.opacity = state.vrOpacity;
+    r.setCrop(state.vrCropLo, state.vrCropHi);
     r.render();
 
     rec.tl.textContent = state.vrMode === "mip" ? "3D MIP" : "Volume Rendering";
@@ -4044,6 +4259,130 @@
   function renderVR() {
     var i = vrCellIndex();
     if (i >= 0) renderVRCell(i);
+  }
+
+  /* ---------------------------------------------------------------------
+   * 3D crop
+   *
+   * The crop box is stored along the volume's own axes — columns, rows and
+   * slices — because that is what the 3D texture is indexed by. For a
+   * standard acquisition each of those points down one anatomical axis, so
+   * the sliders can be labelled by the cut they make rather than by a
+   * number. When the series is oblique enough that the name would overstate
+   * the alignment, the label says so instead of pretending.
+   *
+   * Cropping hides voxels from the 3D render only. The stored pixels, the
+   * 2D planes and every measurement are untouched.
+   * ------------------------------------------------------------------- */
+  var CROP_CUT_NAMES = ["Sagittal", "Coronal", "Axial"];
+  var MIN_CROP_SPAN = 0.01;
+
+  /**
+   * Name each volume axis by the anatomical cut moving along it makes.
+   *
+   * A direction that runs left-right is cut by a sagittal plane, one that
+   * runs front-back by a coronal plane, one that runs head-foot by an axial
+   * plane. If two axes claim the same anatomical direction — which an
+   * arbitrary oblique can do — no naming is honest, so all three fall back
+   * to plain numbers.
+   */
+  function cropAxisLabels() {
+    var plain = [0, 1, 2].map(function (a) {
+      return { name: "Axis " + (a + 1), oblique: false,
+               title: "Cuts along the volume's own axis " + (a + 1) +
+                      " — this series does not say how it lies in the patient." };
+    });
+    var f = state.volume && state.volume.frame;
+    if (!f) return plain;
+
+    var dirs = [f.rowDir, f.colDir, f.sliceDir];
+    var out = [];
+    var claimed = {};
+    for (var a = 0; a < 3; a++) {
+      var d = dirs[a];
+      if (!d) return plain;
+      var best = 0;
+      var bestAbs = Math.abs(d[0]);
+      for (var k = 1; k < 3; k++) {
+        if (Math.abs(d[k]) > bestAbs) { bestAbs = Math.abs(d[k]); best = k; }
+      }
+      if (claimed[best]) return plain;
+      claimed[best] = true;
+      // cos 25° ≈ 0.9: past that tilt the flat name would be misleading.
+      var oblique = bestAbs < 0.9;
+      out.push({
+        name: CROP_CUT_NAMES[best],
+        oblique: oblique,
+        title: "Cuts with a " + CROP_CUT_NAMES[best].toLowerCase() + " plane" +
+          (oblique
+            ? " — approximately: this series is tilted " +
+              Math.round(Math.acos(Math.min(1, bestAbs)) * 180 / Math.PI) +
+              "° off that axis."
+            : "."),
+      });
+    }
+    return out;
+  }
+
+  function cropIsActive() {
+    for (var a = 0; a < 3; a++) {
+      if (state.vrCropLo[a] > 0.0005 || state.vrCropHi[a] < 0.9995) return true;
+    }
+    return false;
+  }
+
+  function syncCropControls() {
+    if (!dom.cropLo || !dom.cropLo[0]) return;
+    var labels = cropAxisLabels();
+    for (var a = 0; a < 3; a++) {
+      var lo = Math.round(state.vrCropLo[a] * 100);
+      var hi = Math.round(state.vrCropHi[a] * 100);
+      dom.cropLo[a].value = String(lo);
+      dom.cropHi[a].value = String(hi);
+      dom.cropValue[a].textContent = lo + "–" + hi + "%";
+      dom.cropName[a].textContent = labels[a].name + (labels[a].oblique ? " ≈" : "");
+      dom.cropName[a].title = labels[a].title;
+    }
+    var on = cropIsActive();
+    dom.vrCropState.textContent = on ? "cropped" : "whole volume";
+    dom.vrCropState.classList.toggle("cropping", on);
+    dom.vrCropReset.disabled = !on;
+  }
+
+  /**
+   * Move one crop handle, pushing the other out of the way rather than
+   * letting the box invert. A slab needs a floor: collapsing an axis to
+   * nothing would leave a blank pane with no obvious way back.
+   */
+  function setCropHandle(axis, which, pct) {
+    var v = Math.max(0, Math.min(100, pct)) / 100;
+    var lo = state.vrCropLo[axis];
+    var hi = state.vrCropHi[axis];
+    if (which === "lo") {
+      lo = Math.min(v, 1 - MIN_CROP_SPAN);
+      if (hi < lo + MIN_CROP_SPAN) hi = lo + MIN_CROP_SPAN;
+    } else {
+      hi = Math.max(v, MIN_CROP_SPAN);
+      if (lo > hi - MIN_CROP_SPAN) lo = hi - MIN_CROP_SPAN;
+    }
+    state.vrCropLo[axis] = lo;
+    state.vrCropHi[axis] = hi;
+    syncCropControls();
+    renderVR();
+  }
+
+  function resetCrop() {
+    state.vrCropLo = [0, 0, 0];
+    state.vrCropHi = [1, 1, 1];
+    if (renderer) renderer.resetCrop();
+    syncCropControls();
+  }
+
+  function wireCropSlider(el, axis, which) {
+    if (!el) return;
+    el.addEventListener("input", function (e) {
+      setCropHandle(axis, which, parseInt(e.target.value, 10));
+    });
   }
 
   /**
@@ -4145,6 +4484,10 @@
       if (state.focusPoint || state.focusPick) did.push("focus point");
       clearFocus();
     }
+    if (what === "crop" || what === "all") {
+      if (cropIsActive()) did.push("3D crop");
+      resetCrop();
+    }
     if (what === "measurements" || what === "all") {
       clearMeasurements();
       did.push("measurements");
@@ -4152,7 +4495,8 @@
     syncCellControls();
     syncSliders();
     renderAll();
-    showToast("Reset " + did.join(", ") + ".");
+    showToast(did.length ? "Reset " + did.join(", ") + "."
+                         : "Nothing to reset — that was already at its default.");
   }
 
   /** Window/level back to what the study itself asks for. */
@@ -4515,15 +4859,38 @@
   }
 
   /** Write the current draft back to its own study, never another. */
+  /**
+   * Write the current draft back to its own study, never another.
+   *
+   * A failed save is reported rather than swallowed. Storage can be full or
+   * blocked — private browsing, a quota already spent on key images — and a
+   * report that quietly stops saving while someone keeps typing is the only
+   * failure in this viewer that costs work instead of convenience.
+   */
   function flushReport() {
     if (!state.reportStudyUid || !state.report) return;
     readReportFields();
     if (REPORT.isEmpty(state.report)) {
       REPORT.remove(state.reportStudyUid);
+      state.reportSaveFailed = false;
       return;
     }
     var stamp = REPORT.save(state.reportStudyUid, state.report);
-    if (stamp) state.report.updated = stamp;
+    if (stamp) {
+      state.report.updated = stamp;
+      if (state.reportSaveFailed) {
+        state.reportSaveFailed = false;
+        showToast("Saving again.");
+        renderReportStatusOnly();
+      }
+      return;
+    }
+    if (!state.reportSaveFailed) {
+      state.reportSaveFailed = true;
+      showToast("This report is NOT being saved — browser storage is full or blocked. " +
+        "Copy the text out now.", true);
+    }
+    renderReportStatusOnly();
   }
 
   function readReportFields() {
@@ -4565,10 +4932,7 @@
         }).join("")
       : '<p class="muted small">No study loaded.</p>';
 
-    dom.reportStatus.textContent = !state.reportStudyUid ? ""
-      : data.status === "final" ? "Final"
-      : data.updated ? "Draft · saved " + new Date(data.updated).toLocaleTimeString()
-      : "Draft";
+    renderReportStatusOnly();
     dom.reportStatus.classList.toggle("final", data.status === "final");
 
     var editable = !!state.reportStudyUid && data.status !== "final";
@@ -4584,10 +4948,13 @@
   /** Refresh only the saved-at line, so typing does not fight the textarea. */
   function renderReportStatusOnly() {
     var data = state.report || REPORT.empty();
+    // A toast is gone in a few seconds; this line stays until saving works.
     dom.reportStatus.textContent = !state.reportStudyUid ? ""
+      : state.reportSaveFailed ? "⚠ NOT SAVING — storage full or blocked"
       : data.status === "final" ? "Final"
       : data.updated ? "Draft · saved " + new Date(data.updated).toLocaleTimeString()
       : "Draft";
+    dom.reportStatus.classList.toggle("failing", !!state.reportSaveFailed);
   }
 
   function renderKeyImages() {
@@ -4597,7 +4964,9 @@
       return;
     }
     dom.reportKeyList.innerHTML = data.keyImages.map(function (img, i) {
-      return '<div class="key-thumb"><img src="' + img.thumb + '" alt="" />' +
+      // Validated on the way in by REPORT.readKeyImages(); escaped again on
+      // the way out, because one of the two being right is not a guarantee.
+      return '<div class="key-thumb"><img src="' + escapeHtml(img.thumb) + '" alt="" />' +
         '<button data-key="' + i + '" title="Remove">×</button>' +
         "<span>" + escapeHtml(img.caption) + "</span></div>";
     }).join("");
@@ -4626,6 +4995,10 @@
       : cell.plane.charAt(0).toUpperCase() + cell.plane.slice(1) +
         " slice " + (cellIndex(cell) + 1) + " / " + V.planeCount(state.volume, cell.plane);
 
+    if (state.report.keyImages.length >= REPORT.MAX_KEY_IMAGES) {
+      return showToast("A report holds at most " + REPORT.MAX_KEY_IMAGES +
+        " key images. Remove one first.", true);
+    }
     state.report.keyImages.push({ thumb: out.toDataURL("image/jpeg", 0.72), caption: caption });
     flushReport();
     renderReport();
@@ -4780,6 +5153,7 @@
       // load again when the series is reopened.
       state.measureLoaded = {};
       state.measureStoredUids = [];
+      forgetMeasureHistory();
       planeCache = {}; planeCacheKeys = [];
       vrDirty = true;
       if (renderer) renderer.dispose();
@@ -4913,7 +5287,24 @@
     dom.focusClearBtn.addEventListener("click", clearFocus);
 
     dom.navBtn.addEventListener("click", function () { setTool(MEAS.TOOLS.none); });
-    wireMenu(dom.toolMoreBtn, dom.toolMenu, "tool", setTool);
+    wireMenu(dom.toolMoreBtn, dom.toolMenu, "tool", setTool, { onOpen: syncUndoControls });
+
+    // Undo and redo sit in the Measure menu as well as the Tools panel: the
+    // menu is where the tool that made the mistake was chosen.
+    dom.toolMenu.addEventListener("click", function (e) {
+      var item = e.target.closest("[data-edit]");
+      if (!item || item.disabled) return;
+      dom.toolMenu.hidden = true;
+      if (item.dataset.edit === "undo") undoMeasurement(); else redoMeasurement();
+    });
+    dom.helpCloseBtn.addEventListener("click", closeShortcutHelp);
+    dom.helpModal.addEventListener("click", function (e) {
+      // Clicking the dimmed area outside the panel dismisses it.
+      if (e.target === dom.helpModal) closeShortcutHelp();
+    });
+
+    dom.undoMeasureBtn.addEventListener("click", undoMeasurement);
+    dom.redoMeasureBtn.addEventListener("click", redoMeasurement);
 
     dom.clearMeasureBtn.addEventListener("click", clearMeasurements);
 
@@ -4959,6 +5350,8 @@
         if (!goToFocus(true)) showToast("No focus point yet — press 🎯, then click one.", true);
       } else if (what === "focusClear") {
         clearFocus();
+      } else if (what === "shortcuts") {
+        openShortcutHelp();
       }
       syncMoreMenu();
     }, { onOpen: syncMoreMenu });
@@ -5015,6 +5408,7 @@
     });
 
     byId("reportGrabBtn").addEventListener("click", captureKeyImage);
+    byId("reportMeasureBtn").addEventListener("click", insertMeasurements);
 
     dom.reportKeyList.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-key]");
@@ -5204,6 +5598,17 @@
       renderVR();
     });
 
+    for (var cx = 0; cx < 3; cx++) {
+      wireCropSlider(dom.cropLo[cx], cx, "lo");
+      wireCropSlider(dom.cropHi[cx], cx, "hi");
+    }
+    dom.vrCropReset.addEventListener("click", function () {
+      if (!cropIsActive()) return;
+      resetCrop();
+      renderVR();
+      showToast("Crop reset — the whole volume is back.");
+    });
+
     window.addEventListener("resize", debounce(function () { renderAll(); }, 120));
     document.addEventListener("keydown", onKeyDown);
     wireDragAndDrop();
@@ -5329,6 +5734,9 @@
             cell: i, mode: "measure", m: hit.m,
             vertex: hit.vertex, move: !!hit.move,
             last: at0 ? { x: at0.x, y: at0.y } : { x: 0, y: 0 },
+            // The list as it was before the grab. A grab that turns out to
+            // be a plain click leaves it untouched, and records no step.
+            snap: snapshotMeasurements(),
           };
           renderAllOverlays();
           return;
@@ -5602,6 +6010,107 @@
       "   ·   px " + pv.x + ", " + pv.y;
   }
 
+  /* ---------------------------------------------------------------------
+   * Keyboard
+   *
+   * Every bound key lives in one table, and the help dialog is built from
+   * that same table. A shortcut therefore cannot be documented without
+   * being bound, or rebound without the help following it — which is the
+   * usual way a shortcut list stops being true.
+   *
+   * `match` is the raw KeyboardEvent.key values, letters in both cases.
+   * `when` gates an entry on state, so Enter only closes a shape while one
+   * is being drawn. `stop` calls preventDefault. Entries are tried in
+   * order, so the Shift variant of a chord must come before the plain one.
+   * ------------------------------------------------------------------- */
+  var SHORTCUTS = [
+    { group: "Moving through the stack", items: [
+      { keys: ["↓", "→"], match: ["ArrowDown", "ArrowRight"], stop: true,
+        what: "Next slice, in the active pane",
+        run: function (c) { setCellIndex(c.i, c.at + 1); } },
+      { keys: ["↑", "←"], match: ["ArrowUp", "ArrowLeft"], stop: true,
+        what: "Previous slice",
+        run: function (c) { setCellIndex(c.i, c.at - 1); } },
+      { keys: ["Page Down"], match: ["PageDown"], stop: true,
+        what: "Ten slices on",
+        run: function (c) { setCellIndex(c.i, c.at + 10); } },
+      { keys: ["Page Up"], match: ["PageUp"], stop: true,
+        what: "Ten slices back",
+        run: function (c) { setCellIndex(c.i, c.at - 10); } },
+    ] },
+    { group: "Layouts", items: [
+      { keys: ["1"], match: ["1"], what: "2×2 — three planes and 3D",
+        run: function () { setLayout("quad"); } },
+      { keys: ["2"], match: ["2"], what: "A single pane",
+        run: function () { setLayout("axial"); } },
+      { keys: ["3"], match: ["3"], what: "Three planes side by side",
+        run: function () { setLayout("mpr"); } },
+      { keys: ["4"], match: ["4"], what: "3D only",
+        run: function () { setLayout("vr"); } },
+      { keys: ["5"], match: ["5"], what: "Two panes",
+        run: function () { setLayout("1x2"); } },
+      { keys: ["6"], match: ["6"], what: "Six panes",
+        run: function () { setLayout("2x3"); } },
+    ] },
+    { group: "Tools", items: [
+      { keys: ["N"], match: ["n", "N"], what: "Navigate — the tool to come back to",
+        run: function () { setTool(MEAS.TOOLS.none); } },
+      { keys: ["X"], match: ["x", "X"], what: "Crosshair on or off",
+        run: function () {
+          setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair");
+        } },
+      { keys: ["Enter"], match: ["Enter"], stop: true,
+        when: function () { return !!state.pendingMeasure; },
+        what: "Close the shape being drawn",
+        run: function () { finishPending(); } },
+      { keys: ["Esc"], match: ["Escape"], stop: true,
+        when: function () { return !!state.pendingMeasure; },
+        what: "Abandon the shape being drawn",
+        run: function () { cancelPending(); } },
+      { keys: ["Delete"], match: ["Delete", "Backspace"], stop: true,
+        when: function () { return !!state.selectedMeasurement; },
+        what: "Delete the selected measurement",
+        run: function () { deleteMeasurement(state.selectedMeasurement); } },
+    ] },
+    { group: "Undoing and resetting", items: [
+      { keys: ["Ctrl / ⌘", "⇧", "Z"], match: ["z", "Z"], accel: true, shift: true,
+        stop: true, what: "Redo an annotation change",
+        run: function () { redoMeasurement(); } },
+      { keys: ["Ctrl / ⌘", "Z"], match: ["z", "Z"], accel: true, shift: false,
+        stop: true, what: "Undo an annotation change",
+        run: function () { undoMeasurement(); } },
+      { keys: ["Ctrl / ⌘", "Y"], match: ["y", "Y"], accel: true, stop: true,
+        what: "Redo — the other chord for it",
+        run: function () { redoMeasurement(); } },
+      { keys: ["R"], match: ["r", "R"], what: "Reset zoom, pan, rotation and flip",
+        run: function () { applyReset("view"); } },
+    ] },
+    { group: "The focus point", items: [
+      { keys: ["F"], match: ["f", "F"], what: "Arm the focus point, then click a finding",
+        run: function () { setFocusPick(!state.focusPick); } },
+      { keys: ["G"], match: ["g", "G"], what: "Bring every pane back to the focus point",
+        run: function () {
+          if (!goToFocus(true)) showToast("No focus point yet — press F, then click one.", true);
+        } },
+    ] },
+    { group: "Everything else", items: [
+      { keys: ["I"], match: ["i", "I"], what: "Invert the greyscale — display only",
+        run: function () {
+          state.invert = !state.invert;
+          syncWindowControls();
+          renderAll();
+        } },
+      { keys: ["C"], match: ["c", "C"], what: "Open this patient's prior scan beside this one",
+        run: function () { compareWithPrior(null); } },
+      { keys: ["?"], match: ["?"], stop: true, what: "Show this list",
+        run: function () { toggleShortcutHelp(); } },
+    ] },
+  ];
+
+  function allShortcuts() {
+    return SHORTCUTS.reduce(function (acc, g) { return acc.concat(g.items); }, []);
+  }
+
   function onKeyDown(e) {
     // The caption editor owns the keyboard while it is open.
     if (state.textTarget) {
@@ -5609,63 +6118,66 @@
       else if (e.key === "Escape") { commitText(false); e.preventDefault(); }
       return;
     }
+    if (e.key === "Escape" && !dom.helpModal.hidden) { closeShortcutHelp(); return; }
     if (e.key === "Escape" && anyMenuOpen()) { closeMenus(); return; }
     if (e.target && /input|select|textarea/i.test(e.target.tagName) ||
         (e.target && e.target.isContentEditable)) return;
 
-    // Finishing or abandoning a shape comes before the navigation keys, so
-    // Enter never pages the stack while a polygon is half-drawn.
-    if (state.pendingMeasure) {
-      if (e.key === "Enter") { finishPending(); e.preventDefault(); return; }
-      if (e.key === "Escape") { cancelPending(); e.preventDefault(); return; }
-    }
-    if ((e.key === "Delete" || e.key === "Backspace") && state.selectedMeasurement) {
-      deleteMeasurement(state.selectedMeasurement);
-      e.preventDefault();
-      return;
-    }
+    var accel = !!(e.ctrlKey || e.metaKey);
+
+    // The active pane, and where it is in its stack. 3D has no stack, so
+    // the slice keys fall through to the first pane that does.
     var i = state.activeCell;
     var cell = state.cells[i];
     if (!cell || cell.plane === "vr") {
       i = state.cells.findIndex(function (c) { return c.plane !== "vr"; });
       cell = state.cells[i];
     }
-    var at = cell ? cellIndex(cell) : 0;
-    switch (e.key) {
-      case "ArrowDown": case "ArrowRight":
-        setCellIndex(i, at + 1); e.preventDefault(); break;
-      case "ArrowUp": case "ArrowLeft":
-        setCellIndex(i, at - 1); e.preventDefault(); break;
-      case "PageDown":
-        setCellIndex(i, at + 10); e.preventDefault(); break;
-      case "PageUp":
-        setCellIndex(i, at - 10); e.preventDefault(); break;
-      case "f": case "F":
-        setFocusPick(!state.focusPick); break;
-      case "g": case "G":
-        if (!goToFocus(true)) showToast("No focus point yet — press F, then click one.", true);
-        break;
-      case "i": case "I":
-        state.invert = !state.invert;
-        syncWindowControls();
-        renderAll();
-        break;
-      case "n": case "N":
-        setTool(MEAS.TOOLS.none); break;
-      case "x": case "X":
-        setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair"); break;
-      case "c": case "C":
-        compareWithPrior(null); break;
-      case "r": case "R":
-        applyReset("view"); break;
-      case "1": setLayout("quad"); break;
-      case "2": setLayout("axial"); break;
-      case "3": setLayout("mpr"); break;
-      case "4": setLayout("vr"); break;
-      case "5": setLayout("1x2"); break;
-      case "6": setLayout("2x3"); break;
+    var ctx = { i: i, cell: cell, at: cell ? cellIndex(cell) : 0, event: e };
 
+    var items = allShortcuts();
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      if (it.match.indexOf(e.key) < 0) continue;
+      if (!!it.accel !== accel) continue;
+      if (it.shift !== undefined && !!it.shift !== e.shiftKey) continue;
+      if (it.when && !it.when()) continue;
+      it.run(ctx);
+      if (it.stop) e.preventDefault();
+      return;
     }
+    // Any other chord belongs to the browser — Ctrl+R must reload, not
+    // reset the view.
+  }
+
+  /* ---------------------------------------------------------------------
+   * The shortcut list
+   * ------------------------------------------------------------------- */
+  function renderShortcutHelp() {
+    var html = "";
+    SHORTCUTS.forEach(function (g) {
+      html += '<h4 class="help-group">' + escapeHtml(g.group) + '</h4><dl class="help-list">';
+      g.items.forEach(function (it) {
+        html += "<dt>" + it.keys.map(function (k) {
+          return "<kbd>" + escapeHtml(k) + "</kbd>";
+        }).join("") + "</dt><dd>" + escapeHtml(it.what) + "</dd>";
+      });
+      html += "</dl>";
+    });
+    dom.helpBody.innerHTML = html;
+  }
+
+  function openShortcutHelp() {
+    closeMenus();
+    renderShortcutHelp();
+    dom.helpModal.hidden = false;
+    dom.helpCloseBtn.focus();
+  }
+
+  function closeShortcutHelp() { dom.helpModal.hidden = true; }
+
+  function toggleShortcutHelp() {
+    if (dom.helpModal.hidden) openShortcutHelp(); else closeShortcutHelp();
   }
 
   function wireDragAndDrop() {
@@ -6294,7 +6806,13 @@
       }
       if (drag && drag.mode === "trace") finishPending();
       // An edited measurement is only worth saving once the drag has ended.
-      if (drag && drag.mode === "measure") persistMeasurements();
+      if (drag && drag.mode === "measure") {
+        if (drag.snap && drag.snap !== snapshotMeasurements()) {
+          pushUndoSnapshot((drag.move ? "moving " : "reshaping ") + measureName(drag.m),
+                           drag.snap);
+        }
+        persistMeasurements();
+      }
       state.drag = null;
     });
 
@@ -6312,6 +6830,8 @@
     updateStackNote();
     updateObliqueInfo();
     renderMeasurementList();
+    syncUndoControls();
+    syncCropControls();
     syncSliders();
     setTool("none");
     setCine(false);
@@ -6376,6 +6896,11 @@
     volumeFor: volumeFor,
     focusGapFor: focusGapFor,
     measurementsFor: measurementsFor,
+    undoMeasurement: undoMeasurement,
+    SHORTCUTS: SHORTCUTS,
+    openShortcutHelp: openShortcutHelp,
+    closeShortcutHelp: closeShortcutHelp,
+    redoMeasurement: redoMeasurement,
     persistMeasurements: persistMeasurements,
     restoreMeasurements: restoreMeasurements,
     clearMeasurements: clearMeasurements,
@@ -6384,6 +6909,7 @@
     finishPending: finishPending,
     calibrationFor: calibrationFor,
     measurementLines: measurementLines,
+    insertMeasurements: insertMeasurements,
     moveGrip: moveGrip,
     hitTestMeasurement: hitTestMeasurement,
     hitTestCrosshair: hitTestCrosshair,
@@ -6405,6 +6931,12 @@
     insertTemplate: insertTemplate,
     openPlaceholders: openPlaceholders,
     reportText: reportText,
+    cropAxisLabels: cropAxisLabels,
+    cropIsActive: cropIsActive,
+    setCropHandle: setCropHandle,
+    resetCrop: resetCrop,
+    renderVR: renderVR,
+    vrCanvas: function () { var i = vrCellIndex(); return i >= 0 && cellEls[i] ? cellEls[i].canvas : null; },
     cellGeom: function (i) { return cellEls[i] ? cellEls[i].geom : null; },
     cellEl: function (i) { return cellEls[i] ? cellEls[i].root : null; },
     cellCount: function () { return cellEls.length; },

@@ -128,6 +128,12 @@
             <textarea id="reportImpression" rows="4" placeholder="Conclusion and recommendations"></textarea>
           </label>
 
+          <div class="field-row">
+            <button class="ghost-btn full" id="reportMeasureBtn"
+              title="Append every measurement to Findings, with its plane, slice and series">
+              ＋ Insert measurements</button>
+          </div>
+
           <div class="report-keys">
             <div class="report-keys-head">
               <span>Key images</span>
@@ -243,6 +249,46 @@
               <input type="range" id="vrOpacity" min="0.1" max="2" step="0.05" value="1" />
             </div>
             <p class="hint-text">Drag to rotate · wheel to zoom.</p>
+
+            <div class="crop-block" id="vrCropBlock">
+              <div class="field-row">
+                <label>Crop</label>
+                <span class="field-value" id="vrCropState">whole volume</span>
+              </div>
+              <div class="crop-axis" data-axis="0">
+                <span class="crop-axis-name" id="vrCropName0">Axis 1</span>
+                <input type="range" id="vrCropLo0" class="crop-lo" data-axis="0" min="0" max="100" step="1" value="0"
+                       aria-label="crop axis 1 from" />
+                <input type="range" id="vrCropHi0" class="crop-hi" data-axis="0" min="0" max="100" step="1" value="100"
+                       aria-label="crop axis 1 to" />
+                <span class="crop-axis-value" id="vrCropValue0">0–100%</span>
+              </div>
+              <div class="crop-axis" data-axis="1">
+                <span class="crop-axis-name" id="vrCropName1">Axis 2</span>
+                <input type="range" id="vrCropLo1" class="crop-lo" data-axis="1" min="0" max="100" step="1" value="0"
+                       aria-label="crop axis 2 from" />
+                <input type="range" id="vrCropHi1" class="crop-hi" data-axis="1" min="0" max="100" step="1" value="100"
+                       aria-label="crop axis 2 to" />
+                <span class="crop-axis-value" id="vrCropValue1">0–100%</span>
+              </div>
+              <div class="crop-axis" data-axis="2">
+                <span class="crop-axis-name" id="vrCropName2">Axis 3</span>
+                <input type="range" id="vrCropLo2" class="crop-lo" data-axis="2" min="0" max="100" step="1" value="0"
+                       aria-label="crop axis 3 from" />
+                <input type="range" id="vrCropHi2" class="crop-hi" data-axis="2" min="0" max="100" step="1" value="100"
+                       aria-label="crop axis 3 to" />
+                <span class="crop-axis-value" id="vrCropValue2">0–100%</span>
+              </div>
+              <div class="field-row">
+                <button class="ghost-btn" id="vrCropReset">Reset crop</button>
+              </div>
+              <p class="hint-text">Each pair cuts the volume from one side and the
+                other along one anatomical direction — enough to take the front off a
+                skull, or keep a single slab. A name marked <strong>≈</strong> means
+                this series is tilted off that anatomical axis, so the cut is only
+                approximately the one named. Cropping only hides voxels from the 3D
+                view; the image data and the 2D planes are untouched.</p>
+            </div>
           </section>
 
           <section class="tool-section">
@@ -303,6 +349,10 @@
             <h4>Measurements</h4>
             <div id="measureList" class="measure-list">
               <p class="muted small">No measurements yet.</p>
+            </div>
+            <div class="field-row">
+              <button class="ghost-btn" id="undoMeasureBtn" disabled>↶ Undo</button>
+              <button class="ghost-btn" id="redoMeasureBtn" disabled>↷ Redo</button>
             </div>
             <div class="field-row">
               <button class="ghost-btn danger full" id="clearMeasureBtn">Delete all</button>
@@ -392,6 +442,8 @@
     <div class="menu-head">Focus point</div>
     <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (G)</span></button>
     <button data-more="focusClear">Clear the focus point</button>
+    <div class="menu-head">Help</div>
+    <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>
   </div>
   <div class="menu menu-wide" id="compareMenu" hidden></div>
   <div class="menu" id="stackMenu" hidden>
@@ -412,6 +464,9 @@
     <button data-layout="2x3">▦▦ 2×3<span>six panes &nbsp;(6)</span></button>
   </div>
   <div class="menu menu-wide" id="toolMenu" hidden>
+    <div class="menu-head">History</div>
+    <button data-edit="undo" id="menuUndoBtn" disabled>↶ Undo<span>nothing to undo</span></button>
+    <button data-edit="redo" id="menuRedoBtn" disabled>↷ Redo<span>nothing to redo</span></button>
     <div class="menu-head">Measure</div>
     <button data-tool="point">⌖ Probe<span>one pixel's value</span></button>
     <button data-tool="distance">↔ Distance<span>two points</span></button>
@@ -439,6 +494,7 @@
     <button data-reset="oblique">Straighten planes<span>undo any oblique tilt</span></button>
     <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
     <button data-reset="focus">Clear focus point<span>stop pulling the panes to one place</span></button>
+    <button data-reset="crop">Reset 3D crop<span>bring back the whole volume</span></button>
     <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
     <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
   </div>
@@ -456,6 +512,18 @@
   <script src="js/measure.js"></script>
   <script src="js/templates.js"></script>
   <script src="js/report.js"></script>
+  <div class="modal-backdrop" id="helpModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="modal-head">
+        <h3 id="helpTitle">Keyboard shortcuts</h3>
+        <button class="icon-btn" id="helpCloseBtn" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="helpBody"></div>
+      <p class="hint-text modal-foot">Keys do nothing while the cursor is in a text box,
+        so typing a report never moves the stack.</p>
+    </div>
+  </div>
+
   <script src="js/vr.js"></script>
   <script src="js/app.js"></script>
 </body>

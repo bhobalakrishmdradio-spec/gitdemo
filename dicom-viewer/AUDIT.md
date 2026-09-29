@@ -1,6 +1,11 @@
 # CT Console — MedSynapse function cross-check, audited
 
-Audited: 23 September 2026 against commit `cd8bbdd`.
+First audited 23 September 2026 against commit `cd8bbdd`.
+Re-audited 29 September 2026: every row whose status changed since then has
+been re-checked against the running application and names the suite that
+holds it. Rows still carrying their original status were not re-run for this
+pass, so treat an unchanged **Missing** as "was missing at `cd8bbdd` and has
+not been built since" rather than as a fresh observation.
 
 ## How to read this
 
@@ -22,25 +27,33 @@ than established vendor features.
 
 ## Gap summary
 
-Implemented during this audit: comparison of two studies with linked
+Implemented during the first audit: comparison of two studies with linked
 scrolling, hand sculpting, cine, the report editor, MR support, the
 Angiographic/Bone/Muscle VRT presets, acquisition-dimension splitting, and
 the worklist filter.
 
+Closed since, and re-checked for this pass: the full annotation set (arrow,
+text, freehand, polygon, polyline, Cobb, circle), measurement editing by
+dragging handles, per-series persistence, hide-without-deleting, the ROI
+histogram, undo and redo, one-press comparison with a patient's own prior,
+the focus point across series, the 3D crop box, the report template library,
+inserting measurements into Findings, screenshots with redaction of
+burned-in identifiers, and the shortcut list.
+
 The largest remaining gaps, in priority order:
 
-1. **P1 — Annotation tools.** No arrow, text, freehand or polygon. A reader
-   cannot mark up an image for someone else.
-2. **P1 — Measurements are not persisted.** They live in memory and are lost
-   on reload, so MEA-17 and CMP-10 (comparing measurements over time) cannot
-   work.
-3. **P1 — Report output is plain text only.** No rich formatting, no PDF, no
+1. **P1 — Report output is plain text only.** No rich formatting, no PDF, no
    signature, no amendment or version history.
-4. **P2 — No measurement editing after placement.** Points cannot be dragged.
-5. **P2 — No 2D colour map, magnifier, shutter, or fit/1:1 zoom modes.**
-6. **P2 — No hanging protocols or saved layouts.**
-7. **Out of scope by design** — PACS retrieval, portals, peer review, AI,
-   fusion, segmentation modules, de-identification, multi-user workflow.
+2. **P2 — No 2D colour map, magnifier, 2D shutter, or fit/1:1 zoom modes.**
+3. **P2 — No hanging protocols or saved layouts.**
+4. **P2 — No automatic growth or delta table across studies.** Two studies
+   can be read side by side with their own measurements, but nothing
+   computes the change for you.
+5. **P3 — No 3D pan, orientation cube, editable transfer-function curve, or
+   surface/mesh rendering.**
+6. **Out of scope by design** — PACS retrieval, portals, peer review, AI
+   detection, fusion, anatomical segmentation, curved planar reconstruction,
+   de-identification, multi-user workflow.
 
 ## 1. Study access, toolbar, and navigation
 
@@ -58,6 +71,7 @@ The largest remaining gaps, in priority order:
 | NAV-10 | Cine play / pause | Pass | `browser-sculpt-cine.js` |
 | NAV-11 | Cine speed / reverse / loop | Pass | 5/12/25/40 fps, reverse, loop; with loop off it stops on the last slice |
 | NAV-12 | Tooltips / active tool | Pass | Every control has a tooltip; active tool and modes are highlighted |
+| NAV-13 | Keyboard shortcuts documented | Pass | `?` opens a list generated from the same table the key handler dispatches from, so a key cannot be documented without being bound. `browser-undo.js` presses every listed key and requires it to reach the entry it is listed under |
 | NAV-13 | Overflow menu | Partial | Toolbar scrolls sideways and tightens below 1520 px; Orient and Reset are menus. No explicit overflow menu |
 | NAV-14 | Favourites / pinned tools | Missing | — |
 | NAV-15 | Keyboard / mouse bindings | Pass | Shortcuts are ignored while typing in any input, so report typing is unaffected |
@@ -82,7 +96,7 @@ The largest remaining gaps, in priority order:
 | IMG-11 | Invert grayscale | Pass | Verified not to change HU or ROI statistics |
 | IMG-12 | Colour map / LUT | **Missing** for 2D | 3D has transfer functions; 2D is greyscale only |
 | IMG-13 | Sharpen / smooth | **Missing** | — |
-| IMG-14 | Shutter / crop | **Missing** | Sculpting removes voxels, which is not the same thing |
+| IMG-14 | Shutter / crop | Partial | **3D**: a crop box with independent handles on each anatomical axis, named for the cut they make, plus Reset crop. `browser-crop.js`. **No 2D shutter** |
 | IMG-15 | Orientation labels / scale | Partial | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest. **No scale bar** |
 | IMG-16 | Patient / image overlay toggle | **Missing** | Overlays always shown on large panes, hidden on small ones. Would not anonymise anything regardless |
 | IMG-17 | DICOM tags / metadata | Pass | Searchable by keyword, value or tag number; shows the displayed instance |
@@ -92,23 +106,23 @@ The largest remaining gaps, in priority order:
 | ID | Function | Status | Evidence / gap |
 | --- | --- | --- | --- |
 | MEA-01 | Point HU / pixel probe | Pass | Live readout plus a pinned probe; reads one pixel, never an interpolation |
-| MEA-02 | Circle ROI | Partial | Ellipse covers it; no constrained circle |
+| MEA-02 | Circle ROI | Pass | Centre then edge; circular in **millimetres**, so on anisotropic pixels it is drawn as an ellipse |
 | MEA-03 | Ellipse ROI | Pass | Mean ± SD, min, max, area, count. Verified π/4 of the enclosing rectangle |
 | MEA-04 | Rectangle ROI | Pass | 10×10 px at 1 mm = exactly 100.000000 mm², 100 pixels |
-| MEA-05 | Polygon / freehand ROI | **Missing** | — |
+| MEA-05 | Polygon / freehand ROI | Pass | Polygon (click each vertex, Enter or click the first to close) and traced freehand ROI. `browser-annot.js` |
 | MEA-06 | SD / pixel count | Pass | Population SD over pixel centres inside the shape; count reported |
 | MEA-07 | ROI area / perimeter | Partial | Area yes, in mm² when calibrated. **No perimeter** |
 | MEA-08 | Distance / ruler | Pass | Computed in physical space, so unequal row/column spacing is handled |
-| MEA-09 | Polyline length | **Missing** | — |
+| MEA-09 | Polyline length | Pass | Summed segments, Enter to finish |
 | MEA-10 | Angle | Pass | 90.00° on a right-angle phantom; unchanged by zoom, pan and rotation |
-| MEA-11 | Cobb angle | **Missing** | — |
+| MEA-11 | Cobb angle | Pass | Two lines, four points; the acute angle between them. `measure-unit.js` |
 | MEA-12 | Manual calibration | **Missing** | Uncalibrated data is labelled as such rather than allowing an override |
-| MEA-13 | Arrow / text annotation | **Missing** | **P1 gap** |
-| MEA-14 | Freehand drawing | **Missing** | — |
-| MEA-15 | Edit / move / delete | Partial | Delete and select yes. **Points cannot be dragged after placement** |
-| MEA-16 | Hide / show / clear | Partial | Clear-all yes. **No hide without deleting** |
-| MEA-17 | Measurement list / persistence | Partial | Listed and anchored to their slice. **Not saved — lost on reload** |
-| MEA-18 | HU histogram | **Missing** | — |
+| MEA-13 | Arrow / text annotation | Pass | Arrow and typed caption; listed as annotations, never as measurements that measured nothing |
+| MEA-14 | Freehand drawing | Pass | Hold and trace |
+| MEA-15 | Edit / move / delete | Pass | With Navigate active, drag any handle to reshape or the centre grip to move; statistics recalculate as you go. Undo and redo cover every change, restoring the measurement's numbers and not merely its shape. `browser-undo.js` |
+| MEA-16 | Hide / show / clear | Pass | Per-marker eye, hide-all under More, clear-all — all three distinct from deleting, and all undoable |
+| MEA-17 | Measurement list / persistence | Pass | Saved per **series** in this browser and restored when the series is reopened. Per series, not per study: an ROI drawn on the arterial phase means nothing on the venous one |
+| MEA-18 | HU histogram | Pass | Distribution over exactly the pixels the ROI's mean came from, binned over the ROI's own min–max, with the mean marked |
 | MEA-19 | Measurements on reconstructed images | Pass | Oblique cuts measure in mm and require reliable slice spacing before claiming them |
 | MEA-20 | PET SUV / non-CT units | Partial | MR is never labelled HU. **No PET SUV support at all** |
 
@@ -172,7 +186,7 @@ The largest remaining gaps, in priority order:
 | CMP-07 | Link window/level | Partial | Panes on "global" share the toolbar W/L; a pane can opt out with its own |
 | CMP-08 | Link / unlink selection | Partial | One global Link toggle plus per-pane pinning. No per-pane link membership |
 | CMP-09 | Cross-reference cursor | Partial | Crosshair links planes within a volume. **Not across studies** |
-| CMP-10 | Compare measurements over time | **Missing** | Measurements are not persisted |
+| CMP-10 | Compare measurements over time | Partial | Measurements now persist per series and both studies can be open side by side, so the two numbers can be read together. **No automatic delta or growth table** |
 | CMP-11 | Exit comparison | Pass | Set the pane back to "Current series" |
 | CMP-12 | Registration status | Pass | Alignment is by stated position only; a level outside the other study is labelled "off by N mm — outside this series" |
 
@@ -187,7 +201,7 @@ The largest remaining gaps, in priority order:
 | VOL-05 | Bone / soft tissue / vessel presets | Pass | Bone VRT, Angiographic VRT, Muscle VRT, Soft Tissue, Lung, Skin; MR gets its own set |
 | VOL-06 | Opacity / transfer function | Partial | Opacity slider and preset choice. **No editable transfer-function curve** |
 | VOL-07 | Threshold | Pass | Bone-cut HU threshold, explicit, and it does not alter source pixels |
-| VOL-08 | Clipping plane / crop box | **Missing** | Sculpting is the nearest equivalent and is reversible |
+| VOL-08 | Clipping plane / crop box | Pass | Crop box with two independent handles per anatomical axis; cropping the ray rather than discarding samples, so the cut face is solid. Verified that cropping removes lit pixels, that opposite fifths of an axis are different pictures, and that the image data is byte-for-byte unchanged. `browser-crop.js` |
 | VOL-09 | Sculpt / cut / undo | Pass | Spherical brush in mm, per-stroke undo, clear-all; verified the stored voxel keeps its value |
 | VOL-10 | Surface / mesh rendering | **Missing** | — |
 | VOL-11 | Segmentation tools | **Missing** | Threshold and hand sculpting only — not anatomical segmentation |
@@ -206,7 +220,7 @@ The largest remaining gaps, in priority order:
 | REP-02 | Report alongside images | Pass | Side panel; the grid re-lays out and study association is unaffected |
 | REP-03 | Patient / accession / study header | Pass | **No carryover** — the draft is keyed on Study Instance UID and swapped on study change |
 | REP-04 | History / technique / findings / impression | Pass | Saved and exported in reading order |
-| REP-05 | Templates | Pass | Five starters; confirms before replacing existing text; leaves clinical history alone |
+| REP-05 | Templates | Pass | 19 CT and MRI templates, 13 of them imported verbatim from mdvthu/report-templates (Apache-2.0) and checked word for word by `template-fidelity.js`. Confirms before replacing existing text; leaves clinical history alone; unfilled `[placeholders]` are counted and block finalising |
 | REP-06 | Structured report forms | **Missing** | — |
 | REP-07–11 | Bold / fonts / alignment / lists / tables | **Missing** | Plain text only |
 | REP-12 | Copy / paste | Pass | Plain textarea, so no hidden formatting |
@@ -215,7 +229,7 @@ The largest remaining gaps, in priority order:
 | REP-15 | Macros / reusable phrases | Partial | Templates, not per-phrase macros |
 | REP-16–17 | Speech / dictation | **Missing** | — |
 | REP-18 | Insert key images | Pass | Captures the active pane with overlays; caption records plane and slice |
-| REP-19 | Insert measurements | **Missing** | — |
+| REP-19 | Insert measurements | Pass | Appends every evaluable measurement to Findings with its plane, slice and series, under a heading; the reader's own text is kept. Measurements on cuts no pane is showing are named as such rather than guessed at |
 | REP-20 | Save draft | Pass | Autosaves; status line shows the save time |
 | REP-21 | Autosave / recovery | Pass | Survives a reload; also flushed on page unload |
 | REP-22 | Preview / print / PDF | Partial | Copy to clipboard and download `.txt`. **No PDF or print layout** |
@@ -232,7 +246,7 @@ The largest remaining gaps, in priority order:
 
 | ID | Function | Status | Evidence / gap |
 | --- | --- | --- | --- |
-| EXT-01 | Image export / clipboard | Partial | PNG of the active pane with overlays. **No option to exclude overlays**, no clipboard copy |
+| EXT-01 | Image export / clipboard | Partial | PNG of the active pane or the whole grid, with overlays; Save as…, copy to clipboard, and the share sheet on a phone or tablet. **No option to exclude overlays** |
 | EXT-02 | Original DICOM download | **Missing** | Files are read, never re-emitted |
 | EXT-03 | Series / study export | **Missing** | — |
 | EXT-04 | Print / film layout | **Missing** | — |
@@ -255,3 +269,7 @@ The largest remaining gaps, in priority order:
 | Report drafts recover; finalization controlled | **Partial** — recovery yes; no versions, amendments or signature |
 | Output checked by reopening exported files | **Partial** — PNG and text verified by content, not by reopening |
 | Shared deployment authorizes every request | **N/A** — nothing is served |
+| Untrusted header text cannot execute | **Pass** — a study whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry script payloads renders them literally; no markup parsed, no handler fired. `browser-security.js`, `test/fixtures/make_hostile.py` |
+| Stored data is treated as untrusted | **Pass** — key images are read back through a validator that accepts only a bounded `data:image/…;base64` URL, and are escaped again on output |
+| A failed save is visible | **Pass** — a report that cannot be written to storage says so in a toast and keeps `⚠ NOT SAVING` on the status line until a save succeeds |
+| No network, no eval, no third-party origin | **Pass** — asserted, not assumed |

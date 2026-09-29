@@ -158,7 +158,49 @@ const pickSeries = async (page, needle) => page.evaluate((needle) => {
   check('and clears the fields',
     (await page.inputValue('#reportFindings')) === '');
 
-  console.log('\n10. No page errors');
+  console.log('\n10. Measurements go into Findings as text, appended');
+  // A fresh study, a real measurement, then the button a reader presses.
+  await page.evaluate(() => { window.__ctConsole.setLayout('axial'); });
+  await page.waitForTimeout(500);
+  const placed = await page.evaluate(() => {
+    const C = window.__ctConsole, M = window.CTMeasure;
+    const g = C.cellGeom(0);
+    const m = M.createMeasurement(M.TOOLS.distance, g.plane,
+      g.index, [{ x: 20, y: 40 }, { x: 60, y: 40 }], { seriesUid: g.uid });
+    C.state.measurements.push(m);
+    C.renderAll();
+    return M.evaluate(m, g.slab, C.calibrationFor(m.plane, g.slab)).primary;
+  });
+  await page.fill('#reportFindings', 'No acute intracranial abnormality.');
+  await page.waitForTimeout(250);
+  await page.click('#reportMeasureBtn');
+  await page.waitForTimeout(500);
+  const findings = await page.inputValue('#reportFindings');
+  check('the reader\'s own sentence is still there',
+    /No acute intracranial abnormality\./.test(findings), findings.slice(0, 60));
+  check('the measurement was appended with its value',
+    findings.indexOf(placed) > findings.indexOf('No acute'),
+    placed + ' in: ' + findings.replace(/\n/g, ' | ').slice(0, 140));
+  check('each line says which plane, slice and series it came from',
+    /\(axial slice \d+, .+\)$/.test(findings.split('\n').pop()),
+    findings.split('\n').pop());
+  check('annotations are left out', !/Arrow|Text/.test(findings));
+
+  const before = findings;
+  await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
+  await page.click('#reportMeasureBtn'); await page.waitForTimeout(300);
+  check('a finalised report refuses the insert rather than editing itself',
+    (await page.inputValue('#reportFindings')) === before);
+  await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
+
+  await page.evaluate(() => window.__ctConsole.clearMeasurements());
+  await page.waitForTimeout(200);
+  const beforeEmpty = await page.inputValue('#reportFindings');
+  await page.click('#reportMeasureBtn'); await page.waitForTimeout(300);
+  check('with nothing to insert it says so and writes nothing',
+    (await page.inputValue('#reportFindings')) === beforeEmpty);
+
+  console.log('\n11. No page errors');
   check('clean console', errors.length === 0, errors.slice(0, 4).join(' ;; ') || 'none');
 
   await page.screenshot({ path: path.join(SP, 'shot-report.png') });

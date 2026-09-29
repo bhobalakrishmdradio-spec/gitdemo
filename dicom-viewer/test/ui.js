@@ -102,6 +102,14 @@ async function moreOn(page, key) {
   }, key);
 }
 
+/** Choose an item from the Reset menu. */
+async function pickReset(page, key) {
+  await page.click('#resetBtn');
+  await page.waitForSelector('#resetMenu:not([hidden])');
+  await page.click(`#resetMenu [data-reset="${key}"]`);
+  await page.waitForTimeout(400);
+}
+
 /** Choose an item from the Open menu. */
 async function pickOpen(page, key) {
   await page.click('#openBtn');
@@ -112,4 +120,4 @@ async function pickOpen(page, key) {
 
 module.exports = { pickLayout, pickFill, fillEnabled, currentFill, currentLayout,
                    pickTool, setStack, pickWindow, windowPresets, currentWindow,
-                   pickMore, moreOn, pickOpen };
+                   pickMore, moreOn, pickOpen, pickReset };

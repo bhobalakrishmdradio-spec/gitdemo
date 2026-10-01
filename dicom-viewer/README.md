@@ -450,6 +450,9 @@ reconstructed.
 | `Esc` | Abandon the shape being drawn, or close a menu |
 | `Delete` | Delete the selected measurement |
 | `Shift`+drag | Move the crosshair from anywhere in the pane |
+| `P` | Pan — drag to move the image |
+| `Z` | Zoom — drag up to zoom in |
+| `S` | Scroll — drag to page through the stack |
 | `R` | Reset the view (zoom, pan, rotation, flip) |
 | `Ctrl`/`⌘`+`Z` | Undo the last annotation change |
 | `Ctrl`/`⌘`+`Shift`+`Z`, `Ctrl`+`Y` | Redo it |
@@ -466,10 +469,54 @@ Mouse: left-drag = window/level (right widens · down darkens) · wheel = change
 right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
 two planes (oblique MPR)** · double-click = expand a pane and back.
 
+### Zoom, pan and scroll as tools
+
+All three of those were already reachable — `Shift`+wheel, right-drag, the
+wheel. That is not the same as having them. A modifier chord is invisible:
+nothing on screen says it exists, and on a trackpad or a tablet there may be
+no right button and no wheel at all.
+
+So **✋ Pan**, **🔍 Zoom** and **⇅ Scroll** each arm a plain left-drag for
+that one thing, exactly like the crosshair and the measurement tools, and
+pressing the armed one puts you back in Navigate.
+
+| Tool | A left-drag does | Calibration |
+| --- | --- | --- |
+| **✋ Pan** | Moves the image inside its pane | 1:1 with the cursor |
+| **🔍 Zoom** | Up zooms in, down zooms out | 200 px doubles the zoom; clamped to 0.2×–12× |
+| **⇅ Scroll** | Down goes further into the stack | 8 px per slice |
+
+Zoom is exponential rather than linear, so the same travel is the same
+factor at every scale — a linear step feels dead when you are zoomed in and
+uncontrollable when you are out. All three are seeded from where the drag
+began rather than accumulated per mouse event, so a long drag cannot drift
+away from the cursor, and a click that moves nothing changes nothing.
+
+Each tool also changes the cursor over the image — a grab hand for Pan, a
+vertical resize arrow for Zoom and Scroll — because the armed mode has to be
+visible *before* the drag, and the cursor is the only thing on the image
+itself that can say so.
+
+They add a way in; they take none away. The wheel, `Shift`+wheel and
+right-drag keep doing their jobs whichever tool is armed — which the tests
+check, because a new mode that quietly swallows right-drag is the obvious
+way for this to go wrong.
+
+**⇕ Stack**, **🔗 Sync** and **⇅ Scroll** are three separate controls doing
+three unrelated jobs: how many slices apart repeated panes sit, whether
+panes on different series are linked by patient position, and what a
+left-drag does. Setting one leaves the other two alone.
+
 ## The toolbar
 
 Related controls sit behind one button each, which keeps the bar to a single
-row from 900 px up and leaves the height for the images:
+row from 1100 px up and leaves the height for the images. Where it will not
+fit it wraps rather than scrolling sideways — a button scrolled past the edge
+is still in the DOM and still passes a scripted click, but a person cannot
+press it, which is how the Tools and Report toggles once went unclickable at
+1920 px. `browser-hu.js` asserts the row count and that every control is
+hit-testable at seven widths; adding Pan, Zoom and Scroll broke the 1100 px
+row and that assertion is what caught it.
 
 | Button | Holds |
 | --- | --- |
@@ -478,6 +525,7 @@ row from 900 px up and leaves the height for the images:
 | **Ax · Cor · Sag · Seq · Mix** | Which plane fills the grid, or one sequence per pane — separate buttons, because it is a thing you do while reading |
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, undo and redo, and every measurement, ROI and annotation tool |
+| **✋ 🔍 ⇅** | Pan · Zoom · Scroll — each arms a plain left-drag for that one thing |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
 | **📸** | Screenshot the active pane — to the share sheet on a phone or tablet, to a file elsewhere. **⋯ More** holds send-to-Photos, all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
@@ -514,7 +562,7 @@ python3 test/fixtures/make_phantom.py        # and the other make_*.py
 node test/run.js
 ```
 
-31 suites: four in Node for the arithmetic, twenty-five in a browser for
+32 suites: four in Node for the arithmetic, twenty-six in a browser for
 the behaviour, and two probes for the chrome. `test/README.md` says what each
 fixture pins down and what you need installed. The fixtures are generated,
 not committed — a checkout builds them in a minute.

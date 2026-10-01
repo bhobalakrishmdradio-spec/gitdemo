@@ -507,6 +507,13 @@ select, input[type="number"] {
 @media (max-width: 1400px) {
   .btn-label { display: none; }
 }
+/* Pan, zoom and scroll put a 1680 px window — a common laptop — about
+   twenty pixels over. Close that by tightening the spacing, which nobody
+   reads, rather than the type, which is the next band's job. */
+@media (max-width: 1760px) {
+  .toolbar { gap: 8px; padding: 8px 10px; }
+  .toolbar-group { gap: 5px; }
+}
 /* Tighten the controls before the toolbar has to wrap. */
 @media (max-width: 1520px) {
   .toolbar { gap: 7px; padding: 8px 10px; }
@@ -516,6 +523,15 @@ select, input[type="number"] {
   .toolbar .primary-btn, .toolbar .file-btn { padding: 5px 8px; font-size: 11px; }
   .toolbar select { font-size: 11px; padding: 4px 6px; }
   #layoutSeg .seg-btn { padding-left: 6px; padding-right: 6px; }
+}
+/* The last band before the bar wraps. Pan, zoom and scroll cost about
+   100 px, which at 1100 px is the difference between one row and two, and
+   a second row comes straight off the image grid. Spacing goes first,
+   then the glyph buttons' own padding — the words have already gone. */
+@media (max-width: 1240px) {
+  .toolbar { gap: 5px; padding: 8px 8px; }
+  .toolbar-group { gap: 3px; }
+  .toolbar .icon-btn { padding: 5px 6px; }
 }
 @media (max-width: 1100px) {
   .panel-left { width: 160px; }

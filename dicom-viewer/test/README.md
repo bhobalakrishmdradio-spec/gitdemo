@@ -94,6 +94,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
 | `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
 | `browser-share.js` | Sending a screenshot to Photos, and every way that can fail |
+| `browser-viewtools.js` | Zoom, pan and scroll as armed left-drag tools, and that the wheel and modifiers still work |
 | `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |
 | `browser-crop.js` | 3D cropping removes the voxels it says it does, one side at a time, and resets |
 | `browser-security.js` | Hostile DICOM text, untrusted stored reports, and no network or eval anywhere |

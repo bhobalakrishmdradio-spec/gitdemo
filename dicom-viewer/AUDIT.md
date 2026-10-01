@@ -65,14 +65,14 @@ The largest remaining gaps, in priority order:
 | NAV-04 | Upload / receive studies | N/A | No network by design. Duplicate SOP UIDs are detected and reported on re-import |
 | NAV-05 | Series thumbnails | Partial | Thumbnails, names, counts, selection state. Suppressed above 60 slices for performance |
 | NAV-06 | Drag series into panel | Partial | Per-pane series **selector** rather than drag-and-drop; other panes are undisturbed |
-| NAV-07 | Previous / next image | Pass | Wheel, slider, arrow keys, cine |
+| NAV-07 | Previous / next image | Pass | **⇅ Scroll** arms a left-drag (8 px per slice), plus wheel, slider, arrow keys and cine. `browser-viewtools.js` |
 | NAV-08 | First / last; slice slider | Partial | Slider and Page Up/Down. No explicit first/last buttons |
 | NAV-09 | Previous / next series | Partial | Click in the series list. No next/previous series control |
 | NAV-10 | Cine play / pause | Pass | `browser-sculpt-cine.js` |
 | NAV-11 | Cine speed / reverse / loop | Pass | 5/12/25/40 fps, reverse, loop; with loop off it stops on the last slice |
 | NAV-12 | Tooltips / active tool | Pass | Every control has a tooltip; active tool and modes are highlighted |
-| NAV-13 | Keyboard shortcuts documented | Pass | `?` opens a list generated from the same table the key handler dispatches from, so a key cannot be documented without being bound. `browser-undo.js` presses every listed key and requires it to reach the entry it is listed under |
-| NAV-13 | Overflow menu | Partial | Toolbar scrolls sideways and tightens below 1520 px; Orient and Reset are menus. No explicit overflow menu |
+| NAV-13a | Keyboard shortcuts documented | Pass | `?` opens a list generated from the same table the key handler dispatches from, so a key cannot be documented without being bound. `browser-undo.js` presses every listed key and requires it to reach the entry it is listed under |
+| NAV-13 | Overflow menu | Partial | The toolbar **wraps** rather than scrolling, and tightens at 1760, 1520 and 1240 px; Orient, More and Reset are menus. `browser-hu.js` asserts one row from 1100 px up and that every control is hit-testable at seven widths. No explicit overflow menu |
 | NAV-14 | Favourites / pinned tools | Missing | — |
 | NAV-15 | Keyboard / mouse bindings | Pass | Shortcuts are ignored while typing in any input, so report typing is unaffected |
 | NAV-16 | Reset panel / all panels | Pass | Reset menu resets view, window, planes, panes or measurements separately |
@@ -87,8 +87,8 @@ The largest remaining gaps, in priority order:
 | IMG-02 | Numeric WW/WL | Pass | Width and Level boxes apply and track the drag |
 | IMG-03 | Window presets | Pass | Lung, Bone, Brain, Soft, Abdomen, Mediastinum, Angio for CT |
 | IMG-04 | Auto window | Pass | Non-CT only: "Auto contrast" from the 2nd–98th percentile. CT uses fixed HU presets by design |
-| IMG-05 | Zoom | Pass | Shift+wheel; measurements stay anchored through it |
-| IMG-06 | Pan | Pass | Right-drag, per pane |
+| IMG-05 | Zoom | Pass | **🔍 Zoom** arms a left-drag (200 px doubles it, clamped 0.2×–12×); Shift+wheel still works. Measurements stay anchored through it. `browser-viewtools.js` |
+| IMG-06 | Pan | Pass | **✋ Pan** arms a left-drag; right-drag still pans whatever tool is armed. Per pane. `browser-viewtools.js` |
 | IMG-07 | Fit to window / 1:1 | **Missing** | Always fits the pane at true physical aspect. No 1:1 pixel mode |
 | IMG-08 | Magnifier | **Missing** | — |
 | IMG-09 | Rotate cw / ccw | Pass | Orient menu, both directions, plus free rotation. Orientation letters and measurements follow |

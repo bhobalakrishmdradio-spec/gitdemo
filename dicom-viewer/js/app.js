@@ -68,6 +68,11 @@
   var WL_MIN_WIDTH = 1;
   var WL_MAX_WIDTH = 20000;
 
+  var MIN_ZOOM = 0.2;
+  var MAX_ZOOM = 12;
+  var ZOOM_DOUBLE_PX = 200;       // drag this far up to double the zoom
+  var SCROLL_SLICE_PX = 8;        // drag this far down to advance one slice
+
   /* Viewport layouts.
    *
    * A layout is a grid plus the planes its panes start out showing. Panes are
@@ -445,6 +450,10 @@
     dom.orientBtn = byId("orientBtn");
     dom.orientMenu = byId("orientMenu");
     dom.crosshairBtn = byId("crosshairBtn");
+    dom.viewToolBtns = {};
+    Array.prototype.forEach.call(document.querySelectorAll("[data-view-tool]"), function (btn) {
+      dom.viewToolBtns[btn.dataset.viewTool] = btn;
+    });
     dom.focusBtn = byId("focusBtn");
     dom.focusGoBtn = byId("focusGoBtn");
     dom.focusNote = byId("focusNote");
@@ -3365,7 +3374,13 @@
     var p = eventToCell(i, clientX, clientY);
     if (!p) return;
     var tool = state.tool;
-    if (tool === MEAS.TOOLS.none || tool === "sculpt") return;
+    // Only the measurement tools place points. The others — Navigate, the
+    // crosshair, sculpt, pan, zoom, scroll — are handled before this is
+    // reached; the guard is here so that stays true if that order changes.
+    if (tool === MEAS.TOOLS.none || tool === "sculpt" || tool === "crosshair" ||
+        isViewTool(tool)) {
+      return;
+    }
 
     var key = sliceKeyFor(geom.plane, geom.index);
     var pending = state.pendingMeasure;
@@ -3715,6 +3730,48 @@
       " (yellow line)";
   }
 
+  /* ---------------------------------------------------------------------
+   * View tools: zoom, pan, scroll
+   *
+   * All three were already reachable — Shift+wheel zooms, right-drag pans,
+   * the wheel scrolls. That is not the same as having them. A modifier
+   * chord is invisible: nothing on screen says it exists, and on a trackpad
+   * or a tablet there may be no right button and no wheel at all. Each one
+   * therefore also gets a button that arms it for a plain left-drag.
+   *
+   * They live in state.tool with the measurement tools, so arming one
+   * disarms whatever was armed before: a reader who presses Pan should not
+   * still be placing ROI points. The wheel and the modifiers keep working
+   * whichever tool is armed — the buttons add a way in, they do not take
+   * one away.
+   * ------------------------------------------------------------------- */
+  var VIEW_TOOLS = {
+    pan: {
+      cursor: "grab",
+      status: "Pan: drag to move the image inside its pane. " +
+              "Right-drag still pans whatever tool is armed.",
+    },
+    zoom: {
+      cursor: "ns-resize",
+      status: "Zoom: drag up to zoom in, down to zoom out. " +
+              "Shift+wheel still zooms whatever tool is armed.",
+    },
+    scroll: {
+      cursor: "ns-resize",
+      status: "Scroll: drag down to go further into the stack, up to come back. " +
+              "The wheel still scrolls whatever tool is armed.",
+    },
+  };
+
+  function isViewTool(tool) {
+    return Object.prototype.hasOwnProperty.call(VIEW_TOOLS, tool);
+  }
+
+  /** Arm a view tool, or disarm it if it is already the live one. */
+  function toggleViewTool(tool) {
+    setTool(state.tool === tool ? MEAS.TOOLS.none : tool);
+  }
+
   function setTool(tool) {
     // Switching tools abandons anything half-drawn rather than finishing it
     // with the wrong shape's rules.
@@ -3727,6 +3784,8 @@
       if (!state.crosshair) { state.crosshair = true; renderAll(); }
       setStatus("Crosshair: drag anywhere to move the + — every plane, pane and " +
         "linked sequence follows it.");
+    } else if (isViewTool(tool)) {
+      setStatus(VIEW_TOOLS[tool].status);
     } else if (tool === "sculpt") setStatus("Sculpt: drag on any plane to cut tissue away.");
     else if (MEAS.isVariable(tool)) {
       setStatus(MEAS.label(tool) + ": click each point, then double-click, press Enter, " +
@@ -3740,7 +3799,8 @@
     syncToolControls();
     cellEls.forEach(function (rec, i) {
       if (state.cells[i] && state.cells[i].plane !== "vr") {
-        rec.root.style.cursor = tool === MEAS.TOOLS.none ? "crosshair" : "cell";
+        rec.root.style.cursor = isViewTool(tool) ? VIEW_TOOLS[tool].cursor
+          : tool === MEAS.TOOLS.none ? "crosshair" : "cell";
       }
     });
     renderAllOverlays();
@@ -3752,10 +3812,18 @@
     // The crosshair has its own button, so the Measure button must not
     // borrow its state — nor fall back to "Navigate", which is what an
     // unknown tool name used to make it say while the crosshair was armed.
-    var measuring = !navigating && state.tool !== "crosshair";
+    // Zoom, pan and scroll have their own buttons too, so the Measure
+    // button must not borrow their state either — MEAS.glyph("pan") is not
+    // a measurement tool and would render as a blank button.
+    var measuring = !navigating && state.tool !== "crosshair" && !isViewTool(state.tool);
     if (dom.navBtn) dom.navBtn.classList.toggle("active", navigating);
     if (dom.crosshairBtn) {
       dom.crosshairBtn.classList.toggle("active", state.tool === "crosshair");
+    }
+    if (dom.viewToolBtns) {
+      Object.keys(dom.viewToolBtns).forEach(function (k) {
+        dom.viewToolBtns[k].classList.toggle("active", state.tool === k);
+      });
     }
     if (dom.toolMenu) {
       Array.prototype.forEach.call(dom.toolMenu.querySelectorAll("[data-tool]"), function (btn) {
@@ -5265,6 +5333,13 @@
       setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair");
     });
 
+    // Zoom, pan and scroll arm the same way: pressing the live one puts you
+    // back in Navigate, so there is always a way out that is not hunting for
+    // the ✥ button.
+    Object.keys(dom.viewToolBtns).forEach(function (key) {
+      dom.viewToolBtns[key].addEventListener("click", function () { toggleViewTool(key); });
+    });
+
     // Rotate / flip act on the active pane, keeping each pane's display
     // state independent as the plan calls for.
     dom.orientBtn.addEventListener("click", function (e) {
@@ -5690,6 +5765,20 @@
         crosshairFromPoint(i, e.clientX, e.clientY);
         return;
       }
+      // With zoom, pan or scroll armed, a plain left-drag does that one
+      // thing. Everything is seeded from mousedown rather than accumulated
+      // per event, so a long drag cannot drift away from the cursor.
+      if (e.button === 0 && isViewTool(state.tool)) {
+        state.drag = {
+          cell: i, mode: state.tool,
+          x: e.clientX, y: e.clientY,
+          panX: cell.view.panX, panY: cell.view.panY,
+          zoom: cell.view.zoom,
+          index: cellIndex(cell),
+          step: 0,
+        };
+        return;
+      }
       // With the crosshair tool armed, dragging anywhere in the pane moves
       // it — which is the whole point: put the + on the finding and every
       // section on screen is showing that finding.
@@ -5781,7 +5870,8 @@
       if (!state.volume) return;
       if (e.shiftKey) {
         var view = cell.view;
-        view.zoom = Math.max(0.2, Math.min(12, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        view.zoom = Math.max(MIN_ZOOM,
+          Math.min(MAX_ZOOM, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
         renderCell(i);
       } else {
         setCellIndex(i, cellIndex(cell) + (e.deltaY > 0 ? 1 : -1));
@@ -5938,6 +6028,30 @@
       return;
     }
 
+    if (drag.mode === "zoom") {
+      var cellZ = state.cells[drag.cell];
+      if (!cellZ) return;
+      // Exponential, so the same travel is the same factor at every scale.
+      // A linear step feels dead when zoomed in and uncontrollable when out.
+      // Up zooms in, which is the direction every viewer uses.
+      cellZ.view.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+        drag.zoom * Math.pow(2, -dy / ZOOM_DOUBLE_PX)));
+      renderCell(drag.cell);
+      return;
+    }
+
+    if (drag.mode === "scroll") {
+      // Counted from where the drag began, not from the last event: paging
+      // by each event's own delta throws away the fraction every time and
+      // the stack creeps out of step with the cursor.
+      var step = Math.round(dy / SCROLL_SLICE_PX);
+      if (step !== drag.step) {
+        drag.step = step;
+        setCellIndex(drag.cell, drag.index + step);
+      }
+      return;
+    }
+
     // Pan: panX/panY live in device pixels, mouse deltas are CSS pixels.
     var dpr = window.devicePixelRatio || 1;
     var cellP = state.cells[drag.cell];
@@ -5968,7 +6082,8 @@
     var grabbable = state.tool === MEAS.TOOLS.none && !state.focusPick &&
       (!!hitTestMeasurement(i, e.clientX, e.clientY) ||
        !!hitTestCrosshair(i, e.clientX, e.clientY));
-    var want = state.tool === "crosshair" ? "move"
+    var want = isViewTool(state.tool) ? VIEW_TOOLS[state.tool].cursor
+      : state.tool === "crosshair" ? "move"
       : grabbable ? "move"
       : state.focusPick ? "cell"
       : state.tool === MEAS.TOOLS.none ? "crosshair" : "cell";
@@ -6059,6 +6174,12 @@
         run: function () {
           setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair");
         } },
+      { keys: ["P"], match: ["p", "P"], what: "Pan — drag to move the image",
+        run: function () { toggleViewTool("pan"); } },
+      { keys: ["Z"], match: ["z", "Z"], what: "Zoom — drag up to zoom in",
+        run: function () { toggleViewTool("zoom"); } },
+      { keys: ["S"], match: ["s", "S"], what: "Scroll — drag to page through the stack",
+        run: function () { toggleViewTool("scroll"); } },
       { keys: ["Enter"], match: ["Enter"], stop: true,
         when: function () { return !!state.pendingMeasure; },
         what: "Close the shape being drawn",
@@ -6889,6 +7010,9 @@
     clearSculpt: clearSculpt,
     cutActive: cutActive,
     setTool: setTool,
+    toggleViewTool: toggleViewTool,
+    isViewTool: isViewTool,
+    VIEW_TOOLS: VIEW_TOOLS,
     focusFromPoint: focusFromPoint,
     goToFocus: goToFocus,
     clearFocus: clearFocus,

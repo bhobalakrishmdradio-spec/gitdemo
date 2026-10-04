@@ -2353,6 +2353,10 @@
     });
     updateObliqueInfo();
     updateMetadata();
+    // The scout marks where the panes are, so it is part of a full redraw.
+    // Leaving it to renderAllOverlays() alone meant a study that has a
+    // localizer showed none until the reader happened to arm a tool.
+    renderScout();
   }
 
   function renderCell(i) {
@@ -4164,17 +4168,40 @@
     return /\bLOCALIZER\b/i.test(group.imageType || "");
   }
 
-  /** The scout belonging to the study currently being read, if there is one. */
-  function scoutForCurrent() {
-    var current = getCurrentGroup();
-    if (!current) return null;
+  /**
+   * The localizer that belongs with one series — not with whichever series
+   * happens to be "current".
+   *
+   * The pane being navigated is the one the line has to be drawn for, and
+   * with two studies open that pane can be showing the other one. Taking
+   * the scout from the current series instead put one patient's localizer
+   * beside another patient's slice position and invited a click to jump
+   * there; patient coordinates mean nothing across two patients.
+   *
+   * Same study, and — where both state one — the same Frame of Reference,
+   * because that is the thing that makes two images' coordinates
+   * comparable at all.
+   */
+  function scoutFor(group) {
+    if (!group) return null;
+    var ref = group.slices.length ? group.slices[0].instance.frameOfReferenceUID : "";
     for (var i = 0; i < state.seriesOrder.length; i++) {
       var g = state.seriesMap[state.seriesOrder[i]];
-      if (!g || g.uid === current.uid) continue;
-      if (g.studyUID !== current.studyUID) continue;
-      if (isScoutGroup(g) && g.slices.length) return g;
+      if (!g || g.uid === group.uid) continue;
+      if (g.studyUID !== group.studyUID) continue;
+      if (!isScoutGroup(g) || !g.slices.length) continue;
+      var scoutRef = g.slices[0].instance.frameOfReferenceUID;
+      if (ref && scoutRef && ref !== scoutRef) continue;
+      return g;
     }
     return null;
+  }
+
+  /** The localizer for whichever pane the scout is being drawn for. */
+  function scoutForCurrent() {
+    var cut = currentCutPlane();
+    var uid = cut ? cellSeriesUid(cut.cell) : state.currentSeriesUID;
+    return scoutFor(uid ? state.seriesMap[uid] : getCurrentGroup());
   }
 
   /** Geometry of one scout image, in patient millimetres. */
@@ -4245,13 +4272,30 @@
 
   function renderScout() {
     if (!dom.scoutSection) return;
+    // Availability and context are two different questions, and both decide
+    // whether this section is on screen. syncToolsPanel() owns `hidden`;
+    // this flag is how a section says it has nothing to show, so pressing
+    // "Show all" on a study with no localizer does not reveal an empty
+    // Scout heading over a blank canvas.
     var group = scoutForCurrent();
-    if (!group) {
+    var have = !!group;
+    // Availability and context are two different questions and both decide
+    // whether this section is on screen; syncToolsPanel() owns `hidden`.
+    // The panel is only re-run when availability actually changes, because
+    // this runs on every overlay redraw, which during cine is every frame —
+    // and the previous value is kept here rather than read back out of the
+    // DOM, so the very first render syncs too.
+    if (have !== scoutAvailable) {
+      scoutAvailable = have;
+      if (have) delete dom.scoutSection.dataset.unavailable;
+      else dom.scoutSection.dataset.unavailable = "1";
+      syncToolsPanel();
+    }
+    if (!have) {
       dom.scoutSection.hidden = true;
       scoutState = null;
       return;
     }
-    dom.scoutSection.hidden = false;
 
     var pick = group.slices[Math.floor(group.slices.length / 2)];
     var inst = pick.instance;
@@ -4288,7 +4332,9 @@
       ctx.stroke();
     }
 
-    scoutState = geom && cut ? { geom: geom, scale: scale, vol: cut.vol, cell: cut.cell } : null;
+    scoutState = geom && cut
+      ? { geom: geom, scale: scale, vol: cut.vol, cell: cut.cell, hasLine: !!line }
+      : null;
     dom.scoutNote.textContent = !geom
       ? "This localizer states no position, so no level can be marked on it."
       : !cut ? "Open a series with patient positions to mark the level."
@@ -4297,10 +4343,21 @@
   }
 
   var scoutState = null;
+  // undefined until the first render, so that render always syncs the panel.
+  var scoutAvailable;
 
   /** Jump the active pane to the level clicked on the scout. */
   function scoutClick(e) {
     if (!scoutState) return;
+    // A scout parallel to the cut carries no information about where along
+    // that axis a click is: every point on it has the same coordinate. The
+    // arithmetic below would still produce an index, and it would be the
+    // same one wherever you pressed.
+    if (!scoutState.hasLine) {
+      showToast("This scout lies in the same plane as the cut, so it cannot " +
+        "say which level you picked.", true);
+      return;
+    }
     var rect = dom.scoutCanvas.getBoundingClientRect();
     var u = (e.clientX - rect.left) / scoutState.scale;
     var v = (e.clientY - rect.top) / scoutState.scale;
@@ -4372,7 +4429,7 @@
     if (cropIsActive()) pinned.threed = true;
     if (state.measurements.length) pinned.measure = true;
     if (state.cine.playing) pinned.view = true;
-    if (obliqueActive && obliqueActive()) pinned.mpr = true;
+    if (obliqueActive()) pinned.mpr = true;
     return pinned;
   }
 
@@ -4402,6 +4459,7 @@
 
     Array.prototype.forEach.call(
       dom.toolsScroll.querySelectorAll("[data-ctx]"), function (sec) {
+        if (sec.dataset.unavailable === "1") { sec.hidden = true; return; }
         var owns = sec.dataset.ctx.split(/\s+/);
         var show = all || owns.indexOf(ctx) >= 0 ||
           owns.some(function (k) { return pinned[k]; });
@@ -7827,7 +7885,6 @@
     scoutGeometry: scoutGeometry,
     scoutCutLine: scoutCutLine,
     currentCutPlane: currentCutPlane,
-    scoutDebug: function () { return scoutState; },
     isViewTool: isViewTool,
     VIEW_TOOLS: VIEW_TOOLS,
     focusFromPoint: focusFromPoint,

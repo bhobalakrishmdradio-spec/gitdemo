@@ -428,6 +428,21 @@ A level outside the series is refused with a message rather than silently
 clamped to the nearest slice, and a scout that states no position is shown
 with no line rather than a line in the wrong place.
 
+Three things it refuses to guess at:
+
+- **A scout lying in the same plane as the cut** — a coronal localizer
+  against a coronal pane — carries no information about where along that
+  axis you pressed: every point on it has the same coordinate. The panel
+  says so and the click is refused, rather than returning the one fixed
+  slice the arithmetic would otherwise produce wherever you pressed.
+- **The localizer belongs to the pane being navigated**, not to whichever
+  series happens to be "current". With two studies open those differ, and
+  taking it from the current series put one patient's scout beside another
+  patient's slice position and offered a click to jump there. Patient
+  coordinates mean nothing across two patients.
+- It must share the pane's **Frame of Reference** where both state one,
+  since that is what makes two images' coordinates comparable at all.
+
 ### The Tools panel follows the tool
 
 Window/level, slab thickness, bone cut, 3D rendering, the scout, cine, the
@@ -445,6 +460,11 @@ ones matching the armed tool:
 | Crosshair | Slab, panes, focus point, oblique MPR, volume |
 | Pan · Zoom · Scroll | Window/Level, panes, cine |
 | Sculpt, or the 3D layout | Bone cut, 3D rendering, volume |
+
+A section with nothing to show is not shown at all, even under "Show all" —
+there is no point revealing a Scout heading over a blank canvas for a study
+that has no localizer. Availability and context are separate questions, and
+both have to agree before a section appears.
 
 **Hiding is never losing.** A section holding something that is switched on
 — a slab, a bone cut, an open crop, measurements on screen, cine running, an
@@ -663,9 +683,10 @@ cannot read off the toolbar.
 
 Everything that is not needed every minute lives in the **⚙️ Tools** panel
 instead: slab thickness, bone cut and the sculpting brush, 3D rendering and
-its crop sliders, cine speed and direction, the focus point, oblique MPR, the
-measurement list with undo/redo and the ROI histogram, volume geometry and
-the DICOM tag browser.
+its crop sliders, the scout, cine speed and direction, the focus point,
+oblique MPR, the measurement list with undo/redo and the ROI histogram,
+volume geometry and the DICOM tag browser. The panel shows the sections
+belonging to the armed tool — see **The Tools panel follows the tool**.
 
 Menus are fixed-position siblings of the toolbar, not children of it, and
 their height is clamped to the room actually below the button. Both are

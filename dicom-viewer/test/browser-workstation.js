@@ -111,8 +111,14 @@ const load = async (page, dir) => {
   const scout = await page.evaluate(() => ({
     shown: !document.getElementById('scoutSection').hidden,
     note: document.getElementById('scoutNote').textContent,
+    // The canvas keeps its 300x150 default until something paints it.
+    fromTheStart: document.getElementById('scoutCanvas').height !== 150,
   }));
   check('the scout section appeared for a study that has one', scout.shown);
+  // It must be there from the load, not only once a tool is armed: a full
+  // redraw refreshes it, which it did not used to.
+  check('and it was there without arming anything first', scout.fromTheStart,
+    String(scout.fromTheStart));
   check('and says what clicking it does', /Click to jump/.test(scout.note), scout.note);
 
   // The fixture's answer, worked out by hand: row = (0 - z) / 1 mm.
@@ -179,12 +185,113 @@ const load = async (page, dir) => {
     JSON.stringify(outside));
 
   /* =================================================================== */
+  console.log('\n3b2. Every plane, including the one the scout cannot answer');
+  const planes = await page.evaluate(async () => {
+    const C = window.__ctConsole;
+    const out = [];
+    for (const pl of ['axial', 'coronal', 'sagittal']) {
+      C.setLayout('axial');
+      await new Promise(r => setTimeout(r, 400));
+      C.setCellPlane(0, pl);
+      await new Promise(r => setTimeout(r, 800));
+      C.renderScout();
+      const cut = C.currentCutPlane();
+      const sc = C.scoutForCurrent();
+      const geom = C.scoutGeometry(sc.slices[0].instance);
+      const line = cut ? C.scoutCutLine(geom, cut.normal, cut.through) : null;
+      const canvas = document.getElementById('scoutCanvas');
+      const rc = canvas.getBoundingClientRect();
+      const before = C.cellIndex(C.state.cells[0]);
+      canvas.dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: rc.left + rc.width * 0.25, clientY: rc.top + rc.height * 0.25 }));
+      await new Promise(r => setTimeout(r, 250));
+      out.push({ plane: pl, line: line, before: before,
+                 after: C.cellIndex(C.state.cells[0]),
+                 note: document.getElementById('scoutNote').textContent,
+                 toast: document.getElementById('toast').textContent });
+    }
+    return out;
+  });
+  const axCut = planes[0], corCut = planes[1], sagCut = planes[2];
+  check('an axial cut crosses the coronal scout horizontally',
+    axCut.line && Math.abs(axCut.line[0].v - axCut.line[1].v) < 0.01 &&
+      Math.abs(axCut.line[0].u - axCut.line[1].u) > 50,
+    JSON.stringify(axCut.line));
+  check('a sagittal cut crosses it vertically',
+    sagCut.line && Math.abs(sagCut.line[0].u - sagCut.line[1].u) < 0.01 &&
+      Math.abs(sagCut.line[0].v - sagCut.line[1].v) > 50,
+    JSON.stringify(sagCut.line));
+  check('and a sagittal click moves the sagittal pane',
+    sagCut.after !== sagCut.before, sagCut.before + ' -> ' + sagCut.after);
+  /* The scout is coronal, so a coronal cut lies in its plane: every point
+     on the scout has the same coronal coordinate, and the arithmetic would
+     happily return one fixed slice wherever you pressed. */
+  check('a coronal cut gets no line, and the panel says why',
+    corCut.line === null && /parallel/i.test(corCut.note), corCut.note);
+  check('and clicking it refuses instead of jumping somewhere meaningless',
+    corCut.after === corCut.before && /same plane as the cut/i.test(corCut.toast),
+    corCut.before + ' -> ' + corCut.after + '  ' + corCut.toast);
+
+  /* =================================================================== */
+  console.log('\n3c. The scout belongs to the pane, not to whatever is current');
+  /* With two patients open, the pane being navigated can be showing the
+     other study. Taking the localizer from the "current" series instead put
+     one patient's scout beside another patient's slice position and offered
+     a click to jump there — and patient coordinates mean nothing across two
+     patients. */
+  const files2 = fs.readdirSync(path.join(SP, 'phantom')).filter(f => f.endsWith('.dcm'))
+    .sort().map(f => path.join(SP, 'phantom', f));
+  await page.setInputFiles('#fileInput', files2);
+  await page.waitForTimeout(3000);
+  const crossed = await page.evaluate(async () => {
+    const C = window.__ctConsole;
+    C.setLayout('axial');
+    await new Promise(r => setTimeout(r, 600));
+    const scoutStudy = C.state.seriesOrder.find(u =>
+      C.state.seriesMap[u].description === 'AX PORTAL VENOUS');
+    const other = C.state.seriesOrder.find(u =>
+      /cylinder/i.test(C.state.seriesMap[u].description));
+    C.selectSeries(scoutStudy);
+    await new Promise(r => setTimeout(r, 1500));
+    const own = { shown: !document.getElementById('scoutSection').hidden,
+                  from: (C.scoutForCurrent() || {}).description };
+    // Point the pane at the other patient while this study stays "current".
+    C.setCellSeries(0, other);
+    await new Promise(r => setTimeout(r, 2500));
+    C.renderScout();
+    return { own: own,
+             pane: C.state.seriesMap[C.cellSeriesUid(C.state.cells[0])].description,
+             current: C.state.seriesMap[C.state.currentSeriesUID].description,
+             shown: !document.getElementById('scoutSection').hidden,
+             from: (C.scoutForCurrent() || {}).description || null };
+  });
+  check('its own study still gets its scout',
+    crossed.own.shown && crossed.own.from === 'SCOUT CORONAL', JSON.stringify(crossed.own));
+  check('the pane really is showing the other patient',
+    /cylinder/i.test(crossed.pane) && crossed.current === 'AX PORTAL VENOUS',
+    crossed.pane + ' | current: ' + crossed.current);
+  check('and no scout is offered for a study that has none',
+    crossed.shown === false && crossed.from === null, JSON.stringify(crossed));
+
+  await page.reload({ waitUntil: 'networkidle' });
+
+  /* =================================================================== */
   console.log('\n4. The scout hides itself when a study has none');
   await page.evaluate(() => window.__ctConsole.state.seriesOrder.length);
   await page.reload({ waitUntil: 'networkidle' });
   await load(page, 'phantom');
   check('no localizer, no scout section',
     await page.evaluate(() => document.getElementById('scoutSection').hidden));
+
+  check('and "Show all" does not reveal an empty Scout section',
+    await page.evaluate(async () => {
+      document.getElementById('toolsAllBtn').click();
+      await new Promise(r => setTimeout(r, 250));
+      const hidden = document.getElementById('scoutSection').hidden;
+      document.getElementById('toolsAllBtn').click();
+      await new Promise(r => setTimeout(r, 250));
+      return hidden;
+    }));
 
   /* =================================================================== */
   console.log('\n5. The Tools panel follows the armed tool');

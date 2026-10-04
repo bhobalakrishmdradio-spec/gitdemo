@@ -45,6 +45,69 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
     picker.labels.find(l => /pelvis/i.test(l)));
 
   /* =================================================================== */
+  console.log('\n1b. Every template in the list actually inserts');
+  /* Driven one at a time through the real picker, with the fields cleared
+     between each so what lands is this template's own text and not the
+     previous one's left behind. */
+  const all = await page.evaluate(() => window.CTTemplates.ORDER.slice());
+  const inserted = [];
+  for (const key of all) {
+    await page.evaluate(() => {
+      const C = window.__ctConsole;
+      ['technique', 'comparison', 'findings', 'impression'].forEach(k => {
+        C.state.report[k] = '';
+      });
+      // Credits accumulate by design, one per template inserted; clear them
+      // so each pass through this loop is isolated and so the draft is back
+      // to a clean slate for the checks that follow.
+      C.state.report.credits = [];
+      C.renderReport();
+    });
+    await page.selectOption('#reportTemplate', key);
+    await page.waitForTimeout(140);
+    const got = await page.evaluate(() => {
+      const C = window.__ctConsole;
+      return ['technique', 'comparison', 'findings', 'impression']
+        .map(k => (C.state.report[k] || '').trim().length).reduce((a, b) => a + b, 0);
+    });
+    inserted.push({ key: key, chars: got });
+  }
+  const blankOnes = inserted.filter(r => r.chars === 0 && r.key !== 'blank');
+  check(`all ${all.length} templates insert text`, blankOnes.length === 0,
+    blankOnes.map(r => r.key).join(', ') ||
+      inserted.map(r => r.key + ':' + r.chars).slice(0, 3).join(' '));
+  check('and "blank" is the one that deliberately does not',
+    inserted.find(r => r.key === 'blank').chars === 0);
+  const distinct = new Set(inserted.filter(r => r.chars).map(r => r.chars)).size;
+  check('each one inserts its own text, not a copy of the last',
+    distinct >= all.length - 4, distinct + ' distinct lengths of ' + (all.length - 1));
+
+  /* =================================================================== */
+  console.log('\n1c. A control that cannot act says so instead of going quiet');
+  // An empty report refuses to be finalised, and rightly, so give it a line
+  // with no placeholders in it first.
+  await page.evaluate(() => {
+    const C = window.__ctConsole;
+    ['technique', 'comparison', 'impression'].forEach(k => { C.state.report[k] = ''; });
+    C.state.report.findings = 'Normal study.';
+    C.state.report.credits = [];
+    C.renderReport();
+  });
+  await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
+  check('it really is final now',
+    (await page.evaluate(() => window.__ctConsole.state.report.status)) === 'final',
+    await page.evaluate(() => window.__ctConsole.state.report.status));
+  const whenFinal = await page.evaluate(() => ({
+    disabled: document.getElementById('reportTemplate').disabled,
+    title: document.getElementById('reportTemplate').title,
+  }));
+  check('a finalised report disables the picker rather than refusing silently',
+    whenFinal.disabled && /reopen/i.test(whenFinal.title), JSON.stringify(whenFinal));
+  await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
+  check('reopening enables it again',
+    !(await page.evaluate(() => document.getElementById('reportTemplate').disabled)));
+
+  /* =================================================================== */
   console.log('\n2. Inserting a template fills the sections, verbatim');
   await page.selectOption('#reportTemplate', 'mtCspine');
   await page.waitForTimeout(400);

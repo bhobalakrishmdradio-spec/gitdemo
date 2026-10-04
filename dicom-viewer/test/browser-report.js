@@ -188,10 +188,19 @@ const pickSeries = async (page, needle) => page.evaluate((needle) => {
 
   const before = findings;
   await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
-  await page.click('#reportMeasureBtn'); await page.waitForTimeout(300);
-  check('a finalised report refuses the insert rather than editing itself',
+  // A finalised report disables the button outright rather than accepting
+  // the click and refusing afterwards.
+  const sealed = await page.evaluate(() => ({
+    disabled: document.getElementById('reportMeasureBtn').disabled,
+    title: document.getElementById('reportMeasureBtn').title,
+  }));
+  check('a finalised report disables the insert, with a reason',
+    sealed.disabled && /reopen/i.test(sealed.title), JSON.stringify(sealed));
+  check('and the findings are untouched',
     (await page.inputValue('#reportFindings')) === before);
   await page.click('#reportFinalBtn'); await page.waitForTimeout(400);
+  check('reopening enables it again',
+    !(await page.evaluate(() => document.getElementById('reportMeasureBtn').disabled)));
 
   await page.evaluate(() => window.__ctConsole.clearMeasurements());
   await page.waitForTimeout(200);

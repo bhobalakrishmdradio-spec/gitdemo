@@ -636,3 +636,10 @@ body.dragging-series .series-card { cursor: grabbing; }
   width: 100%; display: block; background: #000;
   border: 1px solid var(--border); border-radius: 3px; cursor: crosshair;
 }
+
+/* A report control that cannot act yet says so rather than going quiet. */
+.report-note { color: var(--accent); }
+.ghost-btn:disabled, .icon-btn:disabled,
+select:disabled, .primary-btn:disabled {
+  opacity: 0.45; cursor: not-allowed;
+}

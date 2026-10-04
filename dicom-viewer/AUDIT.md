@@ -250,7 +250,7 @@ The largest remaining gaps, in priority order:
 | REP-21 | Autosave / recovery | Pass | Survives a reload; also flushed on page unload |
 | REP-22 | Preview / print / PDF | Partial | Copy to clipboard and download `.txt`. **No PDF or print layout** |
 | REP-23 | Digital signature | **Missing** | "Mark final" is a local lock, not a signature |
-| REP-24 | Finalize / lock | Pass | Fields become read-only; reopening is explicit |
+| REP-24 | Finalize / lock | Pass | Fields become read-only and the template picker and capture buttons are disabled with a stated reason, rather than accepting a click and doing nothing; reopening is explicit |
 | REP-25 | Amendment / addendum | **Missing** | — |
 | REP-26 | Version history | **Missing** | Only the latest draft is kept |
 | REP-27 | Concurrent editing | N/A | Single user, single browser |

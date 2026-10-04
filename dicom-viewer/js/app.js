@@ -515,6 +515,7 @@
     dom.reportHeader = byId("reportHeader");
     dom.reportStatus = byId("reportStatus");
     dom.reportTemplate = byId("reportTemplate");
+    dom.reportNote = byId("reportNote");
     dom.templateCredit = byId("templateCredit");
     dom.placeholderWarn = byId("placeholderWarn");
     dom.reportKeyList = byId("reportKeyList");
@@ -5652,8 +5653,55 @@
       if (el) el.readOnly = !editable;
     });
     dom.reportFinalBtn.textContent = data.status === "final" ? "Reopen draft" : "Mark final";
+    syncReportControls(editable);
     renderKeyImages();
     renderPlaceholderWarning();
+  }
+
+  /**
+   * Switch off every report control that cannot do anything yet.
+   *
+   * With no study open the template picker used to offer all nineteen
+   * templates and then do nothing at all when one was chosen — no message,
+   * no change, the dropdown just reset. A control that invites an action it
+   * will silently refuse is worse than one that is plainly unavailable, so
+   * the picker and the actions are disabled and the panel says why.
+   */
+  function syncReportControls(editable) {
+    var bound = !!state.reportStudyUid;
+    var finalised = bound && state.report && state.report.status === "final";
+
+    if (dom.reportTemplate) {
+      dom.reportTemplate.disabled = !editable;
+      dom.reportTemplate.title = bound
+        ? (finalised ? "This report is marked final. Reopen it to insert a template."
+                     : "Insert a report template")
+        : "Open a study first — a report belongs to a study.";
+    }
+    // A disabled control always says why, because "nothing happens when I
+    // press it" is the complaint this whole function exists to answer.
+    var why = !bound ? "Open a study first — a report belongs to a study."
+      : finalised ? "This report is marked final. Reopen it first."
+      : "";
+    [["reportGrabBtn", editable, "Attach the active pane as a key image"],
+     ["reportMeasureBtn", editable, "Append every measurement to Findings"],
+     ["reportFinalBtn", bound, "Mark the report final, or reopen it"],
+     ["reportCopyBtn", bound, "Copy the report text"],
+     ["reportDownloadBtn", bound, "Download the report as a .txt file"],
+     ["reportClearBtn", bound, "Delete this study's draft"]]
+      .forEach(function (row) {
+        var el = byId(row[0]);
+        if (!el) return;
+        el.disabled = !row[1];
+        el.title = row[1] ? row[2] : why;
+      });
+
+    if (dom.reportNote) {
+      dom.reportNote.textContent = bound ? ""
+        : "Open a study to start a report. A draft is kept per study, so there " +
+          "is nowhere to put one yet.";
+      dom.reportNote.hidden = bound;
+    }
   }
 
   /** Refresh only the saved-at line, so typing does not fight the textarea. */
@@ -5752,7 +5800,15 @@
    */
   function insertTemplate(keyName) {
     var tpl = TPL.get(keyName);
-    if (!tpl || !state.reportStudyUid) return false;
+    if (!tpl) {
+      if (keyName) showToast("No template by that name.", true);
+      return false;
+    }
+    if (!state.reportStudyUid) {
+      showToast("Open a study first — a report belongs to a study, so there is " +
+        "nowhere to put a template yet.", true);
+      return false;
+    }
     if (state.report.status === "final") {
       showToast("This report is marked final. Reopen it first.", true);
       return false;
@@ -7816,6 +7872,7 @@
     insertTemplate: insertTemplate,
     openPlaceholders: openPlaceholders,
     reportText: reportText,
+    renderReport: renderReport,
     cropAxisLabels: cropAxisLabels,
     cropIsActive: cropIsActive,
     setCropHandle: setCropHandle,

@@ -940,6 +940,13 @@ So the bracketed spans their authors left to be filled — `[]`, `[T2|STIR]`,
 Inserting a template never finalises anything, and never silently overwrites
 text already written.
 
+A report belongs to a study, so with nothing open the picker and the report
+actions are **disabled**, and the panel says why. They used to be fully
+enabled and simply do nothing when pressed — nineteen templates on offer and
+no response to any of them, which reads as a broken viewer rather than a
+missing study. The same applies once a report is marked final: the picker is
+disabled with "reopen it first" rather than refusing after the click.
+
 ### Measurements into the report
 
 **＋ Insert measurements** appends every measurement to *Findings*, each with

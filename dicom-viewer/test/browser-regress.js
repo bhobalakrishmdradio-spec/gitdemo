@@ -19,6 +19,9 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   await page.setInputFiles('#fileInput', files);
   await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume, null, { timeout: 60000 });
   await page.waitForTimeout(1000);
+  // The Tools panel follows the armed tool, so pin every section before
+  // reaching for a control that belongs to another context.
+  await UI.showAllTools(page);
 
   console.log('\n1. Orientation letters (rewritten to work off the frames)');
   const labels = await page.evaluate(() => ({
@@ -100,9 +103,12 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   // Keyboard shortcuts deliberately ignore keys typed into inputs, so blur first.
   await page.evaluate(() => document.activeElement && document.activeElement.blur());
   await page.evaluate(() => { window.__ctConsole.state.cells[0].view.zoom = 3; window.__ctConsole.renderAll(); });
-  await page.keyboard.press('r');
+  // Shift+R: plain R draws an ROI, as every workstation binds it.
+  await page.evaluate(() => document.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'R', shiftKey: true, bubbles: true })));
   await page.waitForTimeout(250);
-  check('R resets zoom', (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 1);
+  check('Shift+R resets zoom',
+    (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 1);
 
   console.log('\n6. 3D volume rendering still draws');
   await UI.pickLayout(page, 'quad');

@@ -35,7 +35,6 @@
     angio: { ww: 600, wc: 150, label: "Angio" },
   };
 
-  var MAX_SERIES_FOR_THUMBNAILS = 60;
 
   /**
    * Every pop-up menu, by its dom key.
@@ -90,7 +89,11 @@
            fill: ["axial", "coronal", "sagittal"], fixed: true },
     vr: { label: "3D", glyph: "◈", cols: 1, rows: 1, fill: ["vr"], fixed: true },
     "1x2": { label: "1×2", glyph: "▯▯", cols: 2, rows: 1, fill: ["axial", "coronal"] },
+    "2x1": { label: "2×1", glyph: "▤▤", cols: 1, rows: 2, fill: ["axial", "coronal"] },
+    "1x3": { label: "1×3", glyph: "▯▯▯", cols: 3, rows: 1, fill: ["axial", "coronal", "sagittal"] },
+    "3x1": { label: "3×1", glyph: "☰", cols: 1, rows: 3, fill: ["axial", "coronal", "sagittal"] },
     "2x3": { label: "2×3", glyph: "▦▦", cols: 3, rows: 2, fill: null },
+    "3x3": { label: "3×3", glyph: "▦▦▦", cols: 3, rows: 3, fill: null },
   };
 
   /**
@@ -375,6 +378,13 @@
 
     // 3D crop box, as fractions 0..1 along the volume's own three axes
     // (columns, rows, slices — not patient axes; see cropAxisLabels).
+    draggingSeries: null,      // series UID being dragged onto a pane
+    // The Tools panel follows the armed tool. Turning this off pins every
+    // section on screen at once, which is what you want while setting a
+    // study up and in the way while reading it.
+    toolsShowAll: false,
+    toolsContext: null,        // a context asked for by name, until the tool changes
+
     vrCropLo: [0, 0, 0],
     vrCropHi: [1, 1, 1],
 
@@ -468,6 +478,12 @@
     dom.roiHistogram = byId("roiHistogram");
     dom.histogramNote = byId("histogramNote");
     dom.toolMenu = byId("toolMenu");
+    dom.scoutSection = byId("scoutSection");
+    dom.scoutCanvas = byId("scoutCanvas");
+    dom.scoutNote = byId("scoutNote");
+    dom.toolsScroll = byId("toolsScroll");
+    dom.toolsTitle = byId("toolsTitle");
+    dom.toolsAllBtn = byId("toolsAllBtn");
     dom.helpModal = byId("helpModal");
     dom.helpBody = byId("helpBody");
     dom.helpCloseBtn = byId("helpCloseBtn");
@@ -1190,6 +1206,20 @@
       seriesNumber: parseInt(str(dataSet, "x00200011", ""), 10),
       seriesDescription: str(dataSet, "x0008103e", ""),
       modality: str(dataSet, "x00080060", ""),
+      // Acquisition facts a reader uses to tell two reconstructions of the
+      // same anatomy apart, and which belong on the pane rather than buried
+      // in the tag browser: a 1 mm B70f lung kernel and a 5 mm B30f soft
+      // kernel look like the same series in a list.
+      convolutionKernel: str(dataSet, "x00181210", ""),
+      kvp: str(dataSet, "x00180060", ""),
+      exposure: str(dataSet, "x00181152", ""),
+      tubeCurrent: str(dataSet, "x00181151", ""),
+      contrastAgent: str(dataSet, "x00180010", ""),
+      imageType: str(dataSet, "x00080008", ""),
+      patientBirthDate: str(dataSet, "x00100030", ""),
+      patientSex: str(dataSet, "x00100040", ""),
+      patientAge: str(dataSet, "x00101010", ""),
+      bodyPart: str(dataSet, "x00180015", ""),
       // (0028,0301) Burned In Annotation. "YES" means the scanner wrote text
       // into the pixels. Absence proves nothing — plenty of equipment that
       // burns text in never sets it.
@@ -1379,6 +1409,11 @@
         seriesNumber: isNaN(instance.seriesNumber) ? null : instance.seriesNumber,
         description: instance.seriesDescription || "(no series description)",
         modality: instance.modality || "",
+        sliceThickness: instance.sliceThickness,
+        kernel: instance.convolutionKernel,
+        bodyPart: instance.bodyPart,
+        imageType: instance.imageType,
+        contrastAgent: instance.contrastAgent,
         instances: [],
         seenSopUids: {},
       };
@@ -1532,10 +1567,14 @@
 
     // Show what was just opened. Loading a study and seeing nothing change
     // reads as a failure; the previous series is one click away in the panel.
-    if (firstNewSeriesUID && firstNewSeriesUID !== state.currentSeriesUID) {
-      selectSeries(firstNewSeriesUID);
+    //
+    // A localizer is almost always series 1 and almost never the series
+    // anyone wants to read, so opening onto it is opening onto nothing.
+    var opening = preferDiagnostic(firstNewSeriesUID);
+    if (opening && opening !== state.currentSeriesUID) {
+      selectSeries(opening);
     } else if (!state.currentSeriesUID) {
-      selectSeries(state.seriesOrder[0]);
+      selectSeries(preferDiagnostic(state.seriesOrder[0]) || state.seriesOrder[0]);
     } else {
       renderSeriesList();
       syncLayoutControls();
@@ -1632,30 +1671,258 @@
         seriesNodes[uid] = { wrapper: wrapper, sliceCount: group.slices.length };
       });
     });
+
+    reorderSeriesList(studies, showStudyHeaders);
   }
 
+  /**
+   * Put the panel back in study-then-series order.
+   *
+   * Nodes are appended as they appear during a progressive load, and a
+   * study header only exists once the panel has a reason to show one — so
+   * a header created on the third render was landing underneath the series
+   * it belongs to. appendChild on an element already in the list moves it,
+   * so re-appending in the right order each render is both the fix and
+   * cheap.
+   */
+  function reorderSeriesList(studies, showStudyHeaders) {
+    studies.forEach(function (study) {
+      if (showStudyHeaders) {
+        var head = seriesNodes["study-" + study.uid];
+        if (head) dom.seriesList.appendChild(head.wrapper);
+      }
+      study.series.forEach(function (group) {
+        var node = seriesNodes[group.uid];
+        if (node) dom.seriesList.appendChild(node.wrapper);
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+   * The series browser
+   *
+   * One card per series, not one tile per slice. A chest CT is 300-odd
+   * images; a grid of 300 near-identical tiles is not a browser, it is a
+   * wall, and it says nothing about which of the four reconstructions in
+   * front of you is the 1 mm lung kernel. The card carries what a reader
+   * picks a series by — modality, number, description, thickness, count,
+   * and the kernel and contrast agent when the file states them — and the
+   * per-slice strip is still there, one click away, for the cases where
+   * scrubbing tiles is genuinely what you want.
+   *
+   * Every string on the card comes out of a DICOM header, so every one of
+   * them is escaped. See the hostile-header fixture in the test suite.
+   * ------------------------------------------------------------------- */
   function buildSeriesNode(group, uid) {
     var wrapper = document.createElement("div");
     wrapper.className = "series-group" + (uid === state.currentSeriesUID ? " active" : "");
+    wrapper.dataset.uid = uid;
 
-    var header = document.createElement("div");
-    header.className = "series-header";
-    header.innerHTML =
-      "<span>" + escapeHtml(group.modality ? group.modality + " — " : "") +
-      escapeHtml(group.description) + "</span>" +
-      '<span class="series-count">' + group.slices.length + "</span>";
-    header.addEventListener("click", function () { selectSeries(uid); });
-    wrapper.appendChild(header);
+    var card = document.createElement("div");
+    card.className = "series-card";
+    card.tabIndex = 0;
+    card.title = seriesCardTitle(group);
 
-    if (group.slices.length <= MAX_SERIES_FOR_THUMBNAILS) {
-      var grid = document.createElement("div");
-      grid.className = "thumb-grid";
-      wrapper.appendChild(grid);
-      buildThumbnailsAsync(group, grid, uid);
-    }
+    var shot = document.createElement("div");
+    shot.className = "series-thumb";
+    card.appendChild(shot);
+    paintSeriesThumb(group, shot);
+
+    var meta = document.createElement("div");
+    meta.className = "series-meta";
+    meta.innerHTML = seriesMetaHtml(group);
+    card.appendChild(meta);
+
+    // Dragging a series onto a pane is the fastest way to lay out a
+    // comparison, and it is the gesture every workstation uses.
+    card.draggable = true;
+    card.addEventListener("dragstart", function (e) {
+      e.dataTransfer.setData("text/x-ct-series", uid);
+      e.dataTransfer.effectAllowed = "copy";
+      state.draggingSeries = uid;
+      document.body.classList.add("dragging-series");
+    });
+    card.addEventListener("dragend", function () {
+      state.draggingSeries = null;
+      document.body.classList.remove("dragging-series");
+      clearDropTargets();
+    });
+
+    card.addEventListener("click", function () { selectSeries(uid); });
+    card.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectSeries(uid); }
+    });
+    wrapper.appendChild(card);
+
+    // The slice strip, built only when it is asked for: a 300-slice series
+    // costs 300 decodes, which is not a price to pay for a panel nobody
+    // opened.
+    var strip = document.createElement("div");
+    strip.className = "thumb-grid";
+    strip.hidden = true;
+
+    var toggle = document.createElement("button");
+    toggle.className = "series-expand";
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "⌄ " + group.slices.length + " images";
+    toggle.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = strip.hidden;
+      strip.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.textContent = (open ? "⌃ " : "⌄ ") + group.slices.length + " images";
+      if (open && !strip.dataset.built) {
+        strip.dataset.built = "1";
+        buildThumbnailsAsync(group, strip, uid);
+      }
+      if (open) highlightActiveThumb();
+    });
+    wrapper.appendChild(toggle);
+    wrapper.appendChild(strip);
     return wrapper;
   }
 
+  /** A loaded series by UID, or null — safe against inherited keys. */
+  function seriesByUid(uid) {
+    return typeof uid === "string" &&
+      Object.prototype.hasOwnProperty.call(state.seriesMap, uid)
+      ? state.seriesMap[uid] : null;
+  }
+
+  function clearDropTargets() {
+    cellEls.forEach(function (rec) {
+      if (rec && rec.root) rec.root.classList.remove("drop-target");
+    });
+  }
+
+  /**
+   * Let a pane accept a series dragged from the browser.
+   *
+   * Wired per pane when the grid is built. The pane highlights only while a
+   * series is genuinely over it, so the highlight is an answer to "will it
+   * land here", not decoration.
+   */
+  function wireSeriesDrop(i, rec) {
+    function carries(e) {
+      return !!(e.dataTransfer && e.dataTransfer.types &&
+        Array.prototype.indexOf.call(e.dataTransfer.types, "text/x-ct-series") >= 0);
+    }
+    rec.root.addEventListener("dragover", function (e) {
+      if (!carries(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "copy";
+      rec.root.classList.add("drop-target");
+    });
+    rec.root.addEventListener("dragleave", function (e) {
+      if (e.target !== rec.root && rec.root.contains(e.target)) return;
+      rec.root.classList.remove("drop-target");
+    });
+    rec.root.addEventListener("drop", function (e) {
+      if (!carries(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      rec.root.classList.remove("drop-target");
+      var uid = e.dataTransfer.getData("text/x-ct-series");
+      // The dragged id comes back through the drag payload, so it is
+      // checked against the loaded series rather than trusted — with an own
+      // -property test, because a plain lookup for "__proto__" or
+      // "constructor" answers truthily on any object and would send a
+      // string that is not a series UID into setCellSeries.
+      if (!uid || !seriesByUid(uid)) {
+        showToast("That series is no longer loaded.", true);
+        return;
+      }
+      setActiveCell(i);
+      if (state.cells[i] && state.cells[i].plane === "vr") {
+        showToast("The 3D pane renders the current series. Drop onto a 2D pane instead.", true);
+        return;
+      }
+      setCellSeries(i, uid);
+      var g = seriesByUid(uid);
+      showToast("Pane " + (i + 1) + ": " + (g.description || "series") + ".");
+    });
+  }
+
+  /** Millimetres of slice thickness, as the file states it. */
+  function seriesThicknessLabel(group) {
+    var t = group.sliceThickness;
+    return typeof t === "number" && isFinite(t) && t > 0 ? fmt(t) + " mm" : "";
+  }
+
+  /**
+   * The acquisition facts the file actually carries.
+   *
+   * Deliberately not a guessed contrast phase. "Arterial" and "portal
+   * venous" are almost never recorded in a tag; reading them out of the
+   * series description would be re-displaying the description one line
+   * lower while making it look like the viewer had determined something.
+   * Contrast/Bolus Agent and Convolution Kernel are stated facts, so those
+   * are what the card shows.
+   */
+  function seriesFactsLabel(group) {
+    var bits = [];
+    if (group.kernel) bits.push(group.kernel);
+    if (group.contrastAgent) bits.push(group.contrastAgent);
+    if (!bits.length && group.bodyPart) bits.push(group.bodyPart);
+    return bits.join(" · ");
+  }
+
+  function seriesMetaHtml(group) {
+    var head = (group.modality || "?") +
+      (group.seriesNumber != null ? " · " + group.seriesNumber : "");
+    var dims = [seriesThicknessLabel(group),
+                group.slices.length + " img"].filter(Boolean).join(" · ");
+    var facts = seriesFactsLabel(group);
+    return '<span class="series-line series-id">' + escapeHtml(head) + "</span>" +
+      '<span class="series-line series-desc">' + escapeHtml(group.description) + "</span>" +
+      '<span class="series-line series-dims">' + escapeHtml(dims) + "</span>" +
+      (facts ? '<span class="series-line series-facts">' + escapeHtml(facts) + "</span>" : "");
+  }
+
+  function seriesCardTitle(group) {
+    var lines = [
+      (group.modality || "?") +
+        (group.seriesNumber != null ? " series " + group.seriesNumber : ""),
+      group.description,
+      seriesThicknessLabel(group),
+      group.slices.length + " images",
+      seriesFactsLabel(group),
+    ].filter(Boolean);
+    return lines.join("\n") + "\nClick to open · drag onto a pane";
+  }
+
+  /**
+   * One representative image per series: the middle slice.
+   *
+   * The first slice of a chest CT is air above the lungs and the last is
+   * the table — neither tells you what the series is. A failed decode says
+   * so rather than leaving an empty box, because a blank thumbnail reads as
+   * "this series is empty".
+   */
+  function paintSeriesThumb(group, host) {
+    var slices = group.slices;
+    if (!slices || !slices.length) { host.textContent = "—"; return; }
+    var pick = slices[Math.floor(slices.length / 2)];
+    try {
+      host.appendChild(buildWindowedCanvas(
+        pick.instance, pick.frameIndex,
+        wwOf(pick.instance), wcOf(pick.instance), false
+      ));
+    } catch (err) {
+      host.textContent = "⚠";
+      host.title = "This series could not be decoded for a preview: " + err.message;
+    }
+  }
+
+  /**
+   * Fill the slice strip, a few tiles at a time.
+   *
+   * Yielding between batches keeps a 300-slice series from locking the page
+   * while it decodes; the strip is only ever built for a series somebody
+   * expanded.
+   */
   function buildThumbnailsAsync(group, grid, uid) {
     var i = 0;
     function step() {
@@ -1679,7 +1946,8 @@
           idxLabel.className = "thumb-idx";
           idxLabel.textContent = String(index + 1);
           thumb.appendChild(idxLabel);
-          thumb.addEventListener("click", function () {
+          thumb.addEventListener("click", function (e) {
+            e.stopPropagation();
             if (uid !== state.currentSeriesUID) selectSeries(uid);
             setPlaneIndex("axial", index);
           });
@@ -3534,7 +3802,15 @@
   }
 
   function renderAllOverlays() {
-    cellEls.forEach(function (rec, i) { if (rec.geom) drawAnnotations(i, rec.geom); });
+    cellEls.forEach(function (rec, i) {
+      if (!rec.geom) return;
+      drawAnnotations(i, rec.geom);
+      // The corners name the live tool, so they go stale the moment one is
+      // armed — and a pane that says "Window/Level" while Pan is armed is
+      // worse than one that says nothing.
+      if (rec.geom.slab) updateOverlays(i, rec.geom.slab);
+    });
+    renderScout();
   }
 
   /* ---------------------------------------------------------------------
@@ -3747,16 +4023,19 @@
    * ------------------------------------------------------------------- */
   var VIEW_TOOLS = {
     pan: {
+      label: "Pan",
       cursor: "grab",
       status: "Pan: drag to move the image inside its pane. " +
-              "Right-drag still pans whatever tool is armed.",
+              "Middle-drag and Ctrl+drag pan whatever tool is armed.",
     },
     zoom: {
+      label: "Zoom",
       cursor: "ns-resize",
       status: "Zoom: drag up to zoom in, down to zoom out. " +
-              "Shift+wheel still zooms whatever tool is armed.",
+              "Right-drag and Shift+wheel zoom whatever tool is armed.",
     },
     scroll: {
+      label: "Scroll",
       cursor: "ns-resize",
       status: "Scroll: drag down to go further into the stack, up to come back. " +
               "The wheel still scrolls whatever tool is armed.",
@@ -3777,6 +4056,7 @@
     // with the wrong shape's rules.
     cancelPending();
     state.tool = tool;
+    state.toolsContext = null;
     if (tool === MEAS.TOOLS.none) {
       setStatus("Navigate: drag a measurement's handle to reshape it, or its centre grip to move it.");
     } else if (tool === "crosshair") {
@@ -3830,6 +4110,7 @@
         btn.classList.toggle("on", btn.dataset.tool === state.tool);
       });
     }
+    syncToolsPanel();
     // The button names the tool it is holding. A menu that hides which tool
     // is armed is how a reader ends up drawing an ROI they meant to probe.
     if (dom.toolMoreBtn) {
@@ -3839,6 +4120,300 @@
       dom.toolMoreBtn.title = measuring
         ? "Active tool: " + MEAS.label(state.tool) : "Measure and annotate";
     }
+  }
+
+  /* ---------------------------------------------------------------------
+   * Scout / localizer navigation
+   *
+   * A chest-abdomen CT is six hundred slices and a slider that spans them
+   * all moves fifteen millimetres per pixel. The scout is the one image
+   * that shows where you are in the patient, so it gets a line for the
+   * current slice and a click that jumps there.
+   *
+   * Everything is computed in patient coordinates from the two tags that
+   * define each image's plane — Image Position (Patient) and Image
+   * Orientation (Patient). A scout acquired at any angle therefore works,
+   * and one that states no geometry is shown without a line rather than
+   * with a line drawn in the wrong place.
+   * ------------------------------------------------------------------- */
+
+  /**
+   * The series to open on, given the first one that arrived.
+   *
+   * If that one is a localizer, prefer the longest non-localizer series of
+   * the same study — which is the diagnostic stack in every study this has
+   * been tried on. If the study is nothing but localizers, the localizer is
+   * the right answer and is returned unchanged.
+   */
+  function preferDiagnostic(uid) {
+    var group = uid && state.seriesMap[uid];
+    if (!group || !isScoutGroup(group)) return uid;
+    var best = null;
+    state.seriesOrder.forEach(function (u) {
+      var g = state.seriesMap[u];
+      if (!g || g.studyUID !== group.studyUID || isScoutGroup(g)) return;
+      if (!best || g.instances.length > best.instances.length) best = g;
+    });
+    return best ? best.uid : uid;
+  }
+
+  /** A localizer, as the file declares itself — not as we guess. */
+  function isScoutGroup(group) {
+    if (!group) return false;
+    return /\bLOCALIZER\b/i.test(group.imageType || "");
+  }
+
+  /** The scout belonging to the study currently being read, if there is one. */
+  function scoutForCurrent() {
+    var current = getCurrentGroup();
+    if (!current) return null;
+    for (var i = 0; i < state.seriesOrder.length; i++) {
+      var g = state.seriesMap[state.seriesOrder[i]];
+      if (!g || g.uid === current.uid) continue;
+      if (g.studyUID !== current.studyUID) continue;
+      if (isScoutGroup(g) && g.slices.length) return g;
+    }
+    return null;
+  }
+
+  /** Geometry of one scout image, in patient millimetres. */
+  function scoutGeometry(inst) {
+    var iop = inst.imageOrientation;
+    var ipp = inst.imagePosition;
+    if (!iop || iop.length < 6 || !ipp || ipp.length < 3) return null;
+    var row = [iop[0], iop[1], iop[2]];      // along increasing column
+    var col = [iop[3], iop[4], iop[5]];      // along increasing row
+    var sx = inst.pixelSpacingCol, sy = inst.pixelSpacingRow;
+    if (!sx || !sy) return null;
+    return { origin: ipp, row: row, col: col, sx: sx, sy: sy,
+             cols: inst.columns, rows: inst.rows };
+  }
+
+  function scoutToPatient(geom, u, v) {
+    return [
+      geom.origin[0] + geom.row[0] * u * geom.sx + geom.col[0] * v * geom.sy,
+      geom.origin[1] + geom.row[1] * u * geom.sx + geom.col[1] * v * geom.sy,
+      geom.origin[2] + geom.row[2] * u * geom.sx + geom.col[2] * v * geom.sy,
+    ];
+  }
+
+  /**
+   * Where the current axial cut crosses the scout, as a line in scout pixels.
+   *
+   * The cut is the plane {P : (P - c)·n = 0}. A scout pixel is
+   * P(u,v) = o + r·u·sx + c·v·sy, so substituting gives one linear equation
+   * in u and v — a straight line, which is solved for whichever of the two
+   * the plane is less parallel to so the result never blows up.
+   */
+  function scoutCutLine(geom, normal, through) {
+    var d = [geom.origin[0] - through[0],
+             geom.origin[1] - through[1],
+             geom.origin[2] - through[2]];
+    var k = d[0] * normal[0] + d[1] * normal[1] + d[2] * normal[2];
+    var a = (geom.row[0] * normal[0] + geom.row[1] * normal[1] +
+             geom.row[2] * normal[2]) * geom.sx;
+    var b = (geom.col[0] * normal[0] + geom.col[1] * normal[1] +
+             geom.col[2] * normal[2]) * geom.sy;
+    // k + a*u + b*v = 0
+    if (Math.abs(b) >= Math.abs(a)) {
+      if (Math.abs(b) < 1e-9) return null;      // the cut is parallel to the scout
+      return [{ u: 0, v: -k / b },
+              { u: geom.cols, v: -(k + a * geom.cols) / b }];
+    }
+    if (Math.abs(a) < 1e-9) return null;
+    return [{ u: -k / a, v: 0 },
+            { u: -(k + b * geom.rows) / a, v: geom.rows }];
+  }
+
+  /** Patient-space position of the cut the active pane is showing. */
+  function currentCutPlane() {
+    var cell = state.cells[state.activeCell] ||
+      state.cells.filter(function (c) { return c.plane !== "vr"; })[0];
+    if (!cell || cell.plane === "vr") return null;
+    var vol = cellVolume(cell);
+    if (!vol || !V.hasPatientFrame(vol)) return null;
+    var f = vol.frame;
+    var axis = cell.plane === "axial" ? f.sliceDir
+      : cell.plane === "coronal" ? f.colDir : f.rowDir;
+    var pitch = V.normalSpacing(vol, cell.plane);
+    var local = cell.plane === "axial" ? [0, 0, cellIndex(cell) * pitch]
+      : cell.plane === "coronal" ? [0, cellIndex(cell) * pitch, 0]
+      : [cellIndex(cell) * pitch, 0, 0];
+    return { normal: axis, through: V.toPatient(vol, local), vol: vol, cell: cell };
+  }
+
+  function renderScout() {
+    if (!dom.scoutSection) return;
+    var group = scoutForCurrent();
+    if (!group) {
+      dom.scoutSection.hidden = true;
+      scoutState = null;
+      return;
+    }
+    dom.scoutSection.hidden = false;
+
+    var pick = group.slices[Math.floor(group.slices.length / 2)];
+    var inst = pick.instance;
+    var geom = scoutGeometry(inst);
+    var canvas = dom.scoutCanvas;
+    var width = canvas.clientWidth || 240;
+    var scale = width / inst.columns;
+    canvas.width = Math.round(inst.columns * scale);
+    canvas.height = Math.round(inst.rows * scale);
+
+    var ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    try {
+      var img = buildWindowedCanvas(inst, pick.frameIndex,
+        wwOf(inst), wcOf(inst), state.invert);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    } catch (err) {
+      ctx.fillStyle = "#777";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("scout could not be decoded", 8, 18);
+      scoutState = null;
+      dom.scoutNote.textContent = "This localizer could not be decoded.";
+      return;
+    }
+
+    var cut = currentCutPlane();
+    var line = geom && cut ? scoutCutLine(geom, cut.normal, cut.through) : null;
+    if (line) {
+      ctx.strokeStyle = "rgba(255, 210, 74, 0.95)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(line[0].u * scale, line[0].v * scale);
+      ctx.lineTo(line[1].u * scale, line[1].v * scale);
+      ctx.stroke();
+    }
+
+    scoutState = geom && cut ? { geom: geom, scale: scale, vol: cut.vol, cell: cut.cell } : null;
+    dom.scoutNote.textContent = !geom
+      ? "This localizer states no position, so no level can be marked on it."
+      : !cut ? "Open a series with patient positions to mark the level."
+      : line ? "Click to jump to that level."
+      : "The current cut runs parallel to this scout, so it has no line on it.";
+  }
+
+  var scoutState = null;
+
+  /** Jump the active pane to the level clicked on the scout. */
+  function scoutClick(e) {
+    if (!scoutState) return;
+    var rect = dom.scoutCanvas.getBoundingClientRect();
+    var u = (e.clientX - rect.left) / scoutState.scale;
+    var v = (e.clientY - rect.top) / scoutState.scale;
+    var patient = scoutToPatient(scoutState.geom, u, v);
+    var local = V.fromPatient(scoutState.vol, patient);
+    if (!local) return;
+    var cell = scoutState.cell;
+    var plane = cell.plane;
+    var pitch = V.normalSpacing(scoutState.vol, plane);
+    var along = plane === "axial" ? local[2] : plane === "coronal" ? local[1] : local[0];
+    var index = Math.round(along / pitch);
+    var count = V.planeCount(scoutState.vol, plane);
+    if (index < 0 || index >= count) {
+      showToast("That level is outside this series.", true);
+      return;
+    }
+    setCellIndex(state.cells.indexOf(cell), index);
+  }
+
+  /* ---------------------------------------------------------------------
+   * The contextual Tools panel
+   *
+   * Showing window/level, slab thickness, bone cut, 3D rendering, cine, the
+   * focus point, oblique MPR, the measurement list, the histogram, the
+   * volume report and the tag browser all at once makes the panel a list to
+   * search rather than a set of controls to reach for. Each section
+   * declares the contexts it belongs to in `data-ctx`, and the panel shows
+   * the ones that match the armed tool.
+   *
+   * Hiding is never losing: "Show all" pins the whole panel, and a section
+   * holding something you have set — a slab, a bone cut, an open crop — is
+   * shown whatever the context, because a control that is silently doing
+   * something must not be the one that is hidden.
+   * ------------------------------------------------------------------- */
+  var CONTEXT_TITLES = {
+    wl: "Window / Level",
+    measure: "Measurements",
+    mpr: "Planes",
+    threed: "3D",
+    view: "View",
+    info: "Study",
+  };
+
+  /** Which context the armed tool puts the panel in. */
+  function toolContext() {
+    // A context asked for explicitly wins until the next tool change.
+    if (state.toolsContext) return state.toolsContext;
+    if (state.cells.some(function (c) { return c.plane === "vr"; }) &&
+        state.layout === "vr") {
+      return "threed";
+    }
+    if (isViewTool(state.tool)) return "view";
+    if (state.tool === "sculpt") return "threed";
+    if (state.tool === "crosshair") return "mpr";
+    if (state.tool !== MEAS.TOOLS.none) return "measure";
+    return "wl";
+  }
+
+  /**
+   * Sections that must stay visible because they are doing something.
+   *
+   * A reader who set a 10 mm MIP slab and then picked the ruler would
+   * otherwise lose the only control that says the slab is on.
+   */
+  function pinnedContexts() {
+    var pinned = {};
+    if (state.thicknessMm > 0) pinned.mpr = true;
+    if (state.boneCut || (state.sculptUndo && state.sculptUndo.length)) pinned.threed = true;
+    if (cropIsActive()) pinned.threed = true;
+    if (state.measurements.length) pinned.measure = true;
+    if (state.cine.playing) pinned.view = true;
+    if (obliqueActive && obliqueActive()) pinned.mpr = true;
+    return pinned;
+  }
+
+  /**
+   * Open the Tools panel on one context and scroll to it.
+   *
+   * For the sections no tool arms — the tag browser — which would otherwise
+   * be reachable only through "Show all".
+   */
+  function showToolsContext(ctx) {
+    state.toolsContext = ctx;
+    if (dom.toolsPanel && dom.toolsPanel.classList.contains("collapsed")) {
+      dom.toolsPanel.classList.remove("collapsed");
+      if (dom.panelToggleBtn) dom.panelToggleBtn.classList.add("active");
+    }
+    syncToolsPanel();
+    var first = dom.toolsScroll &&
+      dom.toolsScroll.querySelector('[data-ctx~="' + ctx + '"]');
+    if (first && first.scrollIntoView) first.scrollIntoView({ block: "start" });
+  }
+
+  function syncToolsPanel() {
+    if (!dom.toolsScroll) return;
+    var ctx = toolContext();
+    var pinned = pinnedContexts();
+    var all = state.toolsShowAll;
+
+    Array.prototype.forEach.call(
+      dom.toolsScroll.querySelectorAll("[data-ctx]"), function (sec) {
+        var owns = sec.dataset.ctx.split(/\s+/);
+        var show = all || owns.indexOf(ctx) >= 0 ||
+          owns.some(function (k) { return pinned[k]; });
+        sec.hidden = !show;
+      });
+
+    dom.toolsTitle.textContent = all ? "Tools — all"
+      : (CONTEXT_TITLES[ctx] || "Tools");
+    dom.toolsAllBtn.classList.toggle("on", all);
+    dom.toolsAllBtn.textContent = all ? "Contextual" : "Show all";
+    dom.toolsAllBtn.title = all
+      ? "Follow the active tool again, instead of showing every section"
+      : "Show every section, not only the ones for the active tool";
   }
 
   /* ---------------------------------------------------------------------
@@ -4045,6 +4620,18 @@
     rec.tl.textContent = rec.tr.textContent = rec.bl.textContent = rec.br.textContent = "";
   }
 
+  /**
+   * The four corners.
+   *
+   * Laid out the way a reading workstation lays them out, because that is
+   * where a radiologist's eye already goes: who, top left; what series and
+   * where in it, top right; how it is being displayed, bottom left; how it
+   * was acquired, bottom right.
+   *
+   * Everything here is a header string or a number this viewer computed.
+   * The header strings go through textContent, never innerHTML, so a file
+   * with markup in its PatientName shows the markup rather than running it.
+   */
   function updateOverlays(i, slab) {
     var rec = cellEls[i], cell = state.cells[i];
     if (!rec || !cell) return;
@@ -4055,32 +4642,26 @@
     var vol = cellVolume(cell);
     if (!vol) return;
 
+    /* --- top left: the patient --- */
     if (first) {
       var name = formatPersonName(str(first.dataSet, "x00100010", ""));
       var id = str(first.dataSet, "x00100020", "");
-      rec.tl.textContent = (name ? name + "\n" : "") + (id ? "ID: " + id : "");
-      // The study date belongs on the pane, not only in the series panel.
-      // Two panes of the same patient and the same series description are
-      // told apart by their date and nothing else — which is the whole
-      // question when an old scan is beside a new one.
+      var who = demographicsLine(first);
       var when = formatDicomDate(group.studyDate || "");
-      rec.tr.textContent = (first.modality || "") +
-        (when ? "  " + when : "") + "\n" + (group.description || "") +
-        (cell.seriesUid ? "\n[" + comparisonLabel(group) + "]" : "");
+      rec.tl.textContent = [
+        name,
+        id ? "ID: " + id : "",
+        who,
+        when,
+      ].filter(Boolean).join("\n");
     }
 
-    var win = cellWindow(cell);
-    rec.bl.textContent =
-      "WW: " + Math.round(win.ww) + "  WL: " + Math.round(win.wc) +
-      (cell.wl ? " *" : "") +
-      (state.invert ? "  [Inv]" : "") +
-      (state.boneCut ? "\nBone cut ≥ " + state.boneThreshold + " HU" : "");
-
+    /* --- top right: which series, and where in it --- */
     var count = V.planeCount(vol, plane);
     var pitch = V.normalSpacing(vol, plane);
     var thicknessLabel = slab.samples > 1
-      ? fmt(slab.samples * pitch) + "mm " + modeLabel(state.projectionMode)
-      : fmt(pitch) + "mm";
+      ? fmt(slab.samples * pitch) + " mm " + modeLabel(state.projectionMode)
+      : fmt(pitch) + " mm";
     var tilt = tiltOf(plane);
     var offBy = linkGapFor(cell);
     // Say when a pane is showing a reconstruction rather than the slices as
@@ -4088,14 +4669,76 @@
     // diagnostic image and a smear, and the pixels alone do not admit it.
     var native = V.acquisitionPlane(vol);
     var reformatted = native && native.plane !== plane;
-    rec.br.textContent =
+    rec.tr.textContent = [
+      group ? (group.description || "") +
+        (group.seriesNumber != null ? "  #" + group.seriesNumber : "") : "",
+      cell.seriesUid ? "[" + comparisonLabel(group) + "]" : "",
       (cellIndex(cell) + 1) + " / " + count +
-      (cell.pinned ? "  pinned" : cell.offset ? "  " + (cell.offset > 0 ? "+" : "") + cell.offset : "") +
-      (offBy ? "\n⚠ " + offBy : "") +
-      "\n" + thicknessLabel +
-      (reformatted ? "\nreformatted from " + native.plane : "") +
-      (tilt > 0.05 ? "\nOblique " + tilt.toFixed(1) + "°" : "") +
-      "\n" + Math.round(cell.view.zoom * 100) + "%";
+        (cell.pinned ? "  pinned"
+          : cell.offset ? "  " + (cell.offset > 0 ? "+" : "") + cell.offset : ""),
+      thicknessLabel,
+      reformatted ? "reformatted from " + native.plane : "",
+      tilt > 0.05 ? "oblique " + tilt.toFixed(1) + "°" : "",
+      offBy ? "⚠ " + offBy : "",
+    ].filter(Boolean).join("\n");
+
+    /* --- bottom left: how it is being displayed --- */
+    var win = cellWindow(cell);
+    rec.bl.textContent = [
+      "WW " + Math.round(win.ww) + "  WL " + Math.round(win.wc) +
+        (cell.wl ? " *" : "") + (state.invert ? "  [inv]" : ""),
+      "Zoom " + Math.round(cell.view.zoom * 100) + "%",
+      activeToolLabel(),
+      state.boneCut ? "bone cut ≥ " + state.boneThreshold + " HU" : "",
+    ].filter(Boolean).join("\n");
+
+    /* --- bottom right: how it was acquired --- */
+    rec.br.textContent = acquisitionLines(first, group).join("\n");
+  }
+
+  /** Age and sex, from whichever of the two tags the file carries. */
+  function demographicsLine(inst) {
+    var bits = [];
+    // Age as recorded (e.g. "058Y") is the age at the study, which is what a
+    // reader wants; a birth date would have to be subtracted from a study
+    // date that may be absent, so it is only the fallback.
+    var age = (inst.patientAge || "").replace(/^0+/, "");
+    if (age) bits.push(age);
+    else if (inst.patientBirthDate) bits.push("DOB " + formatDicomDate(inst.patientBirthDate));
+    if (inst.patientSex) bits.push(inst.patientSex);
+    return bits.join("  ");
+  }
+
+  /** What a plain left-drag will do right now. */
+  function activeToolLabel() {
+    if (isViewTool(state.tool)) return VIEW_TOOLS[state.tool].label;
+    if (state.tool === "crosshair") return "Crosshair";
+    if (state.tool === "sculpt") return "Sculpt";
+    if (state.tool === MEAS.TOOLS.none) return "Window/Level";
+    return MEAS.label(state.tool);
+  }
+
+  /**
+   * Modality, kernel and technique.
+   *
+   * Only what the file states. A CT reconstructed with a sharp lung kernel
+   * and the same anatomy reconstructed soft are different images with the
+   * same description, and the kernel is often the only thing that says so.
+   */
+  function acquisitionLines(inst, group) {
+    if (!inst) return [];
+    var out = [];
+    var head = [inst.modality || "", group && group.bodyPart ? group.bodyPart : ""]
+      .filter(Boolean).join("  ");
+    if (head) out.push(head);
+    if (inst.convolutionKernel) out.push(inst.convolutionKernel);
+    var tech = [];
+    if (inst.kvp) tech.push(inst.kvp + " kVp");
+    if (inst.tubeCurrent) tech.push(inst.tubeCurrent + " mA");
+    else if (inst.exposure) tech.push(inst.exposure + " mAs");
+    if (tech.length) out.push(tech.join("  "));
+    if (inst.contrastAgent) out.push(inst.contrastAgent);
+    return out;
   }
 
   /**
@@ -5372,6 +6015,13 @@
       dom.toolMenu.hidden = true;
       if (item.dataset.edit === "undo") undoMeasurement(); else redoMeasurement();
     });
+    dom.scoutCanvas.addEventListener("click", scoutClick);
+
+    dom.toolsAllBtn.addEventListener("click", function () {
+      state.toolsShowAll = !state.toolsShowAll;
+      syncToolsPanel();
+    });
+
     dom.helpCloseBtn.addEventListener("click", closeShortcutHelp);
     dom.helpModal.addEventListener("click", function (e) {
       // Clicking the dimmed area outside the panel dismisses it.
@@ -5425,6 +6075,8 @@
         if (!goToFocus(true)) showToast("No focus point yet — press 🎯, then click one.", true);
       } else if (what === "focusClear") {
         clearFocus();
+      } else if (what === "tags") {
+        showToolsContext("info");
       } else if (what === "shortcuts") {
         openShortcutHelp();
       }
@@ -5692,6 +6344,8 @@
   function wireCell(i, rec) {
     var cell = state.cells[i];
 
+    wireSeriesDrop(i, rec);
+
     rec.planeSel.addEventListener("change", function (e) {
       setCellPlane(i, e.target.value);
     });
@@ -5763,6 +6417,18 @@
       if (e.button === 0 && e.shiftKey) {
         state.drag = { cell: i, mode: "crosshair" };
         crosshairFromPoint(i, e.clientX, e.clientY);
+        return;
+      }
+      // Ctrl/Cmd pans, for a trackpad with no middle button. Like Alt and
+      // Shift above, the modifier wins over whatever is under the cursor
+      // and whatever tool is armed: a held modifier is an explicit
+      // instruction, and having it silently grab the crosshair instead
+      // would make it useless exactly where it is needed.
+      if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+        state.drag = {
+          cell: i, mode: "pan", x: e.clientX, y: e.clientY,
+          panX: cell.view.panX, panY: cell.view.panY,
+        };
         return;
       }
       // With zoom, pan or scroll armed, a plain left-drag does that one
@@ -5846,13 +6512,25 @@
         measureClick(i, e.clientX, e.clientY);
         return;
       }
+      // The default button map, which holds whatever tool is armed:
+      //   left   window/level (or the armed tool, handled above)
+      //   middle pan
+      //   right  zoom
+      // Ctrl/Cmd with the left button pans, for a trackpad with one button.
       var win = cellWindow(cell);
+      var mode = e.button === 1 ? "pan"
+        : e.button === 2 ? "zoom"
+        : (e.ctrlKey || e.metaKey) ? "pan"
+        : "wl";
       state.drag = {
         cell: i,
-        mode: e.button === 0 ? "wl" : "pan",
+        mode: mode,
         x: e.clientX, y: e.clientY,
         ww: win.ww, wc: win.wc,
         panX: cell.view.panX, panY: cell.view.panY,
+        zoom: cell.view.zoom,
+        index: cellIndex(cell),
+        step: 0,
       };
     });
 
@@ -5894,6 +6572,47 @@
         expandCell(i);
       }
     });
+  }
+
+  /**
+   * Expand the active pane, or put the grid back.
+   *
+   * The same thing a double-click does, so it goes through the same two
+   * functions rather than a second copy that could drift from them.
+   */
+  function toggleMaximise() {
+    if (state.layout === "axial" || state.layout === "vr") {
+      setLayout(lastGridLayout);
+      return;
+    }
+    lastGridLayout = state.layout;
+    expandCell(state.activeCell >= 0 ? state.activeCell : 0);
+  }
+
+  /**
+   * Jump the active pane to a slice number.
+   *
+   * A plain prompt: the alternative is a modal to build and dismiss for a
+   * thing that is three keystrokes and Enter.
+   */
+  function promptForSlice() {
+    var i = state.activeCell;
+    var cell = state.cells[i];
+    if (!cell || cell.plane === "vr") {
+      i = state.cells.findIndex(function (c) { return c.plane !== "vr"; });
+      cell = state.cells[i];
+    }
+    var vol = cell && cellVolume(cell);
+    if (!vol) return showToast("No series is open.", true);
+    var count = V.planeCount(vol, cell.plane);
+    var answer = window.prompt(
+      "Go to " + cell.plane + " slice (1–" + count + "):", String(cellIndex(cell) + 1));
+    if (answer === null) return;
+    var n = parseInt(answer, 10);
+    if (isNaN(n) || n < 1 || n > count) {
+      return showToast("There is no slice " + answer + " in this series.", true);
+    }
+    setCellIndex(i, n - 1);
   }
 
   /** Blow one pane up to fill the window, keeping its plane. */
@@ -6170,6 +6889,14 @@
     { group: "Tools", items: [
       { keys: ["N"], match: ["n", "N"], what: "Navigate — the tool to come back to",
         run: function () { setTool(MEAS.TOOLS.none); } },
+      { keys: ["W"], match: ["w", "W"], what: "Window/Level — what a plain left-drag does",
+        run: function () { setTool(MEAS.TOOLS.none); } },
+      { keys: ["M"], match: ["m", "M"], what: "Measure a distance",
+        run: function () { setTool(MEAS.TOOLS.distance); } },
+      { keys: ["A"], match: ["a", "A"], what: "Measure an angle",
+        run: function () { setTool(MEAS.TOOLS.angle); } },
+      { keys: ["R"], match: ["r", "R"], shift: false, what: "Draw an elliptical ROI",
+        run: function () { setTool(MEAS.TOOLS.ellipse); } },
       { keys: ["X"], match: ["x", "X"], what: "Crosshair on or off",
         run: function () {
           setTool(state.tool === "crosshair" ? MEAS.TOOLS.none : "crosshair");
@@ -6203,15 +6930,23 @@
       { keys: ["Ctrl / ⌘", "Y"], match: ["y", "Y"], accel: true, stop: true,
         what: "Redo — the other chord for it",
         run: function () { redoMeasurement(); } },
-      { keys: ["R"], match: ["r", "R"], what: "Reset zoom, pan, rotation and flip",
+      { keys: ["⇧", "R"], match: ["R"], shift: true,
+        what: "Reset zoom, pan, rotation and flip",
         run: function () { applyReset("view"); } },
     ] },
     { group: "The focus point", items: [
-      { keys: ["F"], match: ["f", "F"], what: "Arm the focus point, then click a finding",
+      // Shift, because plain F and G are the pane and slice keys every
+      // workstation binds and a reader coming from one will reach for them
+      // first. The focus point is this viewer's own idea, so it gives way.
+      { keys: ["⇧", "F"], match: ["F"], shift: true,
+        what: "Arm the focus point, then click a finding",
         run: function () { setFocusPick(!state.focusPick); } },
-      { keys: ["G"], match: ["g", "G"], what: "Bring every pane back to the focus point",
+      { keys: ["⇧", "G"], match: ["G"], shift: true,
+        what: "Bring every pane back to the focus point",
         run: function () {
-          if (!goToFocus(true)) showToast("No focus point yet — press F, then click one.", true);
+          if (!goToFocus(true)) {
+            showToast("No focus point yet — press Shift+F, then click one.", true);
+          }
         } },
     ] },
     { group: "Everything else", items: [
@@ -6223,6 +6958,14 @@
         } },
       { keys: ["C"], match: ["c", "C"], what: "Open this patient's prior scan beside this one",
         run: function () { compareWithPrior(null); } },
+      { keys: ["Space"], match: [" "], stop: true, what: "Play or pause cine",
+        run: function () { setCine(!state.cine.playing); } },
+      { keys: ["F"], match: ["f", "F"], shift: false, stop: true,
+        what: "Expand the active pane to fill the window, and back",
+        run: function () { toggleMaximise(); } },
+      { keys: ["G"], match: ["g", "G"], shift: false, stop: true,
+        what: "Go to a slice number",
+        run: function () { promptForSlice(); } },
       { keys: ["?"], match: ["?"], stop: true, what: "Show this list",
         run: function () { toggleShortcutHelp(); } },
     ] },
@@ -6312,6 +7055,12 @@
   }
 
   function handleDrop(dataTransfer) {
+    // A series dragged out of the browser is handled by the pane it lands
+    // on; the window-level handler is for files dropped from the desktop.
+    if (dataTransfer.types && Array.prototype.indexOf.call(
+        dataTransfer.types, "text/x-ct-series") >= 0) {
+      return;
+    }
     var items = dataTransfer.items;
     if (items && items.length && items[0].webkitGetAsEntry) {
       var entries = [];
@@ -6953,6 +7702,7 @@
     renderMeasurementList();
     syncUndoControls();
     syncCropControls();
+    syncToolsPanel();
     syncSliders();
     setTool("none");
     setCine(false);
@@ -7011,6 +7761,17 @@
     cutActive: cutActive,
     setTool: setTool,
     toggleViewTool: toggleViewTool,
+    syncToolsPanel: syncToolsPanel,
+    toolContext: toolContext,
+    toggleMaximise: toggleMaximise,
+    showToolsContext: showToolsContext,
+    renderScout: renderScout,
+    isScoutGroup: isScoutGroup,
+    scoutForCurrent: scoutForCurrent,
+    scoutGeometry: scoutGeometry,
+    scoutCutLine: scoutCutLine,
+    currentCutPlane: currentCutPlane,
+    scoutDebug: function () { return scoutState; },
     isViewTool: isViewTool,
     VIEW_TOOLS: VIEW_TOOLS,
     focusFromPoint: focusFromPoint,

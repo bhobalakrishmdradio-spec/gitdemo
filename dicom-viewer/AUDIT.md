@@ -40,6 +40,11 @@ the focus point across series, the 3D crop box, the report template library,
 inserting measurements into Findings, screenshots with redaction of
 burned-in identifiers, and the shortcut list.
 
+Closed in the workstation sprint: the series browser as cards with
+drag-to-pane, four-corner overlays, the PACS mouse map (right-drag zoom,
+middle-drag pan), scout/localizer navigation, the contextual Tools panel,
+the full set of grids, and the measurement and navigation shortcuts.
+
 The largest remaining gaps, in priority order:
 
 1. **P1 — Report output is plain text only.** No rich formatting, no PDF, no
@@ -51,9 +56,19 @@ The largest remaining gaps, in priority order:
    computes the change for you.
 5. **P3 — No 3D pan, orientation cube, editable transfer-function curve, or
    surface/mesh rendering.**
-6. **Out of scope by design** — PACS retrieval, portals, peer review, AI
-   detection, fusion, anatomical segmentation, curved planar reconstruction,
-   de-identification, multi-user workflow.
+6. **P3 — No curved planar reconstruction or vessel analysis.** Asked for,
+   and the single largest remaining piece of work: a centreline, a
+   straightened vessel, perpendicular cross-sections and diameter/stenosis
+   measurement. Not started, and not worth starting half-done — an
+   authoritative-looking stenosis percentage from an unvalidated centreline
+   is the one output here that could change management while being wrong.
+7. **P3 — No lesion tracker or RECIST.** Measurements persist per series and
+   two studies can be read side by side, but nothing collects a lesion list
+   or computes the change.
+8. **P3 — No hanging protocols, saved layouts, or a shortcut editor.**
+9. **Out of scope by design** — PACS retrieval, portals, peer review, AI
+   detection, fusion, anatomical segmentation, de-identification,
+   multi-user workflow.
 
 ## 1. Study access, toolbar, and navigation
 
@@ -63,15 +78,16 @@ The largest remaining gaps, in priority order:
 | NAV-02 | Search and filters | Pass | Filter box over patient, ID, accession, date, modality, description; every word must match. `browser-worklist.js` |
 | NAV-03 | Open local files / folder | Pass | Real DICOM decoded; unreadable files counted and reported; unsupported syntaxes named |
 | NAV-04 | Upload / receive studies | N/A | No network by design. Duplicate SOP UIDs are detected and reported on re-import |
-| NAV-05 | Series thumbnails | Partial | Thumbnails, names, counts, selection state. Suppressed above 60 slices for performance |
-| NAV-06 | Drag series into panel | Partial | Per-pane series **selector** rather than drag-and-drop; other panes are undisturbed |
+| NAV-05 | Series thumbnails | Pass | One card per series: middle-slice thumbnail, modality, series number, description, slice thickness, image count, and kernel/contrast agent/body part when the file states them. The per-slice strip is behind a disclosure and built only when opened, so a 300-slice series costs nothing until asked. `browser-workstation.js` |
+| NAV-06 | Drag series into panel | Pass | Drag a card onto any pane; the pane highlights while the series is over it and the others are undisturbed. The per-pane selector remains. A drop naming a series that is not loaded — or an inherited property name — is refused. `browser-workstation.js`, `browser-security.js` |
 | NAV-07 | Previous / next image | Pass | **⇅ Scroll** arms a left-drag (8 px per slice), plus wheel, slider, arrow keys and cine. `browser-viewtools.js` |
-| NAV-08 | First / last; slice slider | Partial | Slider and Page Up/Down. No explicit first/last buttons |
+| NAV-08 | First / last; slice slider | Partial | Slider, Page Up/Down, `G` to jump to a slice number, and the scout for gross navigation. No explicit first/last buttons |
 | NAV-09 | Previous / next series | Partial | Click in the series list. No next/previous series control |
 | NAV-10 | Cine play / pause | Pass | `browser-sculpt-cine.js` |
 | NAV-11 | Cine speed / reverse / loop | Pass | 5/12/25/40 fps, reverse, loop; with loop off it stops on the last slice |
 | NAV-12 | Tooltips / active tool | Pass | Every control has a tooltip; active tool and modes are highlighted |
 | NAV-13a | Keyboard shortcuts documented | Pass | `?` opens a list generated from the same table the key handler dispatches from, so a key cannot be documented without being bound. `browser-undo.js` presses every listed key and requires it to reach the entry it is listed under |
+| NAV-12a | Contextual tool panel | Pass | The Tools panel shows only the sections belonging to the armed tool, with any section that is switched on pinned regardless, a "Show all" escape hatch and a named route to the tag browser. `browser-workstation.js` |
 | NAV-13 | Overflow menu | Partial | The toolbar **wraps** rather than scrolling, and tightens at 1760, 1520 and 1240 px; Orient, More and Reset are menus. `browser-hu.js` asserts one row from 1100 px up and that every control is hit-testable at seven widths. No explicit overflow menu |
 | NAV-14 | Favourites / pinned tools | Missing | — |
 | NAV-15 | Keyboard / mouse bindings | Pass | Shortcuts are ignored while typing in any input, so report typing is unaffected |
@@ -97,7 +113,7 @@ The largest remaining gaps, in priority order:
 | IMG-12 | Colour map / LUT | **Missing** for 2D | 3D has transfer functions; 2D is greyscale only |
 | IMG-13 | Sharpen / smooth | **Missing** | — |
 | IMG-14 | Shutter / crop | Partial | **3D**: a crop box with independent handles on each anatomical axis, named for the cut they make, plus Reset crop. `browser-crop.js`. **No 2D shutter** |
-| IMG-15 | Orientation labels / scale | Partial | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest. **No scale bar** |
+| IMG-15 | Orientation labels / scale | Partial | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest, plus four-corner overlays carrying patient, series, display and acquisition facts. **No scale bar** |
 | IMG-16 | Patient / image overlay toggle | **Missing** | Overlays always shown on large panes, hidden on small ones. Would not anonymise anything regardless |
 | IMG-17 | DICOM tags / metadata | Pass | Searchable by keyword, value or tag number; shows the displayed instance |
 
@@ -146,7 +162,7 @@ The largest remaining gaps, in priority order:
 | MPR-05 | Three-plane view | Pass | MPR layout; all three share one crosshair point |
 | MPR-06 | Four-panel MPR + 3D | Pass | 2×2 layout, one source volume |
 | MPR-07 | Crosshair movement | Pass | Shift+click drives the other planes; solved in millimetres |
-| MPR-08 | Reference / localizer lines | Pass | Each arm is the real intersection line of a companion plane |
+| MPR-08 | Reference / localizer lines | Pass | Each crosshair arm is the real intersection line of a companion plane. A study with a `LOCALIZER` series also gets a scout with the current level marked and click-to-jump, solved in patient coordinates so an obliquely acquired scout works. `browser-workstation.js` |
 | MPR-09 | Oblique / double-oblique | Pass | Alt+drag; verified a 30° tilt turns a tilted cylinder's ellipse into its true circle |
 | MPR-10 | Reset planes / recenter | Pass | "Straighten planes" in the Reset menu |
 | MPR-11 | Reconstructed spacing / thickness | Pass | Volume panel reports voxel size and extent in mm; downsampling disclosed |
@@ -163,7 +179,7 @@ The largest remaining gaps, in priority order:
 | --- | --- | --- | --- |
 | LAY-01 | Layout selector | Pass | Toolbar buttons plus keys 1–6 |
 | LAY-02 | 1×1 / 1×2 / 2×2 | Pass | Each verified for pane count and grid geometry |
-| LAY-03 | Additional grids | Partial | 2×3 and MPR three-up. No 2×1 or custom splits |
+| LAY-03 | Additional grids | Pass | 1×1, 1×2, 2×1, 1×3, 3×1, 2×2, 2×3, 3×3, MPR three-up and 3D. No user-defined splits |
 | LAY-04 | Series layout vs image tiling | Pass | Distinct: the plane selector tiles one series, the per-pane series selector shows different series |
 | LAY-05 | Maximize / restore | Pass | Double-click a pane and again to return |
 | LAY-06 | Reorder / swap viewports | **Missing** | — |

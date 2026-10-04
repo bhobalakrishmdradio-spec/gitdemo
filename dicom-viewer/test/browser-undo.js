@@ -270,10 +270,24 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   check('Ctrl+R does not reset the view behind the browser\'s back',
     (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 2.5,
     'was ' + zoomBefore);
+  // R is the ROI key; resetting the view moved to Shift+R when the
+  // measurement shortcuts were brought in.
   await page.keyboard.press('r');
   await page.waitForTimeout(150);
-  check('plain R still resets it',
-    (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 1);
+  check('plain R arms the ROI rather than resetting the view',
+    (await page.evaluate(() => window.__ctConsole.state.tool)) === 'ellipse' &&
+    (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 2.5,
+    await page.evaluate(() => window.__ctConsole.state.tool));
+  await page.evaluate(() => window.__ctConsole.setTool('none'));
+  await page.evaluate(async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown',
+      { key: 'R', shiftKey: true, bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+  });
+  await page.waitForTimeout(200);
+  check('Shift+R resets it',
+    (await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)) === 1,
+    String(await page.evaluate(() => window.__ctConsole.state.cells[0].view.zoom)));
 
   /* =================================================================== */
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

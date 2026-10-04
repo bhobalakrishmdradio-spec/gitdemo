@@ -67,6 +67,9 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
 
   /* Walk every place a header string is shown. */
   await page.click('#reportToggleBtn'); await page.waitForTimeout(400);
+  // The tag browser lives in the Tools panel's "info" context, so it is
+  // reached the way a reader reaches it.
+  await UI.pickMore(page, 'tags'); await page.waitForTimeout(400);
   await page.fill('#tagSearch', 'patient'); await page.waitForTimeout(500);
   await page.fill('#seriesFilter', 'a'); await page.waitForTimeout(500);
   await UI.pickLayout(page, 'quad'); await page.waitForTimeout(900);
@@ -96,6 +99,40 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   });
   check('the hostile text is displayed literally, not silently dropped',
     /script|onerror|img /i.test(shown), shown.slice(0, 90).replace(/\s+/g, ' '));
+
+  /* The series cards are the one place the panel builds HTML rather than
+     setting textContent, and every line on them is a header string. */
+  const cards = await page.evaluate(() => ({
+    nodes: [...document.querySelectorAll('.series-line')].length,
+    markup: [...document.querySelectorAll('.series-line')]
+      .some(l => l.children.length > 0),
+    text: [...document.querySelectorAll('.series-line')].map(l => l.textContent).join(' | '),
+    titles: [...document.querySelectorAll('.series-card')].map(c => c.title).join(' | '),
+  }));
+  check('the series cards were built', cards.nodes > 0, cards.nodes + ' lines');
+  check('no header string became an element inside a card', !cards.markup,
+    cards.text.slice(0, 100));
+  check('the hostile description is shown on the card as text',
+    /script|onerror|svg/i.test(cards.text + cards.titles),
+    cards.text.slice(0, 100));
+
+  /* A drop payload is attacker-shaped data too: an inherited key must not
+     read as a loaded series. */
+  const proto = await page.evaluate(async () => {
+    const C = window.__ctConsole;
+    const before = C.cellSeriesUid(C.state.cells[0]);
+    const out = [];
+    for (const bad of ['__proto__', 'constructor', 'toString']) {
+      const dt = new DataTransfer();
+      dt.setData('text/x-ct-series', bad);
+      C.cellEl(0).dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
+      await new Promise(r => setTimeout(r, 150));
+      out.push(C.cellSeriesUid(C.state.cells[0]));
+    }
+    return { before: before, after: out };
+  });
+  check('a drop naming an inherited property is refused like any other',
+    proto.after.every(v => v === proto.before), JSON.stringify(proto));
 
   check('nothing was requested off-origin', requested.length === 0, requested.slice(0, 3).join(' | '));
 

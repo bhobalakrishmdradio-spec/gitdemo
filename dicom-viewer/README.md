@@ -50,6 +50,44 @@ radiologist's report and your official imaging system for clinical decisions.
 - **Rotation** — 90° steps either way, or **free rotate** (`◷`): arm it and
   drag on a pane to turn it to any angle.
 
+### The series browser
+
+One card per series, not one tile per slice. A chest CT is three hundred
+images; a grid of three hundred near-identical tiles is a wall, not a
+browser, and it says nothing about which of the four reconstructions in
+front of you is the 1 mm lung kernel.
+
+Each card carries what a reader actually picks a series by:
+
+```
+┌──────┐  CT · 2
+│      │  AX PORTAL VENOUS
+│ thumb│  2 mm · 312 img
+└──────┘  B30f · ABDOMEN
+          ⌄ 312 images
+```
+
+modality and series number, description, slice thickness and image count,
+and — when the file states them — the convolution kernel, contrast agent and
+body part. The thumbnail is the **middle** slice: the first image of a chest
+CT is air above the lungs and the last is the table, and neither tells you
+what the series is.
+
+The per-slice strip is still there behind `⌄ N images`, built only when it is
+opened, so a 300-slice series costs 300 decodes only if you asked for them.
+
+**Drag a card onto any pane** to show that series there. The pane highlights
+while the series is over it, so the highlight answers "will it land here"
+rather than decorating.
+
+Contrast *phase* is deliberately not shown. "Arterial" and "portal venous"
+are almost never in a tag; reading them out of the series description would
+be re-displaying the description one line lower while making it look as
+though the viewer had determined something.
+
+A localizer is almost always series 1 and almost never what you want to
+read, so opening a study opens the longest non-localizer series instead.
+
 ### Comparing an old scan with a new one
 
 Press **⇄ Compare** (or `C`) with a study open. The most recent other study
@@ -233,6 +271,31 @@ covering the image with text.
   pixel data, the 2D planes, or any measurement — which the tests check by
   hashing the axial plane before and after.
 
+### Viewport overlays
+
+Four corners, laid out the way a reading workstation lays them out, because
+that is where the eye already goes:
+
+| Corner | What it holds |
+| --- | --- |
+| Top left | Patient name · ID · age and sex · study date |
+| Top right | Series description and number · image N / total · slice thickness · any oblique angle, reformat note or sync warning |
+| Bottom left | WW/WL · zoom % · **the live tool** · bone cut when it is on |
+| Bottom right | Modality and body part · convolution kernel · kVp and mA · contrast agent |
+
+Plus **R / L / A / P / H / F** orientation letters, derived from Image
+Orientation (Patient) and suppressed when no single letter is honest.
+
+Every string in the corners is a header value or a number this viewer
+computed, and all of it goes through `textContent` rather than `innerHTML` —
+a file with markup in its `PatientName` shows the markup instead of running
+it. See **Privacy and security**.
+
+The bottom-left corner naming the live tool matters more than it looks: a
+pane that says *Window/Level* while Pan is armed is worse than one that says
+nothing, so the corners refresh when a tool is armed, not only when the
+image is redrawn.
+
 ### Hounsfield Units and measurements
 
 - **Live HU readout** — the value of the pixel under the cursor, shown in the
@@ -344,6 +407,52 @@ anatomy. Two conditions are stated rather than assumed:
 - Duplicate instances (same SOP Instance UID) are ignored on re-import and
   reported.
 
+### Scout / localizer navigation
+
+When a study carries a localizer — a series whose `ImageType` says
+`LOCALIZER`, not one this viewer guessed at — the Tools panel shows it with
+a line marking the level the active pane is on, and clicking it jumps there.
+
+Both are computed in **patient coordinates**, from Image Position (Patient)
+and Image Orientation (Patient), so a scout acquired at any angle works. The
+cut is the plane `(P − c)·n = 0`; a scout pixel is `o + r·u·sx + c·v·sy`;
+substituting gives one linear equation in `u` and `v`, solved for whichever
+of the two the plane is less parallel to so it never blows up.
+
+The test fixture is a **coronal** localizer, deliberately: an axial cut must
+appear on it as a *horizontal* line at row `(0 − z) / 1 mm`. A viewer that
+ignored Image Orientation and assumed the localizer was axial would draw a
+vertical one and still pass a test that only asked whether a line appeared.
+
+A level outside the series is refused with a message rather than silently
+clamped to the nearest slice, and a scout that states no position is shown
+with no line rather than a line in the wrong place.
+
+### The Tools panel follows the tool
+
+Window/level, slab thickness, bone cut, 3D rendering, the scout, cine, the
+focus point, oblique MPR, the measurement list, the histogram, the volume
+report and the tag browser all on screen at once make the panel a list to
+search rather than a set of controls to reach for.
+
+Each section declares which contexts it belongs to, and the panel shows the
+ones matching the armed tool:
+
+| Armed | Panel shows |
+| --- | --- |
+| Navigate | Window / Level, and the scout when the study has one |
+| A measurement tool | Window/Level, focus point, measurements, ROI histogram |
+| Crosshair | Slab, panes, focus point, oblique MPR, volume |
+| Pan · Zoom · Scroll | Window/Level, panes, cine |
+| Sculpt, or the 3D layout | Bone cut, 3D rendering, volume |
+
+**Hiding is never losing.** A section holding something that is switched on
+— a slab, a bone cut, an open crop, measurements on screen, cine running, an
+oblique tilt — stays visible whatever the context, because the one control
+that must never be hidden is the one silently doing something. **Show all**
+pins the whole panel, and the tag browser has its own route under
+**⋯ More → DICOM tags**.
+
 ### Reset options
 
 The **Reset ▾** menu resets one kind of state at a time, because a single
@@ -441,11 +550,17 @@ reconstructed.
 | `Page Up` / `Page Down` | Jump 10 slices |
 | `1` … `6` | Layout: 2×2 · 1×1 · MPR · 3D · 1×2 · 2×3 |
 | `I` | Invert grayscale |
-| `N` | Navigate tool (drag handles to edit measurements) |
+| `N` / `W` | Navigate — a plain left-drag is window/level |
+| `M` | Measure a distance |
+| `A` | Measure an angle |
+| `R` | Draw an elliptical ROI |
+| `F` | Expand the active pane, and back |
+| `G` | Go to a slice number |
+| `Space` | Play or pause cine |
 | `X` | Arm the crosshair tool — drag anywhere to move the + |
 | `C` | Open this patient's prior beside the current study |
-| `F` | Arm the focus point |
-| `G` | Go to the focus point |
+| `Shift`+`F` | Arm the focus point |
+| `Shift`+`G` | Go to the focus point |
 | `Enter` | Finish a polygon or polyline |
 | `Esc` | Abandon the shape being drawn, or close a menu |
 | `Delete` | Delete the selected measurement |
@@ -453,7 +568,7 @@ reconstructed.
 | `P` | Pan — drag to move the image |
 | `Z` | Zoom — drag up to zoom in |
 | `S` | Scroll — drag to page through the stack |
-| `R` | Reset the view (zoom, pan, rotation, flip) |
+| `Shift`+`R` | Reset the view (zoom, pan, rotation, flip) |
 | `Ctrl`/`⌘`+`Z` | Undo the last annotation change |
 | `Ctrl`/`⌘`+`Shift`+`Z`, `Ctrl`+`Y` | Redo it |
 | `?` | Show the shortcut list |
@@ -465,9 +580,16 @@ nothing while the cursor is in a text box, and every other `Ctrl`/`⌘`
 chord is left to the browser — `Ctrl`+`R` reloads rather than resetting
 the view.
 
-Mouse: left-drag = window/level (right widens · down darkens) · wheel = change slice · Shift+wheel = zoom ·
-right-drag = pan · Shift+click = move crosshair · **Alt+drag = tilt the other
-two planes (oblique MPR)** · double-click = expand a pane and back.
+Mouse: **left-drag = window/level** (right widens · down darkens) ·
+**wheel = change slice** · **right-drag = zoom** · **middle-drag = pan** ·
+`Shift`+wheel = zoom · `Ctrl`/`⌘`+drag = pan · `Shift`+click = move crosshair ·
+**`Alt`+drag = tilt the other two planes (oblique MPR)** · double-click =
+expand a pane and back.
+
+`F`, `G` and `R` follow the convention every workstation uses — expand,
+go-to-image and ROI. The three things they displaced moved to the `Shift`
+variants: `Shift`+`F` and `Shift`+`G` for the focus point, `Shift`+`R` to
+reset the view.
 
 ### Zoom, pan and scroll as tools
 
@@ -521,7 +643,7 @@ row and that assertion is what caught it.
 | Button | Holds |
 | --- | --- |
 | **📂 Open ▾** | Open files, open a folder, clear the loaded series |
-| **▦ 2×2 ▾** | Every layout |
+| **▦ 2×2 ▾** | Every layout: 1×1 · 1×2 · 2×1 · 1×3 · 3×1 · 2×2 · 2×3 · 3×3 · MPR · 3D |
 | **Ax · Cor · Sag · Seq · Mix** | Which plane fills the grid, or one sequence per pane — separate buttons, because it is a thing you do while reading |
 | **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, undo and redo, and every measurement, ROI and annotation tool |
@@ -562,7 +684,7 @@ python3 test/fixtures/make_phantom.py        # and the other make_*.py
 node test/run.js
 ```
 
-32 suites: four in Node for the arithmetic, twenty-six in a browser for
+33 suites: four in Node for the arithmetic, twenty-seven in a browser for
 the behaviour, and two probes for the chrome. `test/README.md` says what each
 fixture pins down and what you need installed. The fixtures are generated,
 not committed — a checkout builds them in a minute.

@@ -22,6 +22,7 @@ python3 test/fixtures/make_multiecho.py
 python3 test/fixtures/make_burned.py
 python3 test/fixtures/make_followup.py
 python3 test/fixtures/make_hostile.py
+python3 test/fixtures/make_scout.py
 python3 test/fixtures/make_compressed_series.py
 python3 test/fixtures/make_codec_fixtures.py   # needs pylibjpeg-libjpeg
 
@@ -63,6 +64,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `series-burned` | CT with the patient name written into the pixel data, in a known rectangle | That redaction destroys it rather than covering it |
 | `series-followup` | One patient scanned three times with a lesion that grows 8 → 14 → 22 mm, each study at a different thickness and start, each with a useless scout series — plus a second patient scanned on the same dates | That Compare picks this patient's own prior and never the other patient's, picks the diagnostic series and not the scout, and lines the two up by position rather than slice number |
 | `series-raw`, `series-rle`, `series-jpegls` | The same pixels in three transfer syntaxes | Both decoders must return the raw values exactly |
+| `series-scout` | A CT with a **coronal** localizer (row +x, column −z) over 300 mm of z, bands burned in at known levels, and an axial series that fills only part of it | That an axial cut appears on the scout as a horizontal line at row (0 − z); a viewer that ignored Image Orientation would draw a vertical one. Also that a level outside the series is refused rather than clamped |
 | `series-hostile` | CT whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry HTML and script payloads | That header text is shown literally and never parsed as markup, anywhere it is displayed |
 | `codec` | Bare RLE and JPEG-lossless bitstreams, with a manifest | Decoding, byte for byte, against streams an independent C decoder validated |
 
@@ -94,6 +96,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
 | `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
 | `browser-share.js` | Sending a screenshot to Photos, and every way that can fail |
+| `browser-workstation.js` | Series cards, drag-to-pane, the four corners, the contextual panel, scout navigation, the new layouts and keys |
 | `browser-viewtools.js` | Zoom, pan and scroll as armed left-drag tools, and that the wheel and modifiers still work |
 | `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |
 | `browser-crop.js` | 3D cropping removes the voxels it says it does, one side at a time, and resets |

@@ -121,7 +121,17 @@ select, input[type="number"] {
   padding: 10px 12px; font-weight: 600; font-size: 12px;
   letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--text-muted); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
+/* The contextual panel's escape hatch: show every section regardless. */
+.ctx-all {
+  border: 1px solid var(--border); background: var(--panel-bg-alt);
+  color: var(--text-muted); border-radius: var(--radius);
+  font: inherit; font-size: 10px; letter-spacing: 0.04em;
+  padding: 2px 7px; cursor: pointer; text-transform: none;
+}
+.ctx-all:hover { background: #232833; color: var(--text); }
+.ctx-all.on { background: var(--accent-dim); border-color: var(--accent); color: #eaf6ff; }
 .panel.collapsed { display: none; }
 
 .drop-hint {
@@ -575,4 +585,54 @@ select, input[type="number"] {
   padding: 1px 6px; border-radius: 4px;
   background: var(--panel-bg-alt); border: 1px solid var(--border);
   color: var(--overlay-text); white-space: nowrap;
+}
+
+/* ---------- The series browser ---------- */
+.series-card {
+  display: flex; gap: 8px; padding: 6px; cursor: pointer;
+  align-items: flex-start; background: var(--panel-bg-alt);
+}
+.series-card:hover { background: #232833; }
+.series-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.series-group.active .series-card { background: var(--accent-dim); }
+.series-thumb {
+  width: 58px; height: 58px; flex: 0 0 58px;
+  background: #000; border: 1px solid var(--border); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 16px; overflow: hidden;
+}
+.series-thumb canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.series-meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.series-line {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px;
+  line-height: 1.35;
+}
+.series-id { color: var(--accent); font-weight: 600; letter-spacing: 0.02em; }
+.series-group.active .series-id { color: #eaf6ff; }
+.series-desc { color: var(--text); font-weight: 600; font-size: 11.5px; }
+.series-dims, .series-facts { color: var(--text-muted); }
+.series-group.active .series-desc,
+.series-group.active .series-dims,
+.series-group.active .series-facts { color: #d6ecff; }
+.series-expand {
+  width: 100%; border: none; border-top: 1px solid var(--border);
+  background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 10.5px; padding: 3px 6px; cursor: pointer; text-align: left;
+}
+.series-expand:hover { background: #232833; color: var(--text); }
+
+/* A pane that will accept the series being dragged. */
+.vp.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vp.drop-target::after {
+  content: "Drop series here"; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(59, 167, 255, 0.12); color: #eaf6ff;
+  font-size: 13px; font-weight: 600; pointer-events: none; z-index: 5;
+}
+body.dragging-series .series-card { cursor: grabbing; }
+
+/* ---------- Scout / localizer ---------- */
+.scout-canvas {
+  width: 100%; display: block; background: #000;
+  border: 1px solid var(--border); border-radius: 3px; cursor: crosshair;
 }

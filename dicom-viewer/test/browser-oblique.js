@@ -1,4 +1,5 @@
 const { chromium } = require('playwright');
+const UI = require('./ui');
 const fs = require('fs'), path = require('path');
 const SP = process.env.CT_FIXTURES || require('path').join(__dirname, 'fixtures');
 const PH = path.join(SP, 'phantom');
@@ -26,6 +27,9 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
   await page.setInputFiles('#fileInput', files);
   await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume, null, { timeout: 60000 });
   await page.waitForTimeout(1200);
+  // The Tools panel follows the armed tool, so pin every section before
+  // reaching for a control that belongs to another context.
+  await UI.showAllTools(page);
 
   const vol = await page.evaluate(() => {
     const v = window.__ctConsole.state.volume;
@@ -37,7 +41,8 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
   console.log('1. Starts orthogonal');
   check('obliqueActive() is false at rest', await page.evaluate(() => window.__ctConsole.obliqueActive()) === false);
   check('no oblique badge in the axial overlay',
-    !(await page.evaluate(() => window.__ctConsole.cellEl(0).querySelector('.vp-br').textContent)).includes('Oblique'));
+    !/oblique/i.test(await page.evaluate(() =>
+      window.__ctConsole.cellEl(0).querySelector('.vp-tr').textContent)));
 
   // Area of the 300 HU cylinder in a plane, in mm^2.
   const areaOf = (plane) => page.evaluate((p) => {
@@ -121,8 +126,8 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
 
   console.log('\n4. Overlay and panel report the tilt');
   check('axial overlay shows the angle',
-    /Oblique\s+30\.0°/.test(await page.evaluate(() => window.__ctConsole.cellEl(0).querySelector('.vp-br').textContent)),
-    (await page.evaluate(() => window.__ctConsole.cellEl(0).querySelector('.vp-br').textContent)).replace(/\n/g, ' | '));
+    /oblique\s+30\.0°/i.test(await page.evaluate(() => window.__ctConsole.cellEl(0).querySelector('.vp-tr').textContent)),
+    (await page.evaluate(() => window.__ctConsole.cellEl(0).querySelector('.vp-tr').textContent)).replace(/\n/g, ' | '));
   const panel = await page.textContent('#obliqueInfo');
   check('tools panel lists per-plane tilt', panel.includes('30.0') && panel.includes('Axial'),
     panel.replace(/\s+/g, ' ').trim());

@@ -115,14 +115,18 @@ const SIZES = { '20240311': 8.0, '20250602': 14.0, '20260920': 22.0 };
      told apart by their date and nothing else. */
   const overlays = await page.evaluate(() => {
     const C = window.__ctConsole;
-    return [0, 1].map(i => C.cellEl(i).querySelector('.vp-tr').textContent);
+    return {
+      // Who and when, top left; which series and where in it, top right.
+      who: [0, 1].map(i => C.cellEl(i).querySelector('.vp-tl').textContent),
+      what: [0, 1].map(i => C.cellEl(i).querySelector('.vp-tr').textContent),
+    };
   });
   check('each pane shows its own study date',
-    /2026-09-20/.test(overlays[0]) && /2025-06-02/.test(overlays[1]),
-    overlays.join(' || ').replace(/\n/g, ' / '));
+    /2026-09-20/.test(overlays.who[0]) && /2025-06-02/.test(overlays.who[1]),
+    overlays.who.join(' || ').replace(/\n/g, ' / '));
   check('and the prior pane is marked as the prior',
-    /prior/i.test(overlays[1]) && !/prior/i.test(overlays[0]),
-    overlays[1].replace(/\n/g, ' / '));
+    /prior/i.test(overlays.what[1]) && !/prior/i.test(overlays.what[0]),
+    overlays.what[1].replace(/\n/g, ' / '));
 
   check('the status line names both studies and their dates',
     /2026/.test(await page.textContent('#statusText')) &&

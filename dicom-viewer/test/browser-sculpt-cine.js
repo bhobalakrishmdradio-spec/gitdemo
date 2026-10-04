@@ -20,6 +20,9 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   await page.setInputFiles('#fileInput', files);
   await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume, null, { timeout: 60000 });
   await page.waitForTimeout(1500);
+  // The Tools panel follows the armed tool, so pin every section before
+  // reaching for a control that belongs to another context.
+  await UI.showAllTools(page);
   await UI.pickLayout(page, 'axial');
 
   const atPixel = (px, py) => page.evaluate(([px, py]) => {

@@ -115,10 +115,11 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
     .filter(([, v]) => v.got !== v.want).map(([k, v]) => k + ': ' + v.got);
   check('each tool sets its own cursor over the pane',
     wrongCursor.length === 0, wrongCursor.join(' · '));
-  check('and each one says in the status bar what a drag will do, and that the ' +
-    'old gesture still works',
-    ['pan', 'zoom', 'scroll'].every(k => /still/.test(cursors[k].status)),
-    Object.keys(cursors).join(','));
+  check('and each says in the status bar what a drag does, and names the ' +
+    'gesture that keeps doing it whatever tool is armed',
+    ['pan', 'zoom', 'scroll'].every(k => /whatever tool is armed/.test(cursors[k].status)),
+    ['pan', 'zoom', 'scroll'].filter(k => !/whatever tool is armed/.test(cursors[k].status))
+      .join(',') || 'all three');
 
   /* =================================================================== */
   console.log('\n2. Pan: a plain left-drag moves the image');
@@ -211,16 +212,45 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
 
   await reset();
   await page.click('#scrollBtn');           // a view tool armed...
-  const m0 = await view();
   const cm = await centre();
-  await page.mouse.move(cm.x, cm.y);
-  await page.mouse.down({ button: 'right' });
-  await page.mouse.move(cm.x + 90, cm.y + 40, { steps: 10 });
-  await page.mouse.up({ button: 'right' });
-  await page.waitForTimeout(200);
+  const buttonDrag = async (button, dx, dy) => {
+    await page.mouse.move(cm.x, cm.y);
+    await page.mouse.down({ button });
+    await page.mouse.move(cm.x + dx, cm.y + dy, { steps: 10 });
+    await page.mouse.up({ button });
+    await page.waitForTimeout(200);
+  };
+
+  const m0 = await view();
+  await buttonDrag('right', 0, -150);
   const m1 = await view();
-  check('...right-drag still pans', m1.panX > m0.panX + 40,
-    m0.panX + ' -> ' + m1.panX);
+  check('...right-drag zooms', m1.zoom > m0.zoom * 1.3, m0.zoom + ' -> ' + m1.zoom);
+  check('and right-drag does not also pan or scroll',
+    m1.panX === m0.panX && m1.index === m0.index, JSON.stringify(m1));
+
+  await reset();
+  await page.click('#scrollBtn');
+  const p0 = await view();
+  await buttonDrag('middle', 90, 40);
+  const p1 = await view();
+  check('...middle-drag pans', p1.panX > p0.panX + 40, p0.panX + ' -> ' + p1.panX);
+  check('and middle-drag does not change the window',
+    p1.ww === p0.ww && p1.wc === p0.wc, p0.ww + '/' + p0.wc + ' -> ' + p1.ww + '/' + p1.wc);
+
+  // Ctrl+left pans too, for a trackpad with one button.
+  await reset();
+  const c0 = await view();
+  await page.keyboard.down('Control');
+  await page.mouse.move(cm.x, cm.y);
+  await page.mouse.down();
+  await page.mouse.move(cm.x + 70, cm.y, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up('Control');
+  await page.waitForTimeout(200);
+  const c1 = await view();
+  check('...Ctrl+left-drag pans rather than windowing',
+    c1.panX > c0.panX + 30 && c1.ww === c0.ww,
+    'pan ' + c0.panX + '->' + c1.panX + '  ww ' + c0.ww + '->' + c1.ww);
 
   const n0 = await view();
   await page.mouse.move(cm.x, cm.y);

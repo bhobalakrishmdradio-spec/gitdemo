@@ -156,6 +156,13 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   console.log('\n4. Every control in the Tools panel');
   errors.length = 0;
   await page.evaluate(() => window.__ctConsole.setTool('none'));
+  // The Tools panel only shows the sections belonging to the armed tool, so
+  // pin every section first — otherwise this loop would quietly stop
+  // exercising most of the panel, which is the opposite of its job.
+  await page.evaluate(() => {
+    if (!window.__ctConsole.state.toolsShowAll) document.getElementById('toolsAllBtn').click();
+  });
+  await page.waitForTimeout(300);
   const panelIds = await page.evaluate(() =>
     [...document.querySelectorAll('#toolsPanel input, #toolsPanel select, #toolsPanel button')]
       .map(e => ({ id: e.id, tag: e.tagName, type: e.type })).filter(e => e.id));

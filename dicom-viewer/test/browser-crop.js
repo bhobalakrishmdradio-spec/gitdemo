@@ -70,6 +70,9 @@ async function cropState(page) {
   await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume,
     null, { timeout: 60000 });
   await page.waitForTimeout(1200);
+  // The Tools panel follows the armed tool, so pin every section before
+  // reaching for a control that belongs to another context.
+  await UI.showAllTools(page);
   await UI.pickLayout(page, 'vr');
   await page.waitForTimeout(1500);
 

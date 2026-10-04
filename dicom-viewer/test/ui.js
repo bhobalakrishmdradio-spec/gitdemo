@@ -102,6 +102,22 @@ async function moreOn(page, key) {
   }, key);
 }
 
+/**
+ * Pin every Tools-panel section on screen.
+ *
+ * The panel follows the armed tool, so a control belonging to another
+ * context is hidden and cannot be clicked — by a test or by a person. Any
+ * suite that reaches straight for a panel control calls this first, which
+ * is the same button a reader presses when they want everything at once.
+ */
+async function showAllTools(page) {
+  const already = await page.evaluate(() => window.__ctConsole.state.toolsShowAll);
+  if (!already) {
+    await page.click('#toolsAllBtn');
+    await page.waitForTimeout(200);
+  }
+}
+
 /** Choose an item from the Reset menu. */
 async function pickReset(page, key) {
   await page.click('#resetBtn');
@@ -120,4 +136,4 @@ async function pickOpen(page, key) {
 
 module.exports = { pickLayout, pickFill, fillEnabled, currentFill, currentLayout,
                    pickTool, setStack, pickWindow, windowPresets, currentWindow,
-                   pickMore, moreOn, pickOpen, pickReset };
+                   pickMore, moreOn, pickOpen, pickReset, showAllTools };

@@ -36,16 +36,16 @@
 
       <div class="toolbar-group">
         <button class="icon-btn" id="panBtn" data-view-tool="pan"
-          title="Pan: drag to move the image inside its pane (P). Right-drag always pans.">✋</button>
+          title="Pan: drag to move the image inside its pane (P). Middle-drag and Ctrl+drag always pan.">✋</button>
         <button class="icon-btn" id="zoomBtn" data-view-tool="zoom"
-          title="Zoom: drag up to zoom in, down to zoom out (Z). Shift+wheel always zooms.">🔍</button>
+          title="Zoom: drag up to zoom in, down to zoom out (Z). Right-drag and Shift+wheel always zoom.">🔍</button>
         <button class="icon-btn" id="scrollBtn" data-view-tool="scroll"
           title="Scroll: drag down to go further into the stack, up to come back (S). The wheel always scrolls.">⇅</button>
       </div>
 
       <div class="toolbar-group">
         <button class="icon-btn" id="crosshairBtn" title="Crosshair tool: drag the + anywhere and every plane, pane and linked sequence moves to it (X)">✛</button>
-        <button class="icon-btn" id="focusBtn" title="Focus: click a point and every pane, plane and series moves to it (F)">🎯</button>
+        <button class="icon-btn" id="focusBtn" title="Focus: click a point and every pane, plane and series moves to it (Shift+F)">🎯</button>
         <button class="icon-btn" id="cineBtn" title="Play through the slices">▶</button>
       </div>
 
@@ -59,7 +59,7 @@
         <button class="icon-btn" id="shotBtn" title="Screenshot the active pane. On a phone or tablet this opens the share sheet, where Save Image puts it in Photos; elsewhere it saves a PNG.">📸</button>
         <button class="icon-btn" id="orientBtn" title="Rotate and flip the active pane">⟳ ▾</button>
         <button class="icon-btn" id="moreBtn" title="More display and export options">⋯ More ▾</button>
-        <button class="icon-btn" id="resetBtn" title="Reset options (R resets the view)">⤾ Reset ▾</button>
+        <button class="icon-btn" id="resetBtn" title="Reset options (Shift+R resets the view)">⤾ Reset ▾</button>
       </div>
 
       <div class="toolbar-group toolbar-group-right">
@@ -171,10 +171,14 @@
 
       <!-- ================= Tools panel ================= -->
       <aside class="panel panel-right" id="toolsPanel">
-        <div class="panel-title">Tools</div>
-        <div class="tools-scroll">
+        <div class="panel-title">
+          <span id="toolsTitle">Tools</span>
+          <button class="ctx-all" id="toolsAllBtn" type="button"
+            title="Show every section, not only the ones for the active tool">Show all</button>
+        </div>
+        <div class="tools-scroll" id="toolsScroll">
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="wl measure view">
             <h4>Window / Level</h4>
             <div class="field-row">
               <label for="windowWidth">Width</label>
@@ -187,7 +191,7 @@
             <p class="hint-text">Left-drag on any plane adjusts W/L.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="mpr">
             <h4>Slice Thickness</h4>
             <div class="field-row">
               <label for="thicknessRange">Slab</label>
@@ -205,7 +209,7 @@
             <p class="hint-text">Slab of 0 renders the native thin slice.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="threed">
             <h4>Bone Cut</h4>
             <div class="field-row">
               <label class="switch">
@@ -233,7 +237,7 @@
               by hand. The 3D view follows.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="threed">
             <h4>3D Rendering</h4>
             <div class="field-row">
               <label for="vrMode">Mode</label>
@@ -300,7 +304,7 @@
             </div>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="mpr view">
             <h4>Panes</h4>
             <p class="hint-text" id="stackNote"></p>
             <p class="hint-text">Set the spacing with <strong>⇕ Stack</strong> in the
@@ -309,7 +313,7 @@
               filmstrip of consecutive slices.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="view">
             <h4>Cine</h4>
             <div class="field-row">
               <label for="cineSpeed">Speed</label>
@@ -328,7 +332,7 @@
               off, playback stops on the last slice instead of wrapping.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="mpr measure">
             <h4>Focus Point</h4>
             <div class="field-row">
               <button class="ghost-btn" id="focusPickBtn">Pick a point</button>
@@ -343,7 +347,13 @@
               says so.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="wl mpr view" id="scoutSection" hidden>
+            <h4>Scout</h4>
+            <canvas id="scoutCanvas" class="scout-canvas"></canvas>
+            <p class="hint-text" id="scoutNote"></p>
+          </section>
+
+          <section class="tool-section" data-ctx="mpr">
             <h4>Oblique MPR</h4>
             <div class="meta-table" id="obliqueInfo">
               <p class="muted small">No volume built.</p>
@@ -354,7 +364,7 @@
             <p class="hint-text">Alt+drag in any plane to swing its crosshair — the other two cuts tilt to follow.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="measure">
             <h4>Measurements</h4>
             <div id="measureList" class="measure-list">
               <p class="muted small">No measurements yet.</p>
@@ -376,14 +386,14 @@
               <strong>⋯ More</strong> hides them all at once.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="measure">
             <h4>ROI Histogram</h4>
             <canvas id="roiHistogram" class="roi-histogram" hidden></canvas>
             <p class="hint-text" id="histogramNote">Select a circle, ellipse, rectangle,
               polygon or freehand ROI to see its histogram.</p>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="mpr threed">
             <h4>Volume</h4>
             <div class="meta-table" id="volumeInfo">
               <p class="muted small">No volume built.</p>
@@ -391,7 +401,7 @@
             <div id="geometryWarnings"></div>
           </section>
 
-          <section class="tool-section">
+          <section class="tool-section" data-ctx="info">
             <h4>DICOM Tags</h4>
             <div class="field-row">
               <input type="search" id="tagSearch" class="tag-search" placeholder="Search tag or value…" />
@@ -409,7 +419,7 @@
       <span id="statusText" class="muted">Ready</span>
       <span id="huReadout" class="hu-readout"></span>
       <span class="statusbar-spacer"></span>
-      <span class="muted small">Left-drag: W/L · Wheel: slice · Shift+Wheel: zoom · Right-drag: pan · ✛ then drag: crosshair · Alt+drag: oblique · F: focus · G: go to focus · C: compare · Double-click: expand pane</span>
+      <span class="muted small">Left-drag: W/L · Wheel: slice · Right-drag: zoom · Middle-drag: pan · Shift+Wheel: zoom · Alt+drag: oblique · Double-click: expand pane · ? for every key</span>
     </footer>
   </div>
 
@@ -449,8 +459,10 @@
     <button data-more="hu">Value under the cursor<span>live readout in the status bar</span></button>
     <button data-more="markers">Measurements and annotations<span>show or hide every marker</span></button>
     <div class="menu-head">Focus point</div>
-    <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (G)</span></button>
+    <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (Shift+G)</span></button>
     <button data-more="focusClear">Clear the focus point</button>
+    <div class="menu-head">Study</div>
+    <button data-more="tags">DICOM tags<span>every header field, searchable</span></button>
     <div class="menu-head">Help</div>
     <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>
   </div>
@@ -469,8 +481,12 @@
     <button data-layout="axial">▢ 1×1<span>one pane, full window &nbsp;(2)</span></button>
     <button data-layout="mpr">▤ MPR<span>the three planes, no 3D &nbsp;(3)</span></button>
     <button data-layout="vr">◈ 3D<span>volume rendering only &nbsp;(4)</span></button>
-    <button data-layout="1x2">▯▯ 1×2<span>two panes, for comparison &nbsp;(5)</span></button>
+    <button data-layout="1x2">▯▯ 1×2<span>two panes side by side &nbsp;(5)</span></button>
+    <button data-layout="2x1">▤▤ 2×1<span>two panes, one above the other</span></button>
+    <button data-layout="1x3">▯▯▯ 1×3<span>three across</span></button>
+    <button data-layout="3x1">☰ 3×1<span>three stacked</span></button>
     <button data-layout="2x3">▦▦ 2×3<span>six panes &nbsp;(6)</span></button>
+    <button data-layout="3x3">▦▦▦ 3×3<span>nine panes — a filmstrip with Ax/Cor/Sag</span></button>
   </div>
   <div class="menu menu-wide" id="toolMenu" hidden>
     <div class="menu-head">History</div>

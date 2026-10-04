@@ -82,7 +82,7 @@ const load = async (page, dir) => {
   await page.waitForTimeout(500);
   const outside = await zAt();
   const warnText = await page.evaluate(() =>
-    window.__ctConsole.cellEl(1).querySelector('.vp-br').textContent);
+    window.__ctConsole.cellEl(1).querySelector('.vp-tr').textContent);
   check('it snaps to the nearest slice it has', outside.zB === 41, 'z=' + outside.zB);
   check('and warns that the level is outside this series',
     /off by 5\.0 mm/.test(warnText) && /outside this series/.test(warnText),
@@ -91,7 +91,7 @@ const load = async (page, dir) => {
   await page.waitForTimeout(400);
   check('and the warning clears once back in range',
     !/off by/.test(await page.evaluate(() =>
-      window.__ctConsole.cellEl(1).querySelector('.vp-br').textContent)));
+      window.__ctConsole.cellEl(1).querySelector('.vp-tr').textContent)));
   const z20 = await (async () => { await page.evaluate(() => window.__ctConsole.setCellIndex(0, 20));
     await page.waitForTimeout(400); return zAt(); })();
   check('the indices genuinely differ — it is not matching by number',
@@ -140,8 +140,13 @@ const load = async (page, dir) => {
   check('the comparison pane is labelled, without claiming to know which is older',
     /\[other study\]/.test(labelled) && /PRIOR thin/.test(labelled),
     labelled.replace(/\n/g, ' | '));
+  // The study date sits with the patient, top left — a comparison pane is
+  // told from the current one by whose scan and when, not by the series
+  // description, which is usually identical.
+  const dated = await page.evaluate(() =>
+    window.__ctConsole.cellEl(1).querySelector('.vp-tl').textContent);
   check('it still carries that study\'s own date',
-    /\d{4}-\d{2}-\d{2}/.test(labelled), labelled.replace(/\n/g, ' | '));
+    /\d{4}-\d{2}-\d{2}/.test(dated), dated.replace(/\n/g, ' | '));
   check('and when both dates are known the label follows them',
     await page.evaluate(() => {
       const C = window.__ctConsole;

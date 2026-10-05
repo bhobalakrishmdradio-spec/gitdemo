@@ -98,7 +98,7 @@ const load = async (page, dir) => {
   check('"Auto contrast" derives a sane window from the data',
     wlAuto[0] > 10 && wlAuto[0] < 2500, wlAuto.map(Math.round).join('/'));
 
-  console.log('\n4. Bone cut is refused on MR, with a reason');
+  console.log('\n4. The HU threshold mask is refused on MR, with a reason');
   check('the toggle is disabled', await page.isDisabled('#boneCutToggle'));
   check('and says why', /Hounsfield/.test(await page.textContent('#boneCutStatus')),
     await page.textContent('#boneCutStatus'));
@@ -164,7 +164,7 @@ const load = async (page, dir) => {
     back.presets.join(','));
   check('CT VRT presets are back', back.vr.includes('bone') && back.vr.includes('angio') &&
     back.vr.includes('muscle'), back.vr.join(','));
-  check('bone cut is enabled again', back.boneDisabled === false);
+  check('the threshold mask is enabled again', back.boneDisabled === false);
 
   console.log('\n8. No page errors');
   check('clean console', errors.length === 0, errors.slice(0, 4).join(' ;; ') || 'none');

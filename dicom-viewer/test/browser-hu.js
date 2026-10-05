@@ -345,8 +345,8 @@ const near = (a, b, t) => Math.abs(a - b) <= t;
   await page.waitForTimeout(400);
   await page.mouse.move(probePt.x + 1, probePt.y); await page.mouse.move(probePt.x, probePt.y);
   await page.waitForTimeout(250);
-  check('bone cut is disclosed in the readout',
-    (await page.textContent('#huReadout')).includes('(bone cut)'),
+  check('the threshold mask is disclosed in the readout',
+    (await page.textContent('#huReadout')).includes('(threshold mask)'),
     await page.textContent('#huReadout'));
   await page.evaluate(() => { window.__ctConsole.state.boneCut = false; window.__ctConsole.renderAll(); });
   await page.waitForTimeout(300);

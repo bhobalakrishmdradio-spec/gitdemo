@@ -43,6 +43,15 @@ async function currentLayout(page) {
 
 /** Choose a tool, from the toolbar if it is there and the menu if not. */
 async function pickTool(page, tool) {
+  // Sculpting is segmentation, not measurement, so it is armed from the
+  // Segmentation section rather than the Measure menu.
+  if (tool === 'sculpt') {
+    await pickMore(page, 'segment');
+    await page.waitForTimeout(200);
+    await page.click('#sculptBtn');
+    await page.waitForTimeout(220);
+    return;
+  }
   // Navigate has its own toolbar button, since it is the one you come back
   // to after every measurement; the rest live in the Measure menu.
   if (tool === 'none') {
@@ -118,6 +127,22 @@ async function showAllTools(page) {
   }
 }
 
+/**
+ * Flip one of the Sync menu's switches.
+ *
+ * Sync holds three independent links — position, zoom/pan and window/level —
+ * so it opens a menu rather than toggling. The menu stays open as switches
+ * are thrown, which is why this closes it afterwards.
+ */
+async function pickSync(page, which) {
+  await page.click('#linkBtn');
+  await page.waitForSelector('#syncMenu:not([hidden])');
+  await page.click(`#syncMenu [data-sync="${which}"]`);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+}
+
 /** Choose an item from the Reset menu. */
 async function pickReset(page, key) {
   await page.click('#resetBtn');
@@ -136,4 +161,4 @@ async function pickOpen(page, key) {
 
 module.exports = { pickLayout, pickFill, fillEnabled, currentFill, currentLayout,
                    pickTool, setStack, pickWindow, windowPresets, currentWindow,
-                   pickMore, moreOn, pickOpen, pickReset, showAllTools };
+                   pickMore, moreOn, pickOpen, pickReset, showAllTools, pickSync };

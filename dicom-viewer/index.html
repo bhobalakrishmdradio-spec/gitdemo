@@ -52,7 +52,7 @@
       <div class="toolbar-group">
         <button class="icon-btn" id="compareBtn" title="Open this patient's prior scan beside the current one (C)">⇄<span class="btn-label"> Compare</span></button>
         <button class="icon-btn" id="stackBtn" title="How many slices apart repeated panes sit">⇕ Stack 1 ▾</button>
-        <button class="icon-btn active" id="linkBtn" title="Sync: link panes on different series by patient position">🔗<span class="btn-label"> Sync</span></button>
+        <button class="icon-btn active" id="linkBtn" title="Sync: choose what is linked across panes on different series">🔗<span class="btn-label"> Sync</span> ▾</button>
       </div>
 
       <div class="toolbar-group">
@@ -91,8 +91,16 @@
       <main class="viewgrid" id="viewGrid">
         <div class="viewport-empty" id="viewportEmpty">
           <div class="viewport-empty-icon">🩻</div>
-          <div>No study loaded</div>
-          <div class="muted small">Open a DICOM folder to begin</div>
+          <div class="empty-title">No study loaded</div>
+          <div class="empty-actions">
+            <button class="primary-btn" id="emptyFolderBtn">📁 Open DICOM folder</button>
+            <button class="ghost-btn" id="emptyFilesBtn">📂 Open files…</button>
+          </div>
+          <div class="muted small empty-note">
+            Or drag a folder of DICOM files onto this window.<br />
+            Uncompressed, RLE and JPEG Lossless are decoded here; anything else is
+            named with the command to convert it.
+          </div>
         </div>
       </main>
 
@@ -193,29 +201,34 @@
           </section>
 
           <section class="tool-section" data-ctx="mpr">
-            <h4>Slice Thickness</h4>
+            <h4>Reconstruction slab</h4>
             <div class="field-row">
               <label for="thicknessRange">Slab</label>
               <input type="range" id="thicknessRange" min="0" max="50" step="0.5" value="0" />
-              <span class="field-value" id="thicknessValue">Thin</span>
+              <span class="field-value" id="thicknessValue">Single slice</span>
             </div>
             <div class="field-row">
-              <label for="projectionMode">Project</label>
+              <label for="projectionMode">Projection</label>
               <select id="projectionMode">
                 <option value="average">Average</option>
-                <option value="mip">MIP (max)</option>
-                <option value="minip">MinIP (min)</option>
+                <option value="mip">MIP (maximum)</option>
+                <option value="minip">MinIP (minimum)</option>
               </select>
             </div>
-            <p class="hint-text">Slab of 0 renders the native thin slice.</p>
+            <p class="hint-text" id="slabNote">At zero the pane shows one slice, as acquired.
+              Above zero it combines that many millimetres of neighbouring slices by the
+              projection chosen — a reconstruction, not the scanner's slice thickness,
+              which stays in the pane's own corner.</p>
           </section>
 
           <section class="tool-section" data-ctx="threed">
-            <h4>Bone Cut</h4>
+            <h4>Segmentation</h4>
+            <p class="hint-text">Two reversible ways to take tissue out of the
+              reconstruction: a Hounsfield threshold, and a brush.</p>
             <div class="field-row">
               <label class="switch">
                 <input type="checkbox" id="boneCutToggle" />
-                <span>Remove bone</span>
+                <span>Hide voxels above the threshold</span>
               </label>
             </div>
             <div class="field-row">
@@ -223,19 +236,26 @@
               <input type="range" id="boneThreshold" min="100" max="800" step="10" value="200" />
               <span class="field-value" id="boneThresholdValue">200</span>
             </div>
-            <p class="hint-text" id="boneCutStatus">Threshold segmentation — applies to MPR and 3D.</p>
+            <p class="hint-text" id="boneCutStatus">A Hounsfield threshold, not anatomy. It
+              hides everything denser than the value above — cortical bone mostly, and
+              contrast, metal and calcification with it. The stored pixels are untouched
+              and the mask is reversible.</p>
             <div class="field-row">
               <label for="sculptRadius">Brush</label>
               <input type="range" id="sculptRadius" min="2" max="40" step="1" value="8" />
               <span class="field-value" id="sculptRadiusValue">8 mm</span>
             </div>
             <div class="field-row">
+              <button class="ghost-btn" id="sculptBtn">✂ Sculpt</button>
               <button class="ghost-btn" id="sculptUndoBtn">Undo stroke</button>
-              <button class="ghost-btn" id="sculptClearBtn">Clear sculpting</button>
+              <button class="ghost-btn" id="sculptClearBtn">Restore all</button>
             </div>
-            <p class="hint-text">Pick <strong>✂ Sculpt</strong> from the
-              <strong>📏 Measure</strong> menu, then drag on any plane to cut tissue away
-              by hand. The 3D view follows.</p>
+            <p class="hint-text">Sculpting is editing, not measuring, so it lives here
+              rather than under <strong>📏 Measure</strong>. Arm it, then drag on any
+              plane to cut tissue out of the reconstruction; the MPR panes and the 3D
+              view both follow. Every stroke is undoable and
+              <strong>Restore all</strong> puts the whole volume back — the DICOM pixels
+              are never altered.</p>
           </section>
 
           <section class="tool-section" data-ctx="threed">
@@ -462,10 +482,20 @@
     <div class="menu-head">Focus point</div>
     <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (Shift+G)</span></button>
     <button data-more="focusClear">Clear the focus point</button>
+    <div class="menu-head">Workflows</div>
+    <button data-more="segment">Segmentation / Sculpt<span>threshold mask and the brush</span></button>
     <div class="menu-head">Study</div>
     <button data-more="tags">DICOM tags<span>every header field, searchable</span></button>
     <div class="menu-head">Help</div>
     <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>
+  </div>
+  <div class="menu menu-wide" id="syncMenu" hidden>
+    <div class="menu-head">Link panes on different series by…</div>
+    <button data-sync="position">Slice position<span>matched in patient millimetres, never by slice number</span></button>
+    <button data-sync="zoom">Zoom and pan<span>the same magnification and framing in every pane</span></button>
+    <button data-sync="window">Window / level<span>off by default, so lung and soft tissue can sit side by side</span></button>
+    <div class="menu-note">Panes showing the same series always share the toolbar's
+      window. This is about panes bound to a different series.</div>
   </div>
   <div class="menu menu-wide" id="compareMenu" hidden></div>
   <div class="menu" id="stackMenu" hidden>
@@ -511,8 +541,7 @@
     <button data-tool="freehand">✎ Draw<span>hold and trace</span></button>
     <div class="menu-head">Privacy</div>
     <button data-tool="redact">▬ Redact<span>cover burned-in text — pixelated on screen and in screenshots</span></button>
-    <div class="menu-head">Edit the volume</div>
-    <button data-tool="sculpt">✂ Sculpt<span>drag to cut tissue away by hand</span></button>
+
   </div>
   <div class="menu" id="resetMenu" hidden>
     <button data-reset="view">Reset view<span>zoom · pan · rotate · flip</span></button>

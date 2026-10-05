@@ -523,6 +523,11 @@ select, input[type="number"] {
 @media (max-width: 1760px) {
   .toolbar { gap: 8px; padding: 8px 10px; }
   .toolbar-group { gap: 5px; }
+  /* The Sync button carries a count now ("Sync 1/3"), which is worth the
+     width on the toolbar but is what tips 1680 px over. Trim the buttons'
+     own padding here rather than shrinking the type, which is the next
+     band's job. */
+  .toolbar .icon-btn { padding: 6px 8px; }
 }
 /* Tighten the controls before the toolbar has to wrap. */
 @media (max-width: 1520px) {
@@ -643,3 +648,8 @@ body.dragging-series .series-card { cursor: grabbing; }
 select:disabled, .primary-btn:disabled {
   opacity: 0.45; cursor: not-allowed;
 }
+
+/* The empty viewport leads with the action, not with an instruction. */
+.empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.empty-actions { display: flex; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; justify-content: center; }
+.empty-note { max-width: 420px; line-height: 1.6; text-align: center; }

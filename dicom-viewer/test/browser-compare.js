@@ -98,7 +98,7 @@ const load = async (page, dir) => {
     z20.iA !== z20.iB, `index ${z20.iA} vs ${z20.iB}`);
 
   console.log('\n4. Unlinking lets each study scroll alone');
-  await page.click('#linkBtn'); await page.waitForTimeout(400);
+  await UI.pickSync(page, 'position');
   const beforeUnlink = await zAt();
   await page.evaluate(() => window.__ctConsole.setCellIndex(0, 5));
   await page.waitForTimeout(400);
@@ -106,7 +106,7 @@ const load = async (page, dir) => {
   check('the prior stayed put while the current moved',
     afterUnlink.iB === beforeUnlink.iB && afterUnlink.iA !== beforeUnlink.iA,
     `current ${beforeUnlink.iA}→${afterUnlink.iA}, prior ${beforeUnlink.iB}→${afterUnlink.iB}`);
-  await page.click('#linkBtn'); await page.waitForTimeout(600);
+  await UI.pickSync(page, 'position');
   const relinked = await zAt();
   check('relinking snaps the prior back to position',
     Math.abs(relinked.zA - relinked.zB) <= 1.0,

@@ -265,13 +265,12 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
 
   check('Sync is a button of its own', await page.isVisible('#linkBtn'));
   const syncBefore = await page.evaluate(() => window.__ctConsole.state.link);
-  await page.click('#linkBtn');
-  await page.waitForTimeout(250);
+  await UI.pickSync(page, 'position');
   const syncAfter = await page.evaluate(() => window.__ctConsole.state.link);
   check('Sync toggles independently of Stack', syncAfter === !syncBefore &&
     (await page.evaluate(() => window.__ctConsole.state.stackStep)) === 5,
     syncBefore + ' -> ' + syncAfter);
-  await page.click('#linkBtn');
+  await UI.pickSync(page, 'position');
   await page.click('#stackBtn');
   await page.waitForSelector('#stackMenu:not([hidden])');
   await page.click('#stackMenu [data-step="1"]');

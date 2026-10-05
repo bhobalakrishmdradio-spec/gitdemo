@@ -92,9 +92,28 @@ read, so opening a study opens the longest non-localizer series instead.
 
 Press **⇄ Compare** (or `C`) with a study open. The most recent other study
 for **the same patient** opens in the pane beside it, both panes on the same
-plane, with linking on. Right-click the button to pick a different one — the
-menu lists that patient's studies with their dates, because the prior you
-want is not always the most recent.
+plane, with slice position linked. Right-click the button to pick a
+different one — the menu lists that patient's studies with their dates,
+because the prior you want is not always the most recent.
+
+#### What "linked" means — three switches, not one
+
+**🔗 Sync ▾** holds three independent toggles, because they answer different
+questions. They apply only to panes bound to a *different* series; panes
+showing the current series always share the toolbar's window.
+
+| Link | Default | Why |
+| --- | --- | --- |
+| **Slice position** | **on** | Matched in patient millimetres, never by slice number. This is the one that is nearly always wanted |
+| **Zoom and pan** | off | Useful for a side-by-side at identical magnification; in the way when the two studies are framed differently |
+| **Window / level** | **off** | A lung window beside a soft-tissue window is often the point of putting two panes up |
+
+Window/level defaulting to *off* matters more than it sounds. A prior chest
+CT stored at W1500/L−600 rendered with the current abdomen's W400/L40 is a
+white rectangle. Unlinked, a comparison pane uses **its own series' Window
+Width/Center from its header**; linked, it follows the toolbar. The button
+reads `Sync 1/3`, so how much is linked is on the toolbar rather than behind
+a menu.
 
 What it works out for you, and what it refuses to guess:
 
@@ -237,13 +256,29 @@ covering the image with text.
   - **MIP** (maximum intensity) — brings out contrast-filled vessels and bone.
   - **MinIP** (minimum intensity) — brings out airways and low-density lung.
 
-### Bone cut
+### Segmentation: a threshold mask and a brush
 
-- Threshold-based bone segmentation with a 3D dilation, so the cortical rim
-  and partial-volume halo go with it rather than leaving a bright shell.
-- Adjustable HU threshold; applies to **both** the MPR planes and the 3D view.
-- Because it is a pure threshold, contrast-opacified vessels are also removed
-  at low thresholds — raise the threshold above ~350 HU to keep them.
+Two reversible ways to take tissue out of the reconstruction. Neither
+touches the stored DICOM pixels.
+
+**Threshold mask.** Everything denser than an adjustable Hounsfield value is
+hidden, in the MPR planes and in 3D, with a 3D dilation so the cortical rim
+and partial-volume halo go too rather than leaving a bright shell.
+
+It is deliberately **not** called bone removal. It makes no anatomical
+judgement: at 200 HU it takes opacified vessels, metal and coarse
+calcification along with the cortex, and a reader told "bone" would not
+expect that. Above about 350 HU opacified vessels are kept. The panel and
+the HU readout both say *threshold mask*, and the readout appends
+`(threshold mask)` while it is on so a hidden voxel is never read as absent
+tissue.
+
+**Sculpt.** A spherical brush in millimetres, dragged on any plane. Every
+stroke is undoable and *Restore all* puts the whole volume back.
+
+Both live under **⋯ More → Segmentation / Sculpt**, not under Measure:
+sculpting is editing, and putting an eraser in the measurement menu invites
+exactly the confusion of thinking it measured something.
 
 ### 3D volume rendering
 
@@ -453,13 +488,16 @@ search rather than a set of controls to reach for.
 Each section declares which contexts it belongs to, and the panel shows the
 ones matching the armed tool:
 
-| Armed | Panel shows |
-| --- | --- |
-| Navigate | Window / Level, and the scout when the study has one |
-| A measurement tool | Window/Level, focus point, measurements, ROI histogram |
-| Crosshair | Slab, panes, focus point, oblique MPR, volume |
-| Pan · Zoom · Scroll | Window/Level, panes, cine |
-| Sculpt, or the 3D layout | Bone cut, 3D rendering, volume |
+| Armed | Panel reads | and shows |
+| --- | --- | --- |
+| Navigate | *Reading* | Window/Level, and the scout when the study has one |
+| A measurement tool | *Measuring* | Window/Level, focus point, measurements, ROI histogram |
+| Crosshair | *Planes & MPR* | Reconstruction slab, panes, focus point, oblique MPR, volume |
+| Pan · Zoom · Scroll | *Navigating* | Window/Level, panes, cine |
+| Sculpt, or the 3D layout | *Segmentation & 3D* | Threshold mask, sculpt, 3D rendering, volume |
+
+The headings name the **mode**, not a section, so the panel title does not
+simply repeat the one heading under it.
 
 A section with nothing to show is not shown at all, even under "Show all" —
 there is no point revealing a Scout heading over a blank canvas for a study
@@ -527,6 +565,14 @@ No build step, no dependencies to install — plain HTML/CSS/JS.
 
 3D volume rendering needs **WebGL2**. If it isn't available the 2D and MPR
 views still work and the 3D panel says so.
+
+## The empty viewport
+
+With nothing open the image area leads with **📁 Open DICOM folder** and
+**📂 Open files…** as buttons, names the formats that decode here, and says
+a folder can be dragged onto the window. A blank grid carrying an
+instruction is a dead end on a first run; the action belongs where the eye
+already is.
 
 ## Loading your scans
 
@@ -671,7 +717,7 @@ row and that assertion is what caught it.
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
 | **📸** | Screenshot the active pane — to the share sheet on a phone or tablet, to a file elsewhere. **⋯ More** holds send-to-Photos, all-panes, save-as, copy-to-clipboard, attach-to-report and the patient-banner switch |
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
-| **⇕ Stack ▾** / **🔗 Sync** | Slices between repeated panes; linking series by patient position. Two separate controls: they do unrelated jobs |
+| **⇕ Stack ▾** / **🔗 Sync ▾** | Slices between repeated panes; and what is linked across panes bound to different series. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
 | **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export, the shortcut list |
 | **⤾ Reset ▾** | The reset options below |
@@ -705,7 +751,7 @@ python3 test/fixtures/make_phantom.py        # and the other make_*.py
 node test/run.js
 ```
 
-33 suites: four in Node for the arithmetic, twenty-seven in a browser for
+34 suites: four in Node for the arithmetic, twenty-eight in a browser for
 the behaviour, and two probes for the chrome. `test/README.md` says what each
 fixture pins down and what you need installed. The fixtures are generated,
 not committed — a checkout builds them in a minute.

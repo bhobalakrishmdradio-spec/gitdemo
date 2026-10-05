@@ -45,7 +45,7 @@
    */
   var MENUS = ["openMenu", "orientMenu", "resetMenu", "toolMenu",
                "windowMenu", "moreMenu", "layoutMenu", "stackMenu",
-               "compareMenu"];
+               "compareMenu", "syncMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
   // The 3D texture is packed once over the full diagnostic HU range so the
@@ -331,7 +331,14 @@
     volume: null,                 // the current series' volume
     volumes: {},                  // seriesUid -> volume, for comparison panes
     seriesIndex: {},              // seriesUid -> { axial, coronal, sagittal }
-    link: true,                   // link panes across series by patient position
+    // What is linked across panes bound to *different* series. Three
+    // separate switches, because they answer different questions: position
+    // is the one that is nearly always wanted, and window/level is the one
+    // that is nearly always not — a lung window beside a soft-tissue window
+    // is the point of putting two panes up.
+    link: true,                   // slice position, matched in patient millimetres
+    linkZoom: false,              // zoom and pan
+    linkWindow: false,            // window/level
     geometryWarnings: [],
     index: { axial: 0, coronal: 0, sagittal: 0 },
     frames: null,                 // set from BASE_FRAMES on init / reset
@@ -470,6 +477,7 @@
     dom.focusPickBtn = byId("focusPickBtn");
     dom.focusClearBtn = byId("focusClearBtn");
     dom.linkBtn = byId("linkBtn");
+    dom.syncMenu = byId("syncMenu");
     dom.huReadout = byId("huReadout");
     dom.resetMenu = byId("resetMenu");
     dom.resetBtn = byId("resetBtn");
@@ -478,6 +486,8 @@
     dom.roiHistogram = byId("roiHistogram");
     dom.histogramNote = byId("histogramNote");
     dom.toolMenu = byId("toolMenu");
+    dom.emptyFolderBtn = byId("emptyFolderBtn");
+    dom.emptyFilesBtn = byId("emptyFilesBtn");
     dom.scoutSection = byId("scoutSection");
     dom.scoutCanvas = byId("scoutCanvas");
     dom.scoutNote = byId("scoutNote");
@@ -662,9 +672,31 @@
   }
 
   /** The window a pane draws with: its own override, or the global one. */
+  /**
+   * The window a pane is being displayed with.
+   *
+   * A pane's own setting wins. Otherwise a pane bound to a different series
+   * uses that series' own window from its header, because the toolbar's
+   * window belongs to the study being read and a prior chest CT at
+   * W1500/L-600 rendered at the current abdomen's W400/L40 is a white
+   * rectangle. Turning on Sync → Window/level puts them back together.
+   */
   function cellWindow(cell) {
     if (cell.wl) return cell.wl;
+    if (cell.seriesUid && !state.linkWindow) {
+      var own = seriesOwnWindow(cell.seriesUid);
+      if (own) return own;
+    }
     return { ww: state.windowWidth, wc: state.windowCenter };
+  }
+
+  /** A series' own Window Width/Center, as its header states it. */
+  function seriesOwnWindow(uid) {
+    var group = state.seriesMap[uid];
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    if (!inst) return null;
+    var ww = wwOf(inst), wc = wcOf(inst);
+    return typeof ww === "number" && typeof wc === "number" ? { ww: ww, wc: wc } : null;
   }
 
   function activeCell() {
@@ -1092,7 +1124,7 @@
     var parts = [];
     if (unit) parts.push(unit);
     if (slab && slab.samples > 1) parts.push("(" + modeLabel(state.projectionMode) + ")");
-    if (state.boneCut) parts.push("(bone cut)");
+    if (state.boneCut) parts.push("(threshold mask)");
     return parts.join(" ");
   }
 
@@ -2910,8 +2942,11 @@
     var pick = matchingSeries(prior, current);
     if (!pick) return showToast("That study has no series long enough to reconstruct.", true);
 
+    // Position linking is the point of a comparison. Window/level stays
+    // unlinked, so the prior keeps its own — which is what lets a lung
+    // window sit beside a soft-tissue one.
     state.link = true;
-    if (dom.linkBtn) dom.linkBtn.classList.add("active");
+    syncSyncMenu();
     applyLayout("1x2");
 
     var plane = nativePlaneOf(state.currentSeriesUID) || "axial";
@@ -4105,6 +4140,8 @@
     if (dom.crosshairBtn) {
       dom.crosshairBtn.classList.toggle("active", state.tool === "crosshair");
     }
+    var sculptBtn = byId("sculptBtn");
+    if (sculptBtn) sculptBtn.classList.toggle("active", state.tool === "sculpt");
     if (dom.viewToolBtns) {
       Object.keys(dom.viewToolBtns).forEach(function (k) {
         dom.viewToolBtns[k].classList.toggle("active", state.tool === k);
@@ -4392,13 +4429,15 @@
    * shown whatever the context, because a control that is silently doing
    * something must not be the one that is hidden.
    * ------------------------------------------------------------------- */
+  // Named for the mode, not for a section, so the panel heading does not
+  // simply repeat the heading of the one section under it.
   var CONTEXT_TITLES = {
-    wl: "Window / Level",
-    measure: "Measurements",
-    mpr: "Planes",
-    threed: "3D",
-    view: "View",
-    info: "Study",
+    wl: "Reading",
+    measure: "Measuring",
+    mpr: "Planes & MPR",
+    threed: "Segmentation & 3D",
+    view: "Navigating",
+    info: "Study data",
   };
 
   /** Which context the armed tool puts the panel in. */
@@ -4748,7 +4787,7 @@
         (cell.wl ? " *" : "") + (state.invert ? "  [inv]" : ""),
       "Zoom " + Math.round(cell.view.zoom * 100) + "%",
       activeToolLabel(),
-      state.boneCut ? "bone cut ≥ " + state.boneThreshold + " HU" : "",
+      state.boneCut ? "threshold mask ≥ " + state.boneThreshold + " HU" : "",
     ].filter(Boolean).join("\n");
 
     /* --- bottom right: how it was acquired --- */
@@ -5494,7 +5533,7 @@
     }
     dom.vrPreset.value = state.vrPreset;
 
-    // Bone cut is an HU threshold; it means nothing on MR signal.
+    // The threshold is in HU; it means nothing on MR signal.
     var noBone = !hu && !!state.volume;
     dom.boneCutToggle.disabled = noBone;
     dom.boneThreshold.disabled = noBone;
@@ -5505,7 +5544,7 @@
     }
     if (noBone) {
       dom.boneCutStatus.textContent =
-        "Bone cut is a Hounsfield threshold, so it applies to CT only." +
+        "The threshold mask is in Hounsfield units, so it applies to CT only." +
         (modality ? " This series is " + modality + "." : "");
     } else {
       updateBoneStatus();
@@ -5947,6 +5986,11 @@
    * Events
    * ------------------------------------------------------------------- */
   function wireEvents() {
+    // The empty viewport leads with the action rather than describing it: a
+    // blank grid with an instruction in it is a dead end on a first run.
+    dom.emptyFolderBtn.addEventListener("click", function () { dom.folderInput.click(); });
+    dom.emptyFilesBtn.addEventListener("click", function () { dom.fileInput.click(); });
+
     dom.fileInput.addEventListener("change", function (e) {
       loadFiles(e.target.files);
       e.target.value = "";
@@ -6072,16 +6116,29 @@
       dom.cineLoopBtn.classList.toggle("active", state.cine.loop);
     });
 
-    dom.linkBtn.addEventListener("click", function () {
-      state.link = !state.link;
-      dom.linkBtn.classList.toggle("active", state.link);
-      if (state.link) linkOthersTo(state.currentSeriesUID, state.index.axial);
+    wireMenu(dom.linkBtn, dom.syncMenu, "sync", function (what) {
+      if (what === "position") {
+        state.link = !state.link;
+        if (state.link) linkOthersTo(state.currentSeriesUID, state.index.axial);
+        showToast(state.link
+          ? "Linked: panes on other series follow by patient position."
+          : "Unlinked: each series scrolls on its own.");
+      } else if (what === "zoom") {
+        state.linkZoom = !state.linkZoom;
+        if (state.linkZoom) applyLinkedView(state.activeCell);
+        showToast(state.linkZoom
+          ? "Linked: zoom and pan are shared across panes."
+          : "Unlinked: each pane keeps its own zoom and pan.");
+      } else {
+        state.linkWindow = !state.linkWindow;
+        showToast(state.linkWindow
+          ? "Linked: every pane uses the toolbar's window."
+          : "Unlinked: a pane on another series uses that series' own window.");
+      }
+      syncSyncMenu();
       renderAll();
       syncSliders();
-      showToast(state.link
-        ? "Linked: panes on other series follow by patient position."
-        : "Unlinked: each series scrolls on its own.");
-    });
+    }, { keepOpen: true, onOpen: syncSyncMenu });
 
     // The + is a tool, not a visibility switch: pressing it arms dragging
     // the crosshair. Whether the lines are drawn at all is a display
@@ -6189,6 +6246,8 @@
         if (!goToFocus(true)) showToast("No focus point yet — press 🎯, then click one.", true);
       } else if (what === "focusClear") {
         clearFocus();
+      } else if (what === "segment") {
+        showToolsContext("threed");
       } else if (what === "tags") {
         showToolsContext("info");
       } else if (what === "shortcuts") {
@@ -6246,6 +6305,12 @@
     dom.reportTemplate.addEventListener("change", function (e) {
       insertTemplate(e.target.value);
       e.target.value = "";
+    });
+
+    // Sculpt is armed from the Segmentation section now, not the Measure menu:
+    // it edits a derived volume rather than measuring anything.
+    byId("sculptBtn").addEventListener("click", function () {
+      setTool(state.tool === "sculpt" ? MEAS.TOOLS.none : "sculpt");
     });
 
     byId("reportGrabBtn").addEventListener("click", captureKeyImage);
@@ -6381,7 +6446,10 @@
 
     dom.thicknessRange.addEventListener("input", function (e) {
       state.thicknessMm = parseFloat(e.target.value) || 0;
-      dom.thicknessValue.textContent = state.thicknessMm ? fmt(state.thicknessMm) + "mm" : "Thin";
+      // "Single slice" rather than "Thin": thin is a judgement about the
+      // scanner's slice thickness, which this slider does not touch.
+      dom.thicknessValue.textContent = state.thicknessMm
+        ? fmt(state.thicknessMm) + " mm" : "Single slice";
       renderAll();
     });
     dom.projectionMode.addEventListener("change", function (e) {
@@ -6664,7 +6732,8 @@
         var view = cell.view;
         view.zoom = Math.max(MIN_ZOOM,
           Math.min(MAX_ZOOM, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
-        renderCell(i);
+        if (state.linkZoom) { applyLinkedView(i); renderAll(); }
+        else renderCell(i);
       } else {
         setCellIndex(i, cellIndex(cell) + (e.deltaY > 0 ? 1 : -1));
       }
@@ -6869,7 +6938,8 @@
       // Up zooms in, which is the direction every viewer uses.
       cellZ.view.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
         drag.zoom * Math.pow(2, -dy / ZOOM_DOUBLE_PX)));
-      renderCell(drag.cell);
+      if (state.linkZoom) { applyLinkedView(drag.cell); renderAll(); }
+      else renderCell(drag.cell);
       return;
     }
 
@@ -6891,7 +6961,8 @@
     if (!cellP) return;
     cellP.view.panX = drag.panX + dx * dpr;
     cellP.view.panY = drag.panY + dy * dpr;
-    renderCell(drag.cell);
+    if (state.linkZoom) { applyLinkedView(drag.cell); renderAll(); }
+    else renderCell(drag.cell);
   }
 
   /**
@@ -7231,15 +7302,25 @@
     }
     if (dom.sculptUndoBtn) dom.sculptUndoBtn.disabled = !state.sculptUndo.length;
     if (dom.sculptClearBtn) dom.sculptClearBtn.disabled = !V.hasSculpt(state.volume);
+    // Named for what it is. The mask is a Hounsfield threshold, and calling
+    // it "bone removal" claims an anatomical judgement it does not make: at
+    // 200 HU it takes opacified vessels, metal and coarse calcification with
+    // the cortex, and a reader who was told "bone" would not expect that.
     if (!state.boneCut) {
       dom.boneCutStatus.textContent =
-        "Threshold segmentation — applies to MPR and 3D. Raise the threshold " +
-        "above contrast density (~350 HU) to keep opacified vessels.";
+        "A Hounsfield threshold, not anatomy. Everything denser than the value " +
+        "above is hidden in the MPR panes and in 3D — cortical bone mostly, and " +
+        "contrast, metal and calcification with it. Above about 350 HU opacified " +
+        "vessels are kept. The stored pixels are untouched and the mask is " +
+        "reversible.";
       return;
     }
     dom.boneCutStatus.textContent =
-      "Bone removed at ≥ " + state.boneThreshold + " HU (dilated 2 voxels)." +
-      (state.boneThreshold < 350 ? " Contrast-filled vessels are cut too at this threshold." : "");
+      "Hiding everything ≥ " + state.boneThreshold + " HU, grown 2 voxels." +
+      (state.boneThreshold < 350
+        ? " At this threshold contrast-filled vessels are hidden too."
+        : " Opacified vessels are kept at this threshold.") +
+      " The stored pixels are unchanged.";
   }
 
   /** Rotation and flipping, applied to the pane you last worked in. */
@@ -7694,6 +7775,40 @@
     updateStackNote();
   }
 
+  /** Tick the Sync menu, and say on the button how much is linked. */
+  function syncSyncMenu() {
+    if (!dom.syncMenu) return;
+    var on = { position: state.link, zoom: state.linkZoom, window: state.linkWindow };
+    Array.prototype.forEach.call(dom.syncMenu.querySelectorAll("[data-sync]"), function (b) {
+      b.classList.toggle("on", !!on[b.dataset.sync]);
+    });
+    var count = (state.link ? 1 : 0) + (state.linkZoom ? 1 : 0) + (state.linkWindow ? 1 : 0);
+    dom.linkBtn.classList.toggle("active", count > 0);
+    var label = dom.linkBtn.querySelector(".btn-label");
+    if (label) label.textContent = " Sync " + count + "/3";
+    dom.linkBtn.title = count
+      ? "Linked: " + Object.keys(on).filter(function (k) { return on[k]; }).join(", ")
+      : "Nothing is linked across panes on different series";
+  }
+
+  /**
+   * Copy the active pane's zoom and pan to every other 2D pane.
+   *
+   * Only when Sync → Zoom and pan is on. Panes keep their own rotation and
+   * flip: those are per-pane orientation choices, not a shared viewpoint.
+   */
+  function applyLinkedView(from) {
+    if (!state.linkZoom) return;
+    var src = state.cells[from];
+    if (!src || src.plane === "vr") return;
+    state.cells.forEach(function (cell, i) {
+      if (i === from || cell.plane === "vr") return;
+      cell.view.zoom = src.view.zoom;
+      cell.view.panX = src.view.panX;
+      cell.view.panY = src.view.panY;
+    });
+  }
+
   function syncStackSeg() {
     if (dom.stackBtn) {
       // The word is hidden on a narrow window, the number never is.
@@ -7800,7 +7915,7 @@
       state.drag = null;
     });
 
-    dom.linkBtn.classList.toggle("active", state.link);
+    syncSyncMenu();
     syncOrientMenu();
     syncLayoutControls();
     syncWindowControls();
@@ -7877,6 +7992,8 @@
     toggleViewTool: toggleViewTool,
     syncToolsPanel: syncToolsPanel,
     toolContext: toolContext,
+    syncSyncMenu: syncSyncMenu,
+    applyLinkedView: applyLinkedView,
     toggleMaximise: toggleMaximise,
     showToolsContext: showToolsContext,
     renderScout: renderScout,

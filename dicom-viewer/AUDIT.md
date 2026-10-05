@@ -198,9 +198,9 @@ The largest remaining gaps, in priority order:
 | CMP-03 | Current vs prior | Pass | Each pane shows its own modality, description and `[comparison]` marker |
 | CMP-04 | Linked scrolling | Pass | **By patient position, not index.** 24×2 mm vs 36×1 mm series match to 0.0 mm while indices differ (20 ↔ 34) |
 | CMP-05 | Manual synchronisation / offset | Partial | Panes can be pinned. **No explicit offset between two studies** |
-| CMP-06 | Link zoom / pan | **Missing** | Zoom and pan are per pane |
-| CMP-07 | Link window/level | Partial | Panes on "global" share the toolbar W/L; a pane can opt out with its own |
-| CMP-08 | Link / unlink selection | Partial | One global Link toggle plus per-pane pinning. No per-pane link membership |
+| CMP-06 | Link zoom / pan | Pass | **🔗 Sync → Zoom and pan**, off by default. `browser-reading.js` |
+| CMP-07 | Link window/level | Pass | **🔗 Sync → Window/level**, off by default: a pane bound to another series uses that series' own Window Width/Center from its header, so a lung window can sit beside a soft-tissue one. Linked, it follows the toolbar. `browser-reading.js` |
+| CMP-08 | Link / unlink selection | Partial | Three independent link switches (position, zoom/pan, window) plus per-pane pinning, and the button shows how many are on. Still no per-pane link membership |
 | CMP-09 | Cross-reference cursor | Partial | Crosshair links planes within a volume. **Not across studies** |
 | CMP-10 | Compare measurements over time | Partial | Measurements now persist per series and both studies can be open side by side, so the two numbers can be read together. **No automatic delta or growth table** |
 | CMP-11 | Exit comparison | Pass | Set the pane back to "Current series" |
@@ -220,7 +220,7 @@ The largest remaining gaps, in priority order:
 | VOL-08 | Clipping plane / crop box | Pass | Crop box with two independent handles per anatomical axis; cropping the ray rather than discarding samples, so the cut face is solid. Verified that cropping removes lit pixels, that opposite fifths of an axis are different pictures, and that the image data is byte-for-byte unchanged. `browser-crop.js` |
 | VOL-09 | Sculpt / cut / undo | Pass | Spherical brush in mm, per-stroke undo, clear-all; verified the stored voxel keeps its value |
 | VOL-10 | Surface / mesh rendering | **Missing** | — |
-| VOL-11 | Segmentation tools | **Missing** | Threshold and hand sculpting only — not anatomical segmentation |
+| VOL-11 | Segmentation tools | Partial | A Hounsfield threshold mask and a hand brush, in their own **Segmentation** workflow rather than under Measure, both reversible and neither altering the stored pixels. Named as a threshold rather than as bone removal, because it makes no anatomical judgement. Not anatomical segmentation |
 | VOL-12 | Lesion tracking | **Missing** | — |
 | VOL-13 | Vessel analysis | **Missing** | — |
 | VOL-14 | 3D distance / volume measurement | **Missing** | Measurements are 2D on a plane |

@@ -345,7 +345,7 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
     (await view()).tool === 'scroll', (await view()).tool);
   check('and did not touch Sync',
     (await page.evaluate(() => window.__ctConsole.state.link)) === linkBefore);
-  await page.click('#linkBtn'); await page.waitForTimeout(200);
+  await UI.pickSync(page, 'position');
   check('toggling Sync left Scroll armed and the step alone',
     (await view()).tool === 'scroll' &&
     (await page.evaluate(() => window.__ctConsole.state.stackStep)) === 2,
@@ -354,7 +354,7 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
   check('and Sync really flipped',
     (await page.evaluate(() => window.__ctConsole.state.link)) !== linkBefore,
     'was ' + linkBefore);
-  await page.click('#linkBtn'); await page.waitForTimeout(200);
+  await UI.pickSync(page, 'position');
   void stepBefore;
 
   /* =================================================================== */

@@ -315,8 +315,9 @@ const load = async (page, dir) => {
   check('and not the 3D ones', !c.shown.includes('3D Rendering'), JSON.stringify(c.shown));
   await UI.pickTool(page, 'sculpt');
   c = await ctxOf();
-  check('sculpting brings up bone cut and 3D',
-    c.shown.includes('Bone Cut') && c.shown.includes('3D Rendering'), JSON.stringify(c.shown));
+  check('sculpting brings up segmentation and 3D',
+    c.shown.includes('Segmentation') && c.shown.includes('3D Rendering'),
+    JSON.stringify(c.shown));
 
   console.log('\n5b. A section that is doing something is never hidden');
   await page.evaluate(() => {
@@ -327,13 +328,13 @@ const load = async (page, dir) => {
   await page.waitForTimeout(250);
   c = await ctxOf();
   check('a slab that is switched on keeps its control on screen',
-    c.shown.includes('Slice Thickness'), JSON.stringify(c.shown));
+    c.shown.includes('Reconstruction slab'), JSON.stringify(c.shown));
   await page.evaluate(() => { window.__ctConsole.state.thicknessMm = 0;
                               window.__ctConsole.setTool('none'); });
   await page.waitForTimeout(250);
   c = await ctxOf();
   check('and goes away again once it is off',
-    !c.shown.includes('Slice Thickness'), JSON.stringify(c.shown));
+    !c.shown.includes('Reconstruction slab'), JSON.stringify(c.shown));
 
   console.log('\n5c. "Show all" is the way out, and the tag browser has a route');
   await page.click('#toolsAllBtn'); await page.waitForTimeout(250);

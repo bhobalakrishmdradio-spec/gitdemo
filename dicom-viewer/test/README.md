@@ -96,6 +96,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-redact.js` | Redaction against real burned-in text; saving to a file |
 | `browser-compare-prior.js` | One-press comparison with a prior, and the patient it refuses to offer |
 | `browser-share.js` | Sending a screenshot to Photos, and every way that can fail |
+| `browser-reading.js` | Honest labels, segmentation split from measurement, the empty state, the three sync switches, and spatial order from geometry rather than filenames |
 | `browser-workstation.js` | Series cards, drag-to-pane, the four corners, the contextual panel, scout navigation, the new layouts and keys |
 | `browser-viewtools.js` | Zoom, pan and scroll as armed left-drag tools, and that the wheel and modifiers still work |
 | `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |

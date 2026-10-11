@@ -45,6 +45,12 @@ drag-to-pane, four-corner overlays, the PACS mouse map (right-drag zoom,
 middle-drag pan), scout/localizer navigation, the contextual Tools panel,
 the full set of grids, and the measurement and navigation shortcuts.
 
+Closed since the workstation sprint: the Patient-and-study summary panel, the
+Technique tag group and the scale bar; and on the security side, prototype-safe
+dictionaries for everything keyed by a header value, validation of stored
+measurements on the way in, and a stated reason for every file the viewer
+refuses.
+
 The largest remaining gaps, in priority order:
 
 1. **P1 — Report output is plain text only.** No rich formatting, no PDF, no
@@ -113,9 +119,10 @@ The largest remaining gaps, in priority order:
 | IMG-12 | Colour map / LUT | **Missing** for 2D | 3D has transfer functions; 2D is greyscale only |
 | IMG-13 | Sharpen / smooth | **Missing** | — |
 | IMG-14 | Shutter / crop | Partial | **3D**: a crop box with independent handles on each anatomical axis, named for the cut they make, plus Reset crop. `browser-crop.js`. **No 2D shutter** |
-| IMG-15 | Orientation labels / scale | Partial | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest, plus four-corner overlays carrying patient, series, display and acquisition facts. **No scale bar** |
+| IMG-15 | Orientation labels / scale | Pass | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest, plus four-corner overlays carrying patient, series, display and acquisition facts, plus a scale bar on every 2D pane — the longest round number of mm fitting a third of the pane, drawn only when Pixel Spacing (and, on a cut that crosses slices, slice spacing) makes the millimetre real. Checked against the distance tool, not against the formula that drew it. `browser-info.js` |
 | IMG-16 | Patient / image overlay toggle | **Missing** | Overlays always shown on large panes, hidden on small ones. Would not anonymise anything regardless |
-| IMG-17 | DICOM tags / metadata | Pass | Searchable by keyword, value or tag number; shows the displayed instance |
+| IMG-17 | DICOM tags / metadata | Pass | Searchable by keyword, value or tag number; shows the displayed instance. Grouped Patient / Study / Series / Technique / Image / Pixel Data / Derived; the Technique rows cover CT (kernel, kVp, mA, mAs, CTDIvol, tilt, recon diameter) and MR (TR, TE, TI, flip, field strength, ETL, sequence, variant, options, acquisition type), and an absent tag is dropped rather than shown empty. `browser-info.js` |
+| IMG-18 | Patient / study summary panel | Pass | **⋯ More → Patient and study**: name, ID, age and sex; description, date, accession, institution, referrer; manufacturer and model, station, protocol, patient position. The contents line counts what is actually loaded (`2 series · 77 images loaded`) and says so. No row is invented — no birth date from an age, no acquisition phase. `browser-info.js` |
 
 ## 3. HU, ROI, measurements, and annotations
 
@@ -286,6 +293,8 @@ The largest remaining gaps, in priority order:
 | Output checked by reopening exported files | **Partial** — PNG and text verified by content, not by reopening |
 | Shared deployment authorizes every request | **N/A** — nothing is served |
 | Untrusted header text cannot execute | **Pass** — a study whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry script payloads renders them literally; no markup parsed, no handler fired. `browser-security.js`, `test/fixtures/make_hostile.py` |
-| Stored data is treated as untrusted | **Pass** — key images are read back through a validator that accepts only a bounded `data:image/…;base64` URL, and are escaped again on output |
+| Stored data is treated as untrusted | **Pass** — key images are read back through a validator that accepts only a bounded `data:image/…;base64` URL, and are escaped again on output. A stored measurement must name a tool this build has, a plane it can draw on, a numeric or absent slice index and finite points; a note is cut to 500 characters. `browser-security.js` §6 |
+| A header value cannot reach a prototype | **Pass** — every dictionary keyed by untrusted text (series, volumes, caches, SOP UIDs seen) is an `Object.create(null)`. Six fixture files whose Study, Series and Frame of Reference UIDs are `__proto__`, `constructor` and `toString` load as three independent series, each opening as itself, with `Object.prototype` and `Array.prototype` untouched. `browser-security.js` §7, `make_hostile.py` |
+| A file that cannot be read says why | **Pass** — reasons are recorded per file and grouped: *not a DICOM file (×2); the file is truncated or corrupt*. Translated only where the cause is unambiguous; an unsupported transfer syntax is passed through verbatim. `browser-security.js` §8 |
 | A failed save is visible | **Pass** — a report that cannot be written to storage says so in a toast and keeps `⚠ NOT SAVING` on the status line until a save succeeds |
 | No network, no eval, no third-party origin | **Pass** — asserted, not assumed |

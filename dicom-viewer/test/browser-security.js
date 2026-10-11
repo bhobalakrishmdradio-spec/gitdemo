@@ -55,8 +55,12 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
 
   /* =================================================================== */
   console.log('\n2. A DICOM file whose headers are script');
-  const files = fs.readdirSync(path.join(SP, 'series-hostile')).filter(f => f.endsWith('.dcm'))
+  const all = fs.readdirSync(path.join(SP, 'series-hostile')).filter(f => f.endsWith('.dcm'))
     .sort().map(f => path.join(SP, 'series-hostile', f));
+  /* The prototype-poisoned files in the same directory are section 7's; here
+     they would make "__proto__" a genuinely loaded series and so make the
+     drop check below pass for the wrong reason. */
+  const files = all.filter(f => !/poison_/.test(f));
   await page.setInputFiles('#fileInput', files);
   await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume,
     null, { timeout: 60000 });
@@ -230,6 +234,169 @@ const check = (n, ok, x) => { console.log((ok ? '  PASS  ' : '  FAIL  ') + n + (
     /at most/i.test(await page.textContent('#toast')), await page.textContent('#toast'));
   check('and does not add one anyway',
     (await page.evaluate(() => window.__ctConsole.state.report.keyImages.length)) === cap);
+
+  /* =================================================================== */
+  console.log('\n6. A measurement record written by something else');
+  const meas = await page.evaluate(async () => {
+    const C = window.__ctConsole;
+    const uid = C.state.currentSeriesUID;
+    const long = 'x'.repeat(5000);
+    localStorage.setItem('ctconsole.measure.' + uid, JSON.stringify({
+      version: 1, items: [
+        /* 0: the only record that should survive */
+        { id: 1, tool: 'distance', plane: 'axial', sliceIndex: 0,
+          points: [{ x: 10, y: 10 }, { x: 40, y: 10 }], text: long },
+        /* 1: a tool this build does not have */
+        { id: 2, tool: 'nuke', plane: 'axial', sliceIndex: 0,
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        /* 2: a tool name that every object answers to */
+        { id: 3, tool: 'toString', plane: 'axial', sliceIndex: 0,
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        { id: 4, tool: 'constructor', plane: 'axial', sliceIndex: 0,
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        /* 3: a plane the viewer cannot draw on */
+        { id: 5, tool: 'distance', plane: 'coronal-ish', sliceIndex: 0,
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        /* 4: plane is an object — .slice() on it would take the panel down */
+        { id: 6, tool: 'distance', plane: { evil: 1 }, sliceIndex: 0,
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        /* 5: slice index is an object, or an array */
+        { id: 7, tool: 'distance', plane: 'axial', sliceIndex: { evil: 1 },
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        { id: 10, tool: 'distance', plane: 'axial', sliceIndex: [1, 2],
+          points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
+        /* 5b: an oblique cut key. This is a *string*, and ordinary: a
+           validator that insisted on a number would throw away every
+           oblique measurement a reader had saved. */
+        { id: 11, tool: 'distance', plane: 'axial',
+          sliceIndex: 'obl:12:40,30,30:1.000000,0.000000,0.000000,0.000000,0.996195,-0.087156',
+          points: [{ x: 12, y: 12 }, { x: 30, y: 30 }] },
+        /* 6: no points, and points that are not numbers */
+        { id: 8, tool: 'distance', plane: 'axial', sliceIndex: 0, points: [] },
+        { id: 9, tool: 'distance', plane: 'axial', sliceIndex: 0,
+          points: [{ x: 'NaN', y: null }, { x: 2, y: 2 }] },
+        /* 7: not a record at all */
+        null, 'distance', 42,
+      ],
+    }));
+    C.state.measurements = [];
+    C.state.measureLoaded = {};
+    C.restoreMeasurements(uid);
+    C.renderAll();
+    await new Promise(r => setTimeout(r, 300));
+    const kept = C.state.measurements.filter(m => m.seriesUid === uid);
+    return {
+      kept: kept.length,
+      tools: kept.map(m => m.tool),
+      textLen: kept.length ? kept[0].text.length : -1,
+      keys: kept.map(m => m.sliceIndex),
+      listRows: document.querySelectorAll('#measureList .measure-row').length,
+      listHtml: document.getElementById('measureList').innerHTML.slice(0, 900),
+    };
+  });
+  check('only the two well-formed records were restored', meas.kept === 2,
+    meas.kept + ': ' + meas.tools.join(', '));
+  check('an oblique cut key survived as the string it is',
+    meas.keys.filter(k => typeof k === 'string' && /^obl:/.test(k)).length === 1,
+    JSON.stringify(meas.keys));
+  check('a slice index that is an object or an array did not',
+    meas.keys.every(k => typeof k === 'number' || typeof k === 'string'),
+    JSON.stringify(meas.keys));
+  check('an inherited name is not a tool', meas.tools.indexOf('toString') < 0 &&
+    meas.tools.indexOf('constructor') < 0, meas.tools.join(', '));
+  check('a 5000-character note was cut to the stated cap',
+    meas.textLen > 0 && meas.textLen <= 500, String(meas.textLen));
+  check('both restored records are in the list', meas.listRows === 2,
+    meas.listRows + ' rows');
+  check('the oblique one is labelled as oblique, not as a slice number',
+    /obl/.test(meas.listHtml), meas.listHtml.slice(0, 120));
+  check('no markup from the record is in the list',
+    !/<img|<svg|onerror/i.test(meas.listHtml), meas.listHtml.slice(0, 80));
+  await page.evaluate(() => {
+    localStorage.removeItem('ctconsole.measure.' + window.__ctConsole.state.currentSeriesUID);
+  });
+
+  /* =================================================================== */
+  console.log('\n7. A file naming itself an inherited property');
+  /* A plain {} answers truthily for "__proto__" whether or not anything was
+     stored there, so a series whose UID is that string used to read as one
+     already loaded — and then be used as one. Writing to it does not even
+     make a key: it replaces the object's prototype. */
+  const poison = all.filter(f => /poison_/.test(f));
+  check('the poison fixtures are present', poison.length === 6, poison.length + ' files');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.evaluate(() => localStorage.clear());
+  await page.setInputFiles('#fileInput', poison);
+  await page.waitForFunction(() => window.__ctConsole && window.__ctConsole.state.volume,
+    null, { timeout: 60000 });
+  await page.waitForTimeout(1200);
+  const pois = await page.evaluate(() => {
+    const C = window.__ctConsole;
+    return {
+      count: C.state.seriesOrder.length,
+      order: C.state.seriesOrder.slice(),
+      cards: document.querySelectorAll('.series-card').length,
+      volume: !!C.state.volume,
+      status: document.getElementById('statusText').textContent,
+      toast: (document.getElementById('toast') || {}).textContent || '',
+      protoPolluted: ({}).evil !== undefined || ({}).slices !== undefined,
+      arrayOk: typeof [].push === 'function',
+      objProto: Object.getPrototypeOf({}) === Object.prototype,
+    };
+  });
+  check('all three poison series loaded', pois.count === 3, JSON.stringify(pois.order));
+  check('and each got a card', pois.cards === 3, pois.cards + ' cards');
+  check('one of them built a volume', pois.volume, pois.status);
+  check('the load was not reported as a failure', !/Couldn't read any/i.test(pois.toast),
+    pois.toast);
+  check('Object.prototype was not polluted', !pois.protoPolluted);
+  check('Array.prototype still works', pois.arrayOk);
+  check('a plain object still has Object.prototype', pois.objProto);
+  /* Each must be independently openable: a shared or inherited entry would
+     show one series' images under another's name. */
+  const opened = await page.evaluate(async () => {
+    const C = window.__ctConsole;
+    const out = [];
+    for (const uid of C.state.seriesOrder) {
+      C.selectSeries(uid);
+      await new Promise(r => setTimeout(r, 500));
+      out.push({ asked: uid, got: C.state.currentSeriesUID,
+                 slices: C.state.volume ? C.state.volume.depth : 0 });
+    }
+    return out;
+  });
+  check('every poison series opens as itself',
+    opened.every(o => o.got === o.asked && o.slices === 2), JSON.stringify(opened));
+
+  /* =================================================================== */
+  console.log('\n8. A file it cannot read says why');
+  const junkDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ctjunk-'));
+  const junk = [];
+  const write = (name, buf) => { const p = path.join(junkDir, name); fs.writeFileSync(p, buf); junk.push(p); };
+  /* Three different kinds of unreadable, which should not all read alike. */
+  write('notes.txt', Buffer.from('this is not a DICOM file at all'));   // too short to be one
+  write('report.pdf', Buffer.concat([Buffer.from('%PDF-1.7\n'),
+                                     Buffer.alloc(600, 0x41)]));        // long, but no DICM
+  /* A real DICOM preamble + DICM, then nothing: truncated, not foreign. */
+  const trunc = Buffer.concat([Buffer.alloc(128), Buffer.from('DICM'), Buffer.from([0x02, 0x00])]);
+  write('cut-off.dcm', trunc);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.setInputFiles('#fileInput', junk);
+  await page.waitForTimeout(2500);
+  const why = await page.textContent('#toast');
+  check('it says nothing could be read', /Couldn't read any/i.test(why), why);
+  check('and names a reason in plain words',
+    /not a DICOM file|truncated or corrupt|no image data/i.test(why), why);
+  check('the reason is not a stack trace or raw exception text',
+    !/\bat \w+\s*\(|Error:|undefined/i.test(why), why);
+  /* A folder of holiday photos and a half-copied study are different
+     problems; one message for both would send the reader looking in the
+     wrong place. */
+  check('a foreign file and a truncated one are told apart',
+    /not a DICOM file/i.test(why) && /truncated or corrupt/i.test(why), why);
+  check('the two foreign files were counted together, not listed twice',
+    /not a DICOM file \(×2\)/i.test(why), why);
+  fs.rmSync(junkDir, { recursive: true, force: true });
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

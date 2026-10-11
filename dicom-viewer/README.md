@@ -321,6 +321,29 @@ that is where the eye already goes:
 Plus **R / L / A / P / H / F** orientation letters, derived from Image
 Orientation (Patient) and suppressed when no single letter is honest.
 
+#### The scale bar
+
+Along the bottom of every 2D pane, a bar of known length — the longest round
+number of millimetres (1, 2, 5, 10, 20 …) that fits in a third of the pane,
+with its length written above it. How big something is on screen is the one
+judgement a reader makes without measuring, and zoom destroys it: a 4 mm
+nodule filling a quarter of the pane reads as a mass. The bar puts that
+judgement back.
+
+It is drawn only when the millimetre is real. No Pixel Spacing, or slice
+spacing that cannot be trusted on a cut that samples across slices, and
+there is **no bar at all** — the same rule the measurements follow. A bar
+labelled `50 mm` that is not 50 mm would be held up against the screen and
+believed, which makes it worse than nothing.
+
+Rotating or flipping a pane turns the image, not the ruler, so the bar does
+not change; zooming in shortens it. `browser-info.js` checks the bar against
+the viewer's own distance tool rather than against the arithmetic that drew
+it: with a 20 mm bar on screen, measuring from one end of it to the other
+reads 20.0 mm. It also scans the overlay canvas to confirm the bar drawn is
+as long as the bar computed, since a correct number drawn wrongly is still
+wrong.
+
 Every string in the corners is a header value or a number this viewer
 computed, and all of it goes through `textContent` rather than `innerHTML` —
 a file with markup in its `PatientName` shows the markup instead of running
@@ -433,7 +456,8 @@ anatomy. Two conditions are stated rather than assumed:
 
 - **Study → Series hierarchy**, keyed on Study Instance UID.
 - **Searchable DICOM tag browser** — free-text search across every element in
-  the dataset, by keyword, value, or tag number such as `0028,1053`.
+  the dataset, by keyword, value, or tag number such as `0028,1053`, grouped
+  into Patient, Study, Series, Technique, Image, Pixel Data and Derived.
 - **Geometry validation** before reconstruction: irregular slice spacing,
   changing Image Orientation, tilted/non-axial acquisitions, missing slice
   positions and excluded mismatched slices are all reported rather than
@@ -441,6 +465,43 @@ anatomy. Two conditions are stated rather than assumed:
 - **PNG export** of the active pane, with the overlays as displayed.
 - Duplicate instances (same SOP Instance UID) are ignored on re-import and
   reported.
+
+#### The Study panel
+
+**⋯ More → Patient and study** opens a fixed summary beside the images: the patient
+(name, ID, age and sex), the study (description, date, accession number,
+institution, referring physician) and the equipment (manufacturer and model,
+station, protocol, patient position). It is the same rows in the same order
+on every study, so confirming that the images on screen belong to the patient
+you are reporting is a glance rather than a search.
+
+One line is not a header value: **Contents** counts the series and images of
+this study that are actually loaded — `2 series · 77 images loaded`. It says
+*loaded* because that is what it knows. A folder opened halfway, or one series
+dragged in out of several, reads as exactly that; nothing here claims to know
+what the study contains on the scanner.
+
+Every row is dropped when the tag is absent rather than filled in. There is no
+birth date row on a file that carries only an age, and no acquisition phase
+anywhere: the viewer cannot know whether a series is arterial or venous, and a
+guess in that row would be read as fact.
+
+#### Technique
+
+The tag browser's **Technique** section carries the acquisition parameters,
+and it is one section for both modalities. On a CT it fills with the
+convolution kernel, kVp, tube current, exposure, CTDIvol, gantry tilt and
+reconstruction diameter; on an MR with TR, TE, TI, flip angle, field strength,
+echo train length, scanning sequence, sequence variant, scan options and
+acquisition type.
+
+The viewer is never told the modality for this. It lists every row and drops
+the ones the file does not carry, so a CT shows no empty `Echo Time (TE)` —
+which would read as "no TE", not as "not applicable" — and a sequence the
+scanner wrote parameters into shows them whatever `Modality` says.
+`test/browser-info.js` checks both directions: that the CT fixture shows the
+kernel and kVp and no MR row, and that the MR fixture shows TR, TE and field
+strength and no CT row.
 
 ### Scout / localizer navigation
 
@@ -719,7 +780,7 @@ row and that assertion is what caught it.
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
 | **⇕ Stack ▾** / **🔗 Sync ▾** | Slices between repeated panes; and what is linked across panes bound to different series. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
-| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export, the shortcut list |
+| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export, patient and study data, the DICOM tags, the shortcut list |
 | **⤾ Reset ▾** | The reset options below |
 
 Each button names what it is holding — the layout button reads `▦ 2×2`, the
@@ -731,8 +792,8 @@ Everything that is not needed every minute lives in the **⚙️ Tools** panel
 instead: slab thickness, bone cut and the sculpting brush, 3D rendering and
 its crop sliders, the scout, cine speed and direction, the focus point,
 oblique MPR, the measurement list with undo/redo and the ROI histogram,
-volume geometry and the DICOM tag browser. The panel shows the sections
-belonging to the armed tool — see **The Tools panel follows the tool**.
+volume geometry, the patient-and-study summary and the DICOM tag browser. The
+panel shows the sections belonging to the armed tool — see **The Tools panel follows the tool**.
 
 Menus are fixed-position siblings of the toolbar, not children of it, and
 their height is clamped to the room actually below the button. Both are
@@ -868,6 +929,20 @@ markup is parsed, no handler fires — and that the text is still **shown
 literally** rather than silently stripped, because a radiologist needs to
 see that a file's header is malformed.
 
+**A header string is not a dictionary key.** The viewer keys its series,
+volume and cache dictionaries by values taken straight out of the file:
+Series Instance UID, Study Instance UID, SOP Instance UID. A plain `{}`
+answers truthily for `__proto__`, `constructor` and `toString` whether or not
+anything was ever stored under them, so a file naming itself one of those was
+read as an *already loaded* series and then used as one — and writing to
+`__proto__` on a plain object does not create a key at all, it replaces the
+object's prototype. Every map keyed by untrusted text is now built by
+`dict()`, which returns an `Object.create(null)` with no prototype to inherit
+from or overwrite. `test/fixtures/make_hostile.py` writes six files whose
+UIDs are exactly those three names; the suite loads them and requires that
+all three series appear, that each opens as itself, and that
+`Object.prototype` and `Array.prototype` are untouched afterwards.
+
 **Browser storage is not a trust boundary.** Reports and measurements are
 kept in `localStorage`, which anything on this origin can write and which
 can be hand-edited or corrupted. A stored key image is read back through a
@@ -876,6 +951,28 @@ URL — a value like `x" onerror="…` would otherwise have become script when
 it was put into an `<img src>` — and it is escaped again on the way out,
 because one of the two being right is not a guarantee. A report holds at
 most 24 key images.
+
+A saved measurement is read back the same way. The tool must be one this
+build actually has — `toString` is not a tool, however truthily a plain
+object answers to it — the plane must be one it can draw on, the slice index
+a number or absent, and the points finite; a note is cut to 500 characters.
+Anything else is dropped rather than half-restored, because a record whose
+`plane` is an object reaches `plane.slice(0, 3)` in the measurement list and
+takes the whole panel down with it.
+
+**A file it cannot read says why.** A per-file `catch` that only counted the
+failure made a corrupt file and a bug in this viewer look identical from the
+outside, which is the wrong way round: the second is the one worth hearing
+about. Each refusal now records a reason, and the message groups them —
+`Couldn't read any DICOM files from the selection. not a DICOM file (×2); the
+file is truncated or corrupt`. A folder of two hundred JPEGs says one thing
+rather than two hundred. The reasons are the parser's, translated only where
+the cause is unambiguous: a file too short to hold a Part 10 preamble, or one
+without the `DICM` prefix, is "not a DICOM file"; a file that runs off the end
+mid-element is "truncated or corrupt"; an unsupported transfer syntax is
+passed through verbatim because it already names the codec. Anything else is
+shown as the parser worded it rather than guessed at, since a confident wrong
+explanation is worse than a technical one.
 
 **A failed save is reported, not swallowed.** Storage can be full or
 blocked. If a report fails to save, a toast says so and the status line

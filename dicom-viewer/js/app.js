@@ -48,6 +48,25 @@
                "compareMenu", "syncMenu"];
   var MPR_PLANES = ["axial", "coronal", "sagittal"];
 
+  /**
+   * A dictionary with no prototype, for anything keyed by untrusted text.
+   *
+   * Every key in these maps comes out of a DICOM header or out of local
+   * storage, and a plain {} answers truthily for "__proto__", "constructor"
+   * and "toString" whether or not anything was ever stored under them. A
+   * real file whose Series Instance UID is the string "__proto__" was
+   * therefore read as an already-loaded series and then used as one, which
+   * threw and lost the file; and had the write been reached,
+   * `map["__proto__"] = group` would have replaced the map's prototype
+   * rather than adding a key. Object.create(null) has neither an inherited
+   * key nor a __proto__ setter, so such a UID becomes an ordinary entry.
+   */
+  function dict(from) {
+    var d = Object.create(null);
+    if (from) Object.keys(from).forEach(function (k) { d[k] = from[k]; });
+    return d;
+  }
+
   // The 3D texture is packed once over the full diagnostic HU range so the
   // transfer-function presets can be expressed in real Hounsfield Units.
   var VR_WINDOW_LOW = -1024;
@@ -324,13 +343,13 @@
    * ------------------------------------------------------------------- */
   var state = {
     seriesOrder: [],
-    seriesMap: {},
+    seriesMap: dict(),
     currentSeriesUID: null,
     duplicateCount: 0,
 
     volume: null,                 // the current series' volume
-    volumes: {},                  // seriesUid -> volume, for comparison panes
-    seriesIndex: {},              // seriesUid -> { axial, coronal, sagittal }
+    volumes: dict(),              // seriesUid -> volume, for comparison panes
+    seriesIndex: dict(),          // seriesUid -> { axial, coronal, sagittal }
     // What is linked across panes bound to *different* series. Three
     // separate switches, because they answer different questions: position
     // is the one that is nearly always wanted, and window/level is the one
@@ -361,7 +380,7 @@
     // exists so a test, or a shared machine, can turn that off.
     measurePersist: true,
     measureStoredUids: [],        // series with a saved record, for clean-up
-    measureLoaded: {},            // series already restored this session
+    measureLoaded: dict(),        // series already restored this session
 
     windowWidth: 400,
     windowCenter: 40,
@@ -386,6 +405,7 @@
     // 3D crop box, as fractions 0..1 along the volume's own three axes
     // (columns, rows, slices — not patient axes; see cropAxisLabels).
     draggingSeries: null,      // series UID being dragged onto a pane
+    skipReasons: [],           // why files were refused on the last open
     // The Tools panel follows the armed tool. Turning this off pins every
     // section on screen at once, which is what you want while setting a
     // study up and in the way while reading it.
@@ -437,12 +457,12 @@
   var toastTimer = null;
   var renderer = null;          // CTVolumeRenderer.Renderer
   var vrDirty = true;           // texture needs re-upload
-  var planeCache = {};          // request key -> extracted plane
+  var planeCache = dict();      // request key -> extracted plane
   var planeCacheKeys = [];      // insertion order, for trimming
   var cineTimer = null;
   var volumeOrder = [];         // reconstruction order, for evicting
   var MAX_CACHED_VOLUMES = 3;   // current study plus a prior or two
-  var seriesNodes = {};         // uid -> { wrapper, sliceCount }
+  var seriesNodes = dict();     // uid -> { wrapper, sliceCount }
 
   /* ---------------------------------------------------------------------
    * DOM
@@ -571,6 +591,7 @@
       dom.cropName.push(byId("vrCropName" + ci));
       dom.cropValue.push(byId("vrCropValue" + ci));
     }
+    dom.studyInfo = byId("studyInfo");
     dom.volumeInfo = byId("volumeInfo");
     dom.metaTable = byId("metaTable");
     dom.statusText = byId("statusText");
@@ -659,7 +680,7 @@
    * over, and scrolling it gains you nothing. Pinned panes are left alone.
    */
   function restack() {
-    var seen = {};
+    var seen = dict();   // keyed by header text; see dict()
     state.cells.forEach(function (cell) {
       if (cell.plane === "vr") return;
       // Panes on different series are separate runs: a shared offset would
@@ -1026,7 +1047,7 @@
     var changed = V.sculptSphere(vol, world, state.sculptRadius, false);
     if (!changed.length) return;
     if (stroke) stroke.push.apply(stroke, changed);
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     vrDirty = true;
   }
 
@@ -1034,7 +1055,7 @@
     var last = state.sculptUndo.pop();
     if (!last) return showToast("Nothing to undo.", true);
     V.undoSculpt(last.volume, last.indices, false);
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     vrDirty = true;
     renderAll();
     updateBoneStatus();
@@ -1049,7 +1070,7 @@
     if (state.volume && V.hasSculpt(state.volume)) { V.clearSculpt(state.volume); any = true; }
     state.sculptUndo = [];
     if (!any) return;
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     vrDirty = true;
     renderAll();
     updateBoneStatus();
@@ -1259,7 +1280,7 @@
       burnedIn: str(dataSet, "x00280301", "").toUpperCase(),
       sopInstanceUID: str(dataSet, "x00080018", ""),
 
-      _frameCache: {},
+      _frameCache: dict(),
     };
   }
 
@@ -1448,7 +1469,7 @@
         imageType: instance.imageType,
         contrastAgent: instance.contrastAgent,
         instances: [],
-        seenSopUids: {},
+        seenSopUids: dict(),
       };
       state.seriesMap[uid] = group;
       state.seriesOrder.push(uid);
@@ -1470,7 +1491,7 @@
    * actually split — an unqualified single-echo series needs no label.
    */
   function labelSplitStacks() {
-    var byBase = {};
+    var byBase = dict();   // keyed by header text; see dict()
     state.seriesOrder.forEach(function (uid) {
       var g = state.seriesMap[uid];
       var base = g.baseSeriesUID || uid;
@@ -1491,7 +1512,7 @@
 
   /** Series grouped under their Study, in load order. */
   function studyGroups() {
-    var studies = [], byUid = {};
+    var studies = [], byUid = dict();   // keyed by header text; see dict()
     state.seriesOrder.forEach(function (uid) {
       var group = state.seriesMap[uid];
       var sUid = group.studyUID || "(no study UID)";
@@ -1552,6 +1573,7 @@
     if (!files.length) return;
 
     var pending = files.length, loaded = 0, skipped = 0, firstNewSeriesUID = null;
+    state.skipReasons = [];
     setBusy(true, "Reading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…");
 
     files.forEach(function (file) {
@@ -1565,17 +1587,71 @@
           addInstance(instance);
           loaded++;
         } catch (err) {
+          // Keep why. A file refused because it is not DICOM and a file
+          // refused because this viewer threw on it look identical to a
+          // reader otherwise, and the second is a bug to be told about.
           skipped++;
+          noteSkip(file.name, err && err.message ? err.message : String(err),
+            file.size);
         } finally {
           if (--pending === 0) onAllFilesProcessed(loaded, skipped, firstNewSeriesUID);
         }
       };
       reader.onerror = function () {
         skipped++;
+        noteSkip(file.name, "the browser could not read the file", null);
         if (--pending === 0) onAllFilesProcessed(loaded, skipped, firstNewSeriesUID);
       };
       reader.readAsArrayBuffer(file);
     });
+  }
+
+  /**
+   * The parser's own words, in a reader's.
+   *
+   * Only for messages whose cause is unambiguous; anything else is passed
+   * through verbatim rather than guessed at, because a wrong explanation is
+   * worse than a technical one.
+   */
+  function plainSkipReason(why, size) {
+    if (/DICM prefix not found/i.test(why)) return "not a DICOM file";
+    // A Part 10 file begins with a 128-byte preamble and the four bytes
+    // "DICM", so anything shorter cannot be one — and the parser runs off
+    // the end while still reading that header, which would otherwise read
+    // as a truncated image rather than a file of some other kind.
+    if (size != null && size < 132) return "not a DICOM file";
+    if (/past end of buffer|underflow|out of range/i.test(why)) return "the file is truncated or corrupt";
+    if (/no Pixel Data/i.test(why)) return "no image data in the file";
+    if (/transfer syntax/i.test(why)) return why;     // already names the codec
+    return why;
+  }
+
+  /** Remember why one file was refused, bounded so a bad folder cannot grow. */
+  function noteSkip(name, why, size) {
+    if (!state.skipReasons) state.skipReasons = [];
+    if (state.skipReasons.length < 40) {
+      state.skipReasons.push({
+        file: String(name).slice(0, 120),
+        why: plainSkipReason(String(why), size).slice(0, 200),
+      });
+    }
+  }
+
+  /**
+   * The distinct reasons files were refused, most common first.
+   *
+   * Grouped rather than listed: a folder of two hundred JPEGs should say
+   * one thing, not two hundred.
+   */
+  function skipSummary() {
+    var reasons = state.skipReasons || [];
+    if (!reasons.length) return "no reason recorded";
+    var counts = dict();
+    reasons.forEach(function (r) { counts[r.why] = (counts[r.why] || 0) + 1; });
+    var keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+    return keys.slice(0, 2).map(function (k) {
+      return counts[k] > 1 ? k + " (×" + counts[k] + ")" : k;
+    }).join("; ") + (keys.length > 2 ? "; and " + (keys.length - 2) + " more" : "");
   }
 
   function onAllFilesProcessed(loaded, skipped, firstNewSeriesUID) {
@@ -1587,14 +1663,16 @@
 
     setBusy(false);
     if (!loaded) {
-      showToast("Couldn't read any DICOM files from the selection.", true);
+      showToast("Couldn't read any DICOM files from the selection. " +
+        skipSummary(), true);
+      setStatus("Nothing loaded — " + skipSummary());
       return;
     }
 
     labelSplitStacks();
     renderSeriesList();
     var parts = [loaded + " image" + (loaded === 1 ? "" : "s") + " loaded"];
-    if (skipped) parts.push(skipped + " skipped (not readable DICOM)");
+    if (skipped) parts.push(skipped + " skipped — " + skipSummary());
     if (state.duplicateCount) parts.push(state.duplicateCount + " duplicate(s) ignored");
     showToast(parts.join(", ") + ".");
 
@@ -2029,7 +2107,7 @@
     syncWindowControls();
 
     state.volume = null;
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     vrDirty = true;
     renderSeriesList();
 
@@ -2118,7 +2196,7 @@
     if (!state.volume) return;
     V.computeBoneMask(state.volume, state.boneThreshold, 2);
     state.boneMaskVersion++;
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     vrDirty = true;
   }
 
@@ -2182,7 +2260,7 @@
         n: V.rotateAbout(g.n, axis, theta),
       });
     });
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
   }
 
   /** Pointer angle about the crosshair, in this plane's own u/v basis. */
@@ -2211,7 +2289,7 @@
 
   function resetOblique() {
     resetFrames();
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     renderAll();
   }
 
@@ -2385,6 +2463,7 @@
     });
     updateObliqueInfo();
     updateMetadata();
+    renderStudyInfo();
     // The scout marks where the panes are, so it is part of a full redraw.
     // Leaving it to renderAllOverlays() alone meant a study that has a
     // localizer showed none until the reader happened to arm a tool.
@@ -2539,8 +2618,86 @@
     drawRedactions(ctx, geom, rec, dpr);
     if (state.crosshair) drawCrosshair(ctx, geom, dpr);
     drawFocus(ctx, geom, dpr);
-    if (!rec.root.classList.contains("compact")) drawOrientationMarkers(ctx, geom, dpr);
+    if (!rec.root.classList.contains("compact")) {
+      drawOrientationMarkers(ctx, geom, dpr);
+      drawScaleBar(ctx, geom, dpr);
+    }
     drawMeasurements(ctx, geom, dpr);
+  }
+
+  /* ---------------------------------------------------------------------
+   * Scale bar
+   *
+   * How big something is on screen is the one thing a reader judges without
+   * measuring it, and zoom destroys that judgement: a 4 mm nodule filling a
+   * quarter of the pane looks like a mass. A bar of known length restores it.
+   *
+   * It is drawn only when the millimetre is real. Pixel Spacing missing, or
+   * slice spacing that cannot be trusted on a cut that samples across
+   * slices, means the viewer does not know how big anything is — and a bar
+   * labelled "50 mm" that is not 50 mm is worse than no bar at all, because
+   * it would be measured off the screen with a ruler and believed.
+   * ------------------------------------------------------------------- */
+
+  /* 1-2-5, the usual sequence for a graduated scale. */
+  var SCALE_STEPS = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+  /** The calibration of the series a pane is actually showing. */
+  function paneCalibration(geom) {
+    var group = state.seriesMap[geom.uid] || getCurrentGroup();
+    var inst = group && group.slices.length ? group.slices[0].instance : null;
+    var source = inst && inst.hasPixelSpacing ? "PixelSpacing" : null;
+    var crossesSlices = geom.plane !== "axial" || (geom.slab && geom.slab.oblique);
+    var vol = geom.vol || state.volume;
+    if (source && crossesSlices && !(vol && vol.spacingZReliable)) source = null;
+    return MEAS.calibrationOf(geom.slab, source);
+  }
+
+  /**
+   * The longest round number of millimetres that fits in a third of the pane.
+   *
+   * `t.scale` is canvas pixels per millimetre: the slab is drawn at its
+   * physical size, so the factor is the same along both axes and is left
+   * alone by rotation and flipping. Returns null rather than a bar whenever
+   * the length would be a guess.
+   */
+  function scaleBarFor(geom) {
+    if (!geom || !geom.t || !geom.slab || geom.plane === "vr") return null;
+    var cal = paneCalibration(geom);
+    if (!cal.calibrated) return null;
+    var pxPerMm = geom.t.scale;
+    if (!isFinite(pxPerMm) || pxPerMm <= 0) return null;
+    var maxPx = geom.cw / 3;
+    var mm = 0;
+    for (var i = SCALE_STEPS.length - 1; i >= 0; i--) {
+      if (SCALE_STEPS[i] * pxPerMm <= maxPx) { mm = SCALE_STEPS[i]; break; }
+    }
+    if (!mm) return null;             // zoomed in past the shortest step
+    return { mm: mm, px: mm * pxPerMm, label: fmt(mm) + " mm" };
+  }
+
+  function drawScaleBar(ctx, geom, dpr) {
+    var bar = scaleBarFor(geom);
+    if (!bar) return;
+    var y = geom.ch - 46 * dpr;
+    var x0 = geom.cw / 2 - bar.px / 2, x1 = x0 + bar.px;
+    var tick = 4 * dpr;
+    ctx.save();
+    ctx.strokeStyle = "rgba(216, 240, 255, 0.92)";
+    ctx.fillStyle = "rgba(216, 240, 255, 0.92)";
+    ctx.lineWidth = Math.max(1, 1.5 * dpr);
+    ctx.shadowColor = "rgba(0,0,0,0.9)";
+    ctx.shadowBlur = 3 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x0, y - tick); ctx.lineTo(x0, y + tick);
+    ctx.moveTo(x0, y); ctx.lineTo(x1, y);
+    ctx.moveTo(x1, y - tick); ctx.lineTo(x1, y + tick);
+    ctx.stroke();
+    ctx.font = "bold " + Math.round(11 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(bar.label, (x0 + x1) / 2, y - 4 * dpr);
+    ctx.restore();
   }
 
   /**
@@ -3316,7 +3473,7 @@
    */
   function persistMeasurements() {
     if (!state.measurePersist) return;
-    var uids = {};
+    var uids = dict();   // keyed by header text; see dict()
     state.measureStoredUids.forEach(function (u) { uids[u] = true; });
     state.measurements.forEach(function (m) { if (m.seriesUid) uids[m.seriesUid] = true; });
 
@@ -3335,7 +3492,7 @@
     var saved = MEAS.loadFor(uid);
     if (!saved.length) return;
     // Guard against a double restore if the same series is opened twice.
-    var have = {};
+    var have = dict();   // keyed by header text; see dict()
     state.measurements.forEach(function (m) { if (m.seriesUid === uid) have[m.id] = true; });
     var added = saved.filter(function (m) { return !have[m.id]; });
     if (!added.length) return;
@@ -3961,11 +4118,12 @@
         '<div class="measure-row' + (m.id === state.selectedMeasurement ? " selected" : "") +
         (m.hidden ? " hidden-row" : "") + '" data-id="' + m.id + '">' +
         '<span class="measure-kind" title="' + escapeHtml(MEAS.label(m.tool)) + '">' +
-        MEAS.glyph(m.tool) + "</span>" +
+        escapeHtml(MEAS.glyph(m.tool)) + "</span>" +
         '<span class="measure-main">' + escapeHtml(value) +
         '<span class="measure-detail">' + escapeHtml(detail || "") + "</span>" +
         "</span>" +
-        '<span class="measure-loc">' + m.plane.slice(0, 3) + " " + sliceLabel(m) + "</span>" +
+        '<span class="measure-loc">' + escapeHtml(String(m.plane).slice(0, 3)) +
+          " " + escapeHtml(sliceLabel(m)) + "</span>" +
         '<button class="measure-eye" data-eye="' + m.id + '" title="' +
         (m.hidden ? "Show" : "Hide") + '">' + (m.hidden ? "◌" : "◉") + "</button>" +
         '<button class="measure-del" data-del="' + m.id + '" title="Delete">×</button>' +
@@ -4899,6 +5057,10 @@
       ["x00080020", "Study Date", formatDicomDate],
       ["x00081030", "Study Description"],
       ["x00080050", "Accession Number"],
+      ["x00080030", "Study Time"],
+      ["x00080080", "Institution Name"],
+      ["x00080090", "Referring Physician"],
+      ["x00081010", "Station Name"],
     ]],
     ["Series", [
       ["x0020000e", "Series Instance UID"],
@@ -4907,6 +5069,35 @@
       ["x00080060", "Modality"],
       ["x00180050", "Slice Thickness"],
       ["x00180088", "Spacing Between Slices"],
+      ["x00181030", "Protocol Name"],
+      ["x00180015", "Body Part Examined"],
+      ["x00185100", "Patient Position"],
+      ["x00081090", "Manufacturer Model"],
+      ["x00080070", "Manufacturer"],
+      ["x00180010", "Contrast / Bolus Agent"],
+    ]],
+    // Technique. Which of these a file carries says what it is: a CT states
+    // kVp and tube current, an MR states TR, TE and field strength. Both
+    // sections are listed and the empty one is dropped, so the panel shows
+    // the modality's own parameters without being told the modality.
+    ["Technique", [
+      ["x00181210", "Convolution Kernel"],
+      ["x00180060", "kVp"],
+      ["x00181151", "Tube Current (mA)"],
+      ["x00181152", "Exposure (mAs)"],
+      ["x00189345", "CTDIvol"],
+      ["x00181120", "Gantry Tilt"],
+      ["x00181100", "Reconstruction Diameter"],
+      ["x00180080", "Repetition Time (TR)"],
+      ["x00180081", "Echo Time (TE)"],
+      ["x00180082", "Inversion Time (TI)"],
+      ["x00181314", "Flip Angle"],
+      ["x00180087", "Magnetic Field Strength"],
+      ["x00180091", "Echo Train Length"],
+      ["x00180020", "Scanning Sequence"],
+      ["x00180021", "Sequence Variant"],
+      ["x00180022", "Scan Options"],
+      ["x00180023", "MR Acquisition Type"],
     ]],
     ["Image", [
       ["x00080018", "SOP Instance UID"],
@@ -5280,7 +5471,7 @@
     }
     if (what === "oblique" || what === "all") {
       resetFrames();
-      planeCache = {}; planeCacheKeys = [];
+      planeCache = dict(); planeCacheKeys = [];
       did.push("planes");
     }
     if (what === "panes" || what === "all") {
@@ -5328,7 +5519,7 @@
       cell.view = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false };
     });
     resetFrames();
-    planeCache = {}; planeCacheKeys = [];
+    planeCache = dict(); planeCacheKeys = [];
     if (renderer) {
       renderer.rotX = -1.35;
       renderer.rotY = 0;
@@ -6010,7 +6201,7 @@
       if (!state.seriesOrder.length) return showToast("Nothing is loaded.", true);
       if (!confirm("Clear all loaded series?")) return;
       state.seriesOrder = [];
-      state.seriesMap = {};
+      state.seriesMap = dict();
       state.currentSeriesUID = null;
       state.volume = null;
       state.index = { axial: 0, coronal: 0, sagittal: 0 };
@@ -6020,10 +6211,25 @@
       // Saved measurements are not deleted here — clearing the viewer is not
       // the same as discarding a reader's work — but they must be allowed to
       // load again when the series is reopened.
-      state.measureLoaded = {};
+      state.measureLoaded = dict();
       state.measureStoredUids = [];
       forgetMeasureHistory();
-      planeCache = {}; planeCacheKeys = [];
+      // Clearing cleared the series list and left the reconstructed volumes
+      // behind it in the cache — up to three studies' worth of voxels for a
+      // patient who is no longer loaded, and a volume that would be reused
+      // if the same series were opened again rather than rebuilt from the
+      // files actually chosen. Everything keyed by a series UID goes
+      // together, and the panes let go of their bindings here rather than
+      // relying on the next render to notice the series has gone.
+      state.volumes = dict();
+      state.seriesIndex = dict();
+      volumeOrder = [];
+      state.cells.forEach(function (cell) {
+        cell.seriesUid = null;
+        cell.pinned = false;
+        cell.offset = 0;
+      });
+      planeCache = dict(); planeCacheKeys = [];
       vrDirty = true;
       if (renderer) renderer.dispose();
       resetView();
@@ -6248,6 +6454,11 @@
         clearFocus();
       } else if (what === "segment") {
         showToolsContext("threed");
+      } else if (what === "study") {
+        showToolsContext("info");
+        // Both live in the same panel, and the tag browser is long enough to
+        // push the summary off screen. Name the route to each.
+        if (dom.studyInfo) dom.studyInfo.scrollIntoView({ block: "nearest" });
       } else if (what === "tags") {
         showToolsContext("info");
       } else if (what === "shortcuts") {
@@ -6398,7 +6609,7 @@
       state.seriesFilter = dom.seriesFilter.value;
       // Rebuild from scratch: nodes are cached by series, and filtering
       // changes which ones belong in the list at all.
-      seriesNodes = {};
+      seriesNodes = dict();
       dom.seriesList.innerHTML = "";
       renderSeriesList();
     }, 150));
@@ -6469,7 +6680,7 @@
         });
         return;
       }
-      planeCache = {}; planeCacheKeys = [];
+      planeCache = dict(); planeCacheKeys = [];
       vrDirty = true;
       renderAll();
       updateBoneStatus();
@@ -7511,7 +7722,7 @@
    */
   function burnedInSeries(scope) {
     var cells = scope === "grid" ? state.cells : [state.cells[state.activeCell]];
-    var seen = {};
+    var seen = dict();   // keyed by header text; see dict()
     cells.forEach(function (cell) {
       if (!cell || cell.plane === "vr") return;
       var uid = cellSeriesUid(cell);
@@ -7775,6 +7986,66 @@
     updateStackNote();
   }
 
+  /**
+   * What the study is, in one place.
+   *
+   * Scattered across four pane corners is the right home for the few facts
+   * you read continuously; the rest — accession, institution, how many
+   * series and how many images — belong somewhere you can go and look,
+   * without taking permanent screen from the images.
+   *
+   * Every value is a header string, so every value is escaped: metaRow does
+   * that for both halves of the row.
+   */
+  function renderStudyInfo() {
+    if (!dom.studyInfo) return;
+    var group = getCurrentGroup();
+    if (!group) {
+      dom.studyInfo.innerHTML = '<p class="muted small">No study loaded.</p>';
+      return;
+    }
+    var inst = group.slices.length ? group.slices[0].instance : null;
+    var ds = inst && inst.dataSet;
+    if (!ds) {
+      dom.studyInfo.innerHTML = '<p class="muted small">No image in this series.</p>';
+      return;
+    }
+
+    // Everything of this study that is loaded, not just the open series.
+    var series = state.seriesOrder
+      .map(function (u) { return state.seriesMap[u]; })
+      .filter(function (g) { return g && g.studyUID === group.studyUID; });
+    var images = series.reduce(function (a, g) { return a + g.slices.length; }, 0);
+
+    var rows = "";
+    function row(label, value) { if (value) rows += metaRow(label, value); }
+
+    rows += metaSection("Patient");
+    row("Name", formatPersonName(str(ds, "x00100010", "")));
+    row("ID", str(ds, "x00100020", ""));
+    row("Age / sex", [(inst.patientAge || "").replace(/^0+/, ""), inst.patientSex]
+      .filter(Boolean).join("  ") ||
+      (inst.patientBirthDate ? "born " + formatDicomDate(inst.patientBirthDate) : ""));
+
+    rows += metaSection("Study");
+    row("Description", group.studyDescription || "");
+    row("Date", formatDicomDate(group.studyDate || ""));
+    row("Accession", str(ds, "x00080050", ""));
+    row("Institution", str(ds, "x00080080", ""));
+    row("Referrer", formatPersonName(str(ds, "x00080090", "")));
+    row("Contents", series.length + " series · " + images + " image" +
+      (images === 1 ? "" : "s") + " loaded");
+
+    rows += metaSection("Equipment");
+    row("Manufacturer", [str(ds, "x00080070", ""), str(ds, "x00081090", "")]
+      .filter(Boolean).join(" "));
+    row("Station", str(ds, "x00081010", ""));
+    row("Protocol", str(ds, "x00181030", ""));
+    row("Patient position", str(ds, "x00185100", ""));
+
+    dom.studyInfo.innerHTML = rows;
+  }
+
   /** Tick the Sync menu, and say on the button how much is linked. */
   function syncSyncMenu() {
     if (!dom.syncMenu) return;
@@ -7992,6 +8263,11 @@
     toggleViewTool: toggleViewTool,
     syncToolsPanel: syncToolsPanel,
     toolContext: toolContext,
+    skipSummary: skipSummary,
+    renderStudyInfo: renderStudyInfo,
+    scaleBarFor: scaleBarFor,
+    paneCalibration: paneCalibration,
+    dict: dict,
     syncSyncMenu: syncSyncMenu,
     applyLinkedView: applyLinkedView,
     toggleMaximise: toggleMaximise,

@@ -53,8 +53,24 @@ for k in range(DEPTH):
     ds.PixelRepresentation = 0
     # No RescaleSlope/Intercept and no RescaleType: MR has no absolute scale.
     ds.WindowWidth, ds.WindowCenter = 1400, 700
+    # MR technique. None of these exist on a CT, which is the point: the
+    # panel is told the parameters, not the modality, and shows whichever
+    # the file actually carries.
     ds.MagneticFieldStrength = 1.5
     ds.ScanningSequence = 'SE'; ds.SequenceVariant = 'SK'
+    ds.RepetitionTime = 9000.0
+    ds.EchoTime = 120.0
+    ds.InversionTime = 2500.0
+    ds.FlipAngle = 150.0
+    ds.EchoTrainLength = 17
+    ds.ScanOptions = 'FLAIR'
+    ds.MRAcquisitionType = '2D'
+    ds.BodyPartExamined = 'BRAIN'
+    ds.PatientPosition = 'HFS'
+    ds.ProtocolName = 'AX T2 FLAIR'
+    ds.InstitutionName = 'RIVERSIDE IMAGING'
+    ds.Manufacturer = 'GE MEDICAL SYSTEMS'
+    ds.ManufacturerModelName = 'SIGNA Architect'
     ds.PixelData = stored.tobytes()
     ds.save_as(os.path.join(OUT, 'm%03d.dcm' % k), enforce_file_format=True)
 

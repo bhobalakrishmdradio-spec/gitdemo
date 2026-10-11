@@ -58,14 +58,14 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | --- | --- | --- |
 | `phantom` | 128³ CT, 1 mm isotropic, with a cylinder tilted 30° | An axial cut sees an ellipse; a cut squared to the cylinder must see a 36 mm circle. Ground truth for oblique MPR and for distance |
 | `series-prior` | A second CT of the same region, 1 mm slices starting at z = 6 mm | Linking by slice index lines up the wrong anatomy; linking by patient position must not. Its marker's radius is a function of z, so a mis-link is visible as the wrong size |
-| `series-mr` | MR with no Rescale Slope/Intercept | Nothing may be labelled HU |
+| `series-mr` | MR with no Rescale Slope/Intercept, and a full MR technique header (TR 9000, TE 120, TI 2500, flip 150°, 1.5 T, ETL 17, SE/SK, FLAIR, 2D) | Nothing may be labelled HU; and the technique rows shown are the MR ones, with no CT parameter among them |
 | `series-mrstudy` | Four MR sequences in three acquisition planes, one marker at a known patient coordinate in all four | That each sequence is laid out as acquired, and that moving the crosshair puts every sequence on the same anatomy |
 | `series-echo` | Dual-echo MR | Echoes must not interleave into one stack |
 | `series-burned` | CT with the patient name written into the pixel data, in a known rectangle | That redaction destroys it rather than covering it |
 | `series-followup` | One patient scanned three times with a lesion that grows 8 → 14 → 22 mm, each study at a different thickness and start, each with a useless scout series — plus a second patient scanned on the same dates | That Compare picks this patient's own prior and never the other patient's, picks the diagnostic series and not the scout, and lines the two up by position rather than slice number |
 | `series-raw`, `series-rle`, `series-jpegls` | The same pixels in three transfer syntaxes | Both decoders must return the raw values exactly |
-| `series-scout` | A CT with a **coronal** localizer (row +x, column −z) over 300 mm of z, bands burned in at known levels, and an axial series that fills only part of it | That an axial cut appears on the scout as a horizontal line at row (0 − z); a viewer that ignored Image Orientation would draw a vertical one. Also that a level outside the series is refused rather than clamped |
-| `series-hostile` | CT whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry HTML and script payloads | That header text is shown literally and never parsed as markup, anywhere it is displayed |
+| `series-scout` | A CT with a **coronal** localizer (row +x, column −z) over 300 mm of z, bands burned in at known levels, and an axial series that fills only part of it. Carries a full technique and provenance header (kernel, kVp, mA, mAs, contrast agent, institution, referrer, station, protocol) | That an axial cut appears on the scout as a horizontal line at row (0 − z); a viewer that ignored Image Orientation would draw a vertical one. Also that a level outside the series is refused rather than clamped |
+| `series-hostile` | CT whose PatientName, PatientID, SeriesDescription, AccessionNumber, InstitutionName, Manufacturer and BodyPartExamined carry HTML and script payloads — plus six files (`poison_*.dcm`) whose Study, Series and Frame of Reference UIDs are literally `__proto__`, `constructor` and `toString` | That header text is shown literally and never parsed as markup, anywhere it is displayed; and that a UID which is an inherited property name is an ordinary string to every dictionary the viewer keys by one |
 | `codec` | Bare RLE and JPEG-lossless bitstreams, with a manifest | Decoding, byte for byte, against streams an independent C decoder validated |
 
 ## The suites
@@ -101,7 +101,8 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-viewtools.js` | Zoom, pan and scroll as armed left-drag tools, and that the wheel and modifiers still work |
 | `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |
 | `browser-crop.js` | 3D cropping removes the voxels it says it does, one side at a time, and resets |
-| `browser-security.js` | Hostile DICOM text, untrusted stored reports, and no network or eval anywhere |
+| `browser-security.js` | Hostile DICOM text, untrusted stored reports and measurements, UIDs that are prototype property names, the reason given for a file it cannot read, and no network or eval anywhere |
+| `browser-info.js` | The Patient-and-study panel; that the Technique tags shown are the ones the file carries — CT parameters on a CT, MR parameters on an MR, nothing invented for either; and the scale bar, measured off the overlay canvas and cross-checked with the distance tool |
 | `browser-sweep.js` | Presses every control there is and fails on any error |
 | `probe-bar.js` | The toolbar stays one row and nothing is out of reach |
 | `probe-menus.js` | Every menu opens on screen with every item hit-testable |

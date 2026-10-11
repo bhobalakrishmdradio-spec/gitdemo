@@ -66,9 +66,25 @@ def write(path, stored, *, series, series_desc, series_no, inst_no,
     ds.InstanceNumber = inst_no
     ds.ImageType = image_type
     ds.BodyPartExamined = 'ABDOMEN'
+    # Technique and provenance. A reader asked to compare this study with a
+    # prior one needs the kernel, the kV and the contrast agent, so they are
+    # part of the fixture rather than left to the viewer's defaults.
     ds.ConvolutionKernel = 'B30f'
     ds.KVP = '120'
     ds.XRayTubeCurrent = '210'
+    ds.Exposure = '150'
+    ds.GantryDetectorTilt = '0.0'
+    ds.ReconstructionDiameter = '350.0'
+    ds.ContrastBolusAgent = 'OMNIPAQUE 350'
+    ds.StudyTime = '094512'
+    ds.AccessionNumber = 'ACC-77301'
+    ds.InstitutionName = 'RIVERSIDE IMAGING'
+    ds.ReferringPhysicianName = 'RAO^SUNIL'
+    ds.StationName = 'CT-SOM-01'
+    ds.ProtocolName = 'ABDOMEN PORTAL VENOUS'
+    ds.PatientPosition = 'HFS'
+    ds.Manufacturer = 'SIEMENS'
+    ds.ManufacturerModelName = 'SOMATOM Definition AS'
     ds.Rows, ds.Columns = rows, cols
     ds.PixelSpacing = [PIX, PIX]
     ds.SliceThickness = thick

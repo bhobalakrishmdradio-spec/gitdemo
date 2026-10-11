@@ -80,7 +80,40 @@
     sculpt:      { label: "Sculpt",         glyph: "✂", points: 0 },
   };
 
-  function info(tool) { return TOOL_INFO[tool] || TOOL_INFO.none; }
+  /* What a stored measurement is allowed to claim. The planes are the ones
+     a measurement can be drawn on — "vr" is not one, and a click in a 3D
+     pane is refused before a measurement exists. */
+  var PLANES = ["axial", "coronal", "sagittal"];
+  var MAX_TEXT = 500;          // longest caption kept
+  var MAX_SLICE_KEY = 400;     // longest oblique cut key accepted
+
+  /**
+   * Is this a tool name this build actually has?
+   *
+   * An own-property test, not a plain lookup: tool names arrive from local
+   * storage, and TOOL_INFO["constructor"] is a function on every plain
+   * object — truthy, so a stored measurement claiming that tool would be
+   * accepted and then asked for a `.glyph` it does not have.
+   */
+  function knownTool(tool) {
+    return typeof tool === "string" &&
+      Object.prototype.hasOwnProperty.call(TOOL_INFO, tool);
+  }
+
+  /**
+   * Is this a cut a measurement can be anchored to?
+   *
+   * A number on an orthogonal cut, and an "obl:…" key on an oblique one —
+   * so a string is ordinary here and rejecting one would quietly throw away
+   * every oblique measurement a reader had saved. Anything else is not.
+   */
+  function knownSliceKey(si) {
+    if (si === null || si === undefined) return true;
+    if (typeof si === "number") return isFinite(si);
+    return typeof si === "string" && si.length <= MAX_SLICE_KEY;
+  }
+
+  function info(tool) { return knownTool(tool) ? TOOL_INFO[tool] : TOOL_INFO.none; }
 
   /* ---------------------------------------------------------------------
    * Calibration
@@ -641,7 +674,15 @@
 
     var out = [];
     parsed.items.forEach(function (r) {
-      if (!r || !TOOL_INFO[r.tool] || !Array.isArray(r.points) || !r.points.length) return;
+      // Everything below arrives from local storage, which anything on this
+      // origin can write. The tool must be one this build knows, the plane
+      // one it can draw on, and the slice index a number or absent — an
+      // object here would reach `m.plane.slice(...)` in the list and take
+      // the whole panel down with it.
+      if (!r || !knownTool(r.tool)) return;
+      if (PLANES.indexOf(r.plane) < 0) return;
+      if (!knownSliceKey(r.sliceIndex)) return;
+      if (!Array.isArray(r.points) || !r.points.length) return;
       var pts = [];
       for (var i = 0; i < r.points.length; i++) {
         var p = r.points[i];
@@ -653,10 +694,10 @@
         id: typeof r.id === "number" ? r.id : nextId++,
         tool: r.tool,
         plane: r.plane,
-        sliceIndex: r.sliceIndex,
+        sliceIndex: r.sliceIndex === undefined ? null : r.sliceIndex,
         seriesUid: seriesUid,
         hidden: !!r.hidden,
-        text: typeof r.text === "string" ? r.text : "",
+        text: typeof r.text === "string" ? r.text.slice(0, MAX_TEXT) : "",
         created: r.created || null,
         points: pts,
       });

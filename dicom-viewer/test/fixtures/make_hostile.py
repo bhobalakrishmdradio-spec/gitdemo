@@ -93,3 +93,64 @@ for k in range(DEPTH):
 print(f'wrote {DEPTH} slices with injection payloads in {len(PAYLOADS)} header fields')
 for key, val in PAYLOADS.items():
     print(f'  {key:14s} {val[:56]}')
+
+# ---------------------------------------------------------------------------
+# A second series whose identifiers are JavaScript's inherited property names.
+#
+# The viewer keys its series, volume and cache dictionaries by values taken
+# straight out of the header. A plain {} answers truthily for "__proto__",
+# "constructor" and "toString" whether or not anything was ever stored under
+# them, so a file naming itself one of those is read as an already-loaded
+# series and then used as one. Writing to "__proto__" on a plain object does
+# not even create a key: it replaces the object's prototype.
+#
+# These are legal DICOM files in every respect except that the UIDs are not
+# valid UIDs, which is exactly the kind of file a viewer has to survive.
+POISON = ['__proto__', 'constructor', 'toString']
+
+for idx, name in enumerate(POISON):
+    for k in range(2):
+        hu = np.full((ROWS, COLS), -1000.0)
+        hu[20:76, 20:76] = 60.0 + idx * 40
+        stored = np.clip(hu + 1024.0, 0, 4095).astype(np.uint16)
+
+        fm = Dataset()
+        fm.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.2'
+        fm.MediaStorageSOPInstanceUID = generate_uid()
+        fm.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds = FileDataset(None, {}, file_meta=fm, preamble=b'\0' * 128)
+        ds.SOPClassUID = fm.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = fm.MediaStorageSOPInstanceUID
+        ds.Modality = 'CT'
+        ds.PatientName = 'PROTO^POISON'
+        ds.PatientID = name
+        ds.StudyDate = '20260610'
+        ds.StudyInstanceUID = name            # study dictionaries too
+        ds.SeriesInstanceUID = name
+        ds.FrameOfReferenceUID = name
+        ds.StudyDescription = 'PROTOTYPE POISON'
+        ds.SeriesDescription = name
+        ds.SeriesNumber = 90 + idx
+        ds.InstanceNumber = k + 1
+        ds.Rows, ds.Columns = ROWS, COLS
+        ds.PixelSpacing = [1.0, 1.0]
+        ds.SliceThickness = 1.0
+        ds.ImagePositionPatient = [0.0, 0.0, float(k)]
+        ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+        ds.RescaleSlope = 1.0
+        ds.RescaleIntercept = -1024.0
+        ds.RescaleType = 'HU'
+        ds.WindowWidth = 400
+        ds.WindowCenter = 40
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = 'MONOCHROME2'
+        ds.BitsAllocated = 16
+        ds.BitsStored = 12
+        ds.HighBit = 11
+        ds.PixelRepresentation = 0
+        ds.PixelData = stored.tobytes()
+        ds.is_little_endian, ds.is_implicit_VR = True, False
+        ds.save_as(os.path.join(OUT, 'poison_%d_%03d.dcm' % (idx, k)),
+                   enforce_file_format=True)
+
+print('plus %d files whose UIDs are %s' % (len(POISON) * 2, ', '.join(POISON)))

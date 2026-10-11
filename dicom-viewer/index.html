@@ -423,6 +423,13 @@
           </section>
 
           <section class="tool-section" data-ctx="info">
+            <h4>Study</h4>
+            <div class="meta-table" id="studyInfo">
+              <p class="muted small">No study loaded.</p>
+            </div>
+          </section>
+
+          <section class="tool-section" data-ctx="info">
             <h4>DICOM Tags</h4>
             <div class="field-row">
               <input type="search" id="tagSearch" class="tag-search" placeholder="Search tag or value…" />
@@ -485,6 +492,7 @@
     <div class="menu-head">Workflows</div>
     <button data-more="segment">Segmentation / Sculpt<span>threshold mask and the brush</span></button>
     <div class="menu-head">Study</div>
+    <button data-more="study">Patient and study<span>who, what, and how much is loaded</span></button>
     <button data-more="tags">DICOM tags<span>every header field, searchable</span></button>
     <div class="menu-head">Help</div>
     <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>

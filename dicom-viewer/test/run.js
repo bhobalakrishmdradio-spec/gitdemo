@@ -26,7 +26,7 @@ const BROWSER = [
   'browser-mrstudy.js', 'browser-redact.js', 'browser-compare-prior.js',
   'browser-share.js', 'browser-crop.js', 'browser-undo.js',
   'browser-viewtools.js', 'browser-workstation.js', 'browser-reading.js',
-  'browser-security.js',
+  'browser-security.js', 'browser-info.js',
   'browser-sweep.js',
 ];
 /* Not assertions about the viewer's behaviour, but about its chrome. */

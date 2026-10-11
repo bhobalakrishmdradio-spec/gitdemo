@@ -253,14 +253,30 @@ const BURN = { x0: 4, y0: 4, x1: 124, y1: 52 };
     const C = window.__ctConsole;
     const shot = C.buildScreenshot('pane');
     // The identity banner is drawn across the foot; sample that band.
-    const d = shot.getContext('2d')
-      .getImageData(0, Math.round(shot.height * 0.93), shot.width,
-                    Math.round(shot.height * 0.06)).data;
-    let lit = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 90) lit++;
-    return lit;
+    const top = Math.round(shot.height * 0.93);
+    const rows = Math.round(shot.height * 0.06);
+    const d = shot.getContext('2d').getImageData(0, top, shot.width, rows).data;
+    // The scale bar lives in this band too, centred and at most a third of
+    // the width. Counting any lit pixel would call it a banner, so its own
+    // column range is excluded and the rest of the band is what is judged —
+    // the banner's text starts at the left margin, well outside it.
+    const bar = C.scaleBarFor(C.cellGeom(C.state.activeCell));
+    const half = (bar ? bar.px : 0) / 2 + 8;      // 8px for the shadow
+    let lit = 0, outside = 0, lo = -1;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] <= 90) continue;
+      const x = (i / 4) % shot.width;
+      lit++;
+      if (lo < 0 || x < lo) lo = x;
+      if (Math.abs(x - shot.width / 2) > half) outside++;
+    }
+    return { lit: lit, outside: outside, lo: lo, width: shot.width,
+             barPx: bar ? bar.px : 0 };
   });
-  check('by default the foot of the image carries no banner', plain < 400, plain + ' lit');
+  check('by default the foot of the image carries no banner',
+    plain.outside < 400, JSON.stringify(plain));
+  check('the scale bar is what is there instead', plain.barPx > 0 && plain.lit > 0,
+    JSON.stringify(plain));
   await UI.pickMore(page, 'shotIdentity');
   const withId = await page.evaluate(() => {
     const C = window.__ctConsole;
@@ -268,12 +284,16 @@ const BURN = { x0: 4, y0: 4, x1: 124, y1: 52 };
     const d = shot.getContext('2d')
       .getImageData(0, Math.round(shot.height * 0.93), shot.width,
                     Math.round(shot.height * 0.06)).data;
-    let lit = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 90) lit++;
-    return lit;
+    let lit = 0, lo = -1;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 90) { lit++; const x = (i / 4) % shot.width; if (lo < 0 || x < lo) lo = x; }
+    }
+    return { lit: lit, lo: lo, width: shot.width };
   });
-  check('turning it on writes the banner in', withId > plain + 400,
-    plain + ' -> ' + withId + ' lit');
+  check('turning it on writes the banner in', withId.lit > plain.lit + 400,
+    plain.lit + ' -> ' + withId.lit + ' lit');
+  check('and the banner starts at the left margin, unlike the scale bar',
+    withId.lo < withId.width * 0.1, JSON.stringify(withId));
   await UI.pickMore(page, 'shotIdentity');
   check('turning it off again removes it',
     await page.evaluate(() => window.__ctConsole.state.screenshotIdentity) === false);

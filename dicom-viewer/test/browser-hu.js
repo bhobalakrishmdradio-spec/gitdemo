@@ -323,6 +323,47 @@ const near = (a, b, t) => Math.abs(a - b) <= t;
       await page.evaluate(m => document.getElementById(m).hidden, menu));
   }
 
+  /* The same failure one layer up: something drawn over the image that is
+     not meant to be pressed, but takes the press anyway. A toast sits over
+     the lower middle of the pane for several seconds after every load,
+     reset and refusal, and with pointer events on it swallowed clicks on a
+     patch of image about 150 by 40 pixels — a reader placing the second
+     point of a distance there lost it, with the half-drawn measurement
+     still waiting for a click that had already happened. */
+  console.log('\n9c. Nothing drawn over the image may take a click from it');
+  const overlaid = await page.evaluate(() => {
+    const names = ['toast', 'huReadout'];
+    const out = {};
+    const toast = document.getElementById('toast');
+    const wasHidden = toast.hidden;
+    toast.hidden = false;
+    toast.textContent = 'A message long enough to cover some of the image.';
+    const box = toast.getBoundingClientRect();
+    const mid = { x: Math.round(box.left + box.width / 2),
+                  y: Math.round(box.top + box.height / 2) };
+    const hit = document.elementFromPoint(mid.x, mid.y);
+    out.toast = {
+      over: box.width > 40 && box.height > 10,
+      hit: hit ? (hit.id || hit.className || hit.tagName) : 'nothing',
+      pointerEvents: getComputedStyle(toast).pointerEvents,
+    };
+    toast.hidden = wasHidden;
+    /* The four-corner overlays are the same shape of risk, and have always
+       been declared unclickable; checked here so they stay that way. */
+    out.corners = [...document.querySelectorAll('.vp-overlay')]
+      .map(e => getComputedStyle(e).pointerEvents);
+    return out;
+  });
+  check('a toast really does cover part of the image', overlaid.toast.over,
+    JSON.stringify(overlaid.toast));
+  check('but a press at its centre reaches the image underneath',
+    /vp-canvas|vp-cross|vp\b/.test(overlaid.toast.hit), overlaid.toast.hit);
+  check('because it takes no pointer events', overlaid.toast.pointerEvents === 'none',
+    overlaid.toast.pointerEvents);
+  check('and neither do the four-corner overlays',
+    overlaid.corners.length > 0 && overlaid.corners.every(v => v === 'none'),
+    overlaid.corners.join(', '));
+
   console.log('\n10. A projected slab is never labelled as a plain pixel value');
   await UI.pickLayout(page, 'axial');
   const probePt = await atPixel(48.5, 48.5);

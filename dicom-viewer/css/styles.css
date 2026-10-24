@@ -484,6 +484,12 @@ select, input[type="number"] {
   background: #23272f; border: 1px solid var(--border); color: var(--text);
   padding: 10px 16px; border-radius: var(--radius);
   box-shadow: 0 6px 20px rgba(0,0,0,0.4); z-index: 100; font-size: 13px;
+  /* Nothing in a toast is clickable, and it sits over the lower middle of
+     the image for several seconds after every load, reset and refusal. With
+     pointer-events on, it silently swallowed clicks on a patch of the image
+     about 150 by 40 pixels: a reader placing the second point of a distance
+     there lost it, with the half-drawn measurement still waiting. */
+  pointer-events: none;
 }
 .toast.error { border-color: var(--danger); color: #ffdada; }
 

@@ -301,3 +301,4 @@ The largest remaining gaps, in priority order:
 | A file that cannot be read says why | **Pass** — reasons are recorded per file and grouped: *not a DICOM file (×2); the file is truncated or corrupt*. Translated only where the cause is unambiguous; an unsupported transfer syntax is passed through verbatim. `browser-security.js` §8 |
 | A failed save is visible | **Pass** — a report that cannot be written to storage says so in a toast and keeps `⚠ NOT SAVING` on the status line until a save succeeds |
 | No network, no eval, no third-party origin | **Pass** — asserted, not assumed |
+| Nothing drawn over the image takes a click from it | **Pass** — the toast and the four-corner overlays take no pointer events, asserted with a press at the centre of a visible toast. The toast used to swallow clicks on a patch of image about 150×40 px for several seconds after every load. `browser-hu.js` §9c |

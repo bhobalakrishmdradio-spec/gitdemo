@@ -891,6 +891,17 @@ deliberate: a menu inside a scrolling container is clipped while still
 looking fine and still passing a scripted click, which is how the Reset menu
 was once unreachable by an actual cursor.
 
+The same class of failure one layer up: a **toast** is informational, has
+nothing in it to press, and sits over the lower middle of the image for
+several seconds after every load, reset and refusal. With pointer events on
+it silently swallowed clicks on a patch of image about 150 by 40 pixels — a
+reader placing the second point of a distance there lost it, with the
+half-drawn measurement still waiting for a click that had already happened.
+It takes no pointer events now, and `browser-hu.js` §9c asserts that a press
+at the centre of a visible toast reaches the canvas underneath, for the toast
+and for the four-corner overlays alike. It was found by a scale-bar test
+whose timing happened to put a click under a toast — not by reading the CSS.
+
 **⋯ More** is two columns, each holding whole groups. One column ran off the
 bottom of a 1000 px window as soon as the zoom and view-tool entries were
 added, taking the last three items with it — the suite caught it, having

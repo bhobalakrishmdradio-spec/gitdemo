@@ -480,37 +480,45 @@
     <div class="menu-head">Back to the start</div>
     <button data-window="reset">Back to the study's own W/L<span>from the DICOM header, greyscale, not inverted</span></button>
   </div>
-  <div class="menu" id="moreMenu" hidden>
-    <div class="menu-head">Screenshot</div>
-    <button data-more="shotShare">Send this pane to Photos…<span>opens the share sheet — choose Save Image</span></button>
-    <button data-more="shotShareGrid">Send all panes to Photos…<span>the whole grid, as one image</span></button>
-    <button data-more="shotPane">Save this pane<span>exactly what is on screen, overlays included</span></button>
-    <button data-more="shotGrid">Save all panes<span>the whole grid, laid out as you see it</span></button>
-    <button data-more="shotAs">Save this pane as…<span>choose where the file goes</span></button>
-    <button data-more="copyPane">Copy this pane to the clipboard</button>
-    <button data-more="shotReport">Attach this pane to the report<span>as a key image</span></button>
-    <button data-more="shotIdentity">Include patient details<span>off: no name, ID or date is written into the image</span></button>
-    <div class="menu-head">Zoom</div>
-    <button data-more="zoomFit">Fit to pane<span>the whole image in the window (0)</span></button>
-    <button data-more="zoomOne">1:1<span>one image pixel per screen pixel (O)</span></button>
-    <div class="menu-head">View tools</div>
-    <button data-more="magnify">Magnifier<span>hold for a loupe at the cursor (L)</span></button>
-    <button data-more="shutter">Shutter<span>drag a rectangle; everything outside goes black (H)</span></button>
-    <div class="menu-head">Show</div>
-    <button data-more="crosshairShow">Crosshair lines<span>where the other planes cut this one</span></button>
-    <div class="menu-head">Readout</div>
-    <button data-more="hu">Value under the cursor<span>live readout in the status bar</span></button>
-    <button data-more="markers">Measurements and annotations<span>show or hide every marker</span></button>
-    <div class="menu-head">Focus point</div>
-    <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (Shift+G)</span></button>
-    <button data-more="focusClear">Clear the focus point</button>
-    <div class="menu-head">Workflows</div>
-    <button data-more="segment">Segmentation / Sculpt<span>threshold mask and the brush</span></button>
-    <div class="menu-head">Study</div>
-    <button data-more="study">Patient and study<span>who, what, and how much is loaded</span></button>
-    <button data-more="tags">DICOM tags<span>every header field, searchable</span></button>
-    <div class="menu-head">Help</div>
-    <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>
+  <!-- Two columns, each group kept whole: this menu holds enough that one
+       column ran off the bottom of a 1000px window and took the last three
+       items with it. Columns are explicit rather than CSS multi-column so a
+       heading can never end up in one column with its items in the other. -->
+  <div class="menu menu-cols" id="moreMenu" hidden>
+    <div class="menu-col">
+      <div class="menu-head">Screenshot</div>
+      <button data-more="shotShare">Send this pane to Photos…<span>opens the share sheet — choose Save Image</span></button>
+      <button data-more="shotShareGrid">Send all panes to Photos…<span>the whole grid, as one image</span></button>
+      <button data-more="shotPane">Save this pane<span>exactly what is on screen, overlays included</span></button>
+      <button data-more="shotGrid">Save all panes<span>the whole grid, laid out as you see it</span></button>
+      <button data-more="shotAs">Save this pane as…<span>choose where the file goes</span></button>
+      <button data-more="copyPane">Copy this pane to the clipboard</button>
+      <button data-more="shotReport">Attach this pane to the report<span>as a key image</span></button>
+      <button data-more="shotIdentity">Include patient details<span>off: no name, ID or date is written into the image</span></button>
+      <div class="menu-head">Zoom</div>
+      <button data-more="zoomFit">Fit to pane<span>the whole image in the window (0)</span></button>
+      <button data-more="zoomOne">1:1<span>one image pixel per screen pixel (O)</span></button>
+    </div>
+    <div class="menu-col">
+      <div class="menu-head">View tools</div>
+      <button data-more="magnify">Magnifier<span>hold for a loupe at the cursor (L)</span></button>
+      <button data-more="shutter">Shutter<span>drag a rectangle; everything outside goes black (H)</span></button>
+      <div class="menu-head">Show</div>
+      <button data-more="crosshairShow">Crosshair lines<span>where the other planes cut this one</span></button>
+      <div class="menu-head">Readout</div>
+      <button data-more="hu">Value under the cursor<span>live readout in the status bar</span></button>
+      <button data-more="markers">Measurements and annotations<span>show or hide every marker</span></button>
+      <div class="menu-head">Focus point</div>
+      <button data-more="focusGo">Go to the focus point<span>bring every pane back to it (Shift+G)</span></button>
+      <button data-more="focusClear">Clear the focus point</button>
+      <div class="menu-head">Workflows</div>
+      <button data-more="segment">Segmentation / Sculpt<span>threshold mask and the brush</span></button>
+      <div class="menu-head">Study</div>
+      <button data-more="study">Patient and study<span>who, what, and how much is loaded</span></button>
+      <button data-more="tags">DICOM tags<span>every header field, searchable</span></button>
+      <div class="menu-head">Help</div>
+      <button data-more="shortcuts">Keyboard shortcuts<span>every key this viewer binds (?)</span></button>
+    </div>
   </div>
   <div class="menu menu-wide" id="syncMenu" hidden>
     <div class="menu-head">Link panes on different series by…</div>

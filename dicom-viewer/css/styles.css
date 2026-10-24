@@ -424,8 +424,18 @@ select, input[type="number"] {
   min-width: 250px; padding: 4px;
   background: var(--panel-bg); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+  /* openMenuUnder() clamps max-height to the room below the button. Without
+     this the clamp did nothing visible: the box was shorter and its items
+     were still painted past the window's bottom edge, which is exactly the
+     unreachable-item failure the clamp exists to prevent. */
+  overflow-y: auto;
 }
 .menu[hidden] { display: none; }
+/* A menu with more in it than fits one column of a short window. Each
+   column holds whole groups, so a heading always sits above its own items. */
+.menu-cols { display: flex; align-items: flex-start; gap: 6px; }
+.menu-cols .menu-col { flex: 1 1 0; min-width: 238px; }
+.menu-cols .menu-head:first-child { margin-top: 2px; }
 .menu button {
   display: block; width: 100%; text-align: left; cursor: pointer;
   padding: 7px 10px; border: none; border-radius: 4px;

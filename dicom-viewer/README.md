@@ -891,6 +891,15 @@ deliberate: a menu inside a scrolling container is clipped while still
 looking fine and still passing a scripted click, which is how the Reset menu
 was once unreachable by an actual cursor.
 
+**⋯ More** is two columns, each holding whole groups. One column ran off the
+bottom of a 1000 px window as soon as the zoom and view-tool entries were
+added, taking the last three items with it — the suite caught it, having
+been written for exactly that failure. Columns are explicit rather than CSS
+multi-column so a heading can never sit in one column with its items in the
+other. Below roughly 700 px of window height the menu scrolls instead, which
+is the clamp doing its job: an item you have to scroll to is at least
+reachable, one drawn past the bottom edge is not.
+
 ## Running the tests
 
 Every claim this README makes is checked in `test/`, in a real browser,

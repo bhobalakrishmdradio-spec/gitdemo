@@ -88,6 +88,14 @@
 
   var MIN_ZOOM = 0.2;
   var MAX_ZOOM = 12;
+  /*
+   * A drag may not shrink the image below MIN_ZOOM: a slip of the hand that
+   * loses the image entirely is a bad outcome. An explicit 1:1 is not a
+   * slip — on a small matrix in a large pane, true pixel size really is a
+   * long way below the zoom that fits, and refusing to go there would make
+   * the mode a lie — so it gets its own floor.
+   */
+  var MIN_ZOOM_EXACT = 0.02;
   var ZOOM_DOUBLE_PX = 200;       // drag this far up to double the zoom
   var SCROLL_SLICE_PX = 8;        // drag this far down to advance one slice
 
@@ -167,6 +175,7 @@
       cell.seriesUid = null;
       cell.pinned = false;
       cell.offset = 0;
+      cell.shutter = null;                   // see setCellPlane
     });
     restack();
     rebuildCells();
@@ -384,6 +393,9 @@
 
     windowWidth: 400,
     windowCenter: 40,
+    colourMap: "grey",            // display only; see COLOUR_MAPS
+    magnifier: 3,                 // loupe magnification, x the pane's scale
+    loupe: null,                  // { cell, x, y, p } while the loupe is held
     windowPreset: null,         // which named preset the current W/L matches
     invert: false,
 
@@ -754,6 +766,9 @@
 
   /** Rebuild the pane DOM from state.cells, keeping their state. */
   function rebuildCells() {
+    // The panes are about to be replaced, so a loupe pointing at one of them
+    // is pointing at nothing.
+    if (state.loupe) state.loupe = null;
     var def = LAYOUTS[state.layout] || LAYOUTS.quad;
     dom.viewGrid.style.gridTemplateColumns = "repeat(" + def.cols + ", minmax(0, 1fr))";
     dom.viewGrid.style.gridTemplateRows = "repeat(" + def.rows + ", minmax(0, 1fr))";
@@ -879,6 +894,8 @@
     cell.seriesUid = uid || null;
     cell.pinned = false;
     cell.offset = 0;
+    cell.shutter = null;                     // see setCellPlane
+
     if (!uid || state.volumes[uid]) {
       restack();
       rebuildCells();
@@ -916,6 +933,10 @@
     cell.plane = plane;
     cell.pinned = false;
     cell.offset = 0;
+    // The shutter is a rectangle in this plane's own coordinates. On another
+    // plane the same numbers frame different anatomy, so it goes rather than
+    // silently reframing the image around the wrong thing.
+    cell.shutter = null;
     if (plane === "vr") enforceSingleVR(i);
     restack();
     planeCacheTrim();
@@ -1391,7 +1412,81 @@
   /* ---------------------------------------------------------------------
    * Windowing: real values -> grayscale canvas
    * ------------------------------------------------------------------- */
-  function windowToCanvas(values, width, height, ww, wc, invert, monochrome1) {
+  /* ---------------------------------------------------------------------
+   * Display colour maps
+   *
+   * Greyscale is the default, and is what a CT or MR should be reported
+   * from: the eye reads shades of grey as one ordered scale, and a colour
+   * ramp does not preserve that order — two adjacent hues can look further
+   * apart than two distant greys, which invents contrast that is not in the
+   * data. A ramp earns its place anyway, because it separates a narrow band
+   * of values the eye cannot split in grey at all: a subtle fluid/fat
+   * difference, a perfusion or ADC map, a PET series.
+   *
+   * None of them touch a number. Every value this viewer reports — the
+   * readout under the cursor, every ROI, every measurement — is taken from
+   * the slab, never from what is painted, so a colour map cannot move a
+   * result. What it can do is mislead someone looking at a screenshot, so
+   * the pane names the map whenever it is not greyscale.
+   * ------------------------------------------------------------------- */
+
+  /** A channel that climbs from 0 to 255 over one third of the range. */
+  function thirdRamp(g, offset) {
+    var v = (g - offset) * 3;
+    return v < 0 ? 0 : v > 255 ? 255 : v;
+  }
+
+  var COLOUR_MAPS = {
+    grey: { label: "Greyscale" },
+    // Hot iron: black through red and orange to white. The classic nuclear
+    // medicine ramp, and the one most readers have seen before.
+    hot: { label: "Hot iron", ramp: function (g) {
+      return [thirdRamp(g, 0), thirdRamp(g, 85), thirdRamp(g, 170)];
+    } },
+    // The same ramp with the channels reversed: black through blue and cyan
+    // to white.
+    cool: { label: "Cool", ramp: function (g) {
+      return [thirdRamp(g, 170), thirdRamp(g, 85), thirdRamp(g, 0)];
+    } },
+    // Blue to red through cyan, green and yellow, fading to black at the
+    // bottom so that "nothing" still reads as nothing.
+    rainbow: { label: "Rainbow", ramp: function (g) {
+      var h = (1 - g / 255) * 4;            // 4 = blue .. 0 = red, in sixths
+      var v = Math.min(1, g / 24);          // the darkest values stay dark
+      var i = Math.floor(h), f = h - i;
+      var rgb = [[1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]][i] ||
+                [0, 0, 1];
+      var next = [[1, 1, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1], [0, 0, 1]][i] ||
+                 [0, 0, 1];
+      return [0, 1, 2].map(function (c) {
+        return Math.round((rgb[c] + (next[c] - rgb[c]) * f) * 255 * v);
+      });
+    } },
+  };
+
+  var colourMapTables = dict();
+
+  /** The 256-entry RGB table for a map, built once. */
+  function colourTable(name) {
+    var def = Object.prototype.hasOwnProperty.call(COLOUR_MAPS, name)
+      ? COLOUR_MAPS[name] : null;
+    if (!def || !def.ramp) return null;                 // greyscale needs none
+    if (colourMapTables[name]) return colourMapTables[name];
+    var t = new Uint8Array(768);
+    for (var g = 0; g < 256; g++) {
+      var rgb = def.ramp(g);
+      t[g * 3] = rgb[0]; t[g * 3 + 1] = rgb[1]; t[g * 3 + 2] = rgb[2];
+    }
+    colourMapTables[name] = t;
+    return t;
+  }
+
+  function colourMapLabel(name) {
+    return Object.prototype.hasOwnProperty.call(COLOUR_MAPS, name)
+      ? COLOUR_MAPS[name].label : COLOUR_MAPS.grey.label;
+  }
+
+  function windowToCanvas(values, width, height, ww, wc, invert, monochrome1, map) {
     var canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -1402,6 +1497,7 @@
     var widthSafe = ww <= 0 ? 1 : ww;
     var lower = wc - widthSafe / 2;
     var scale = 255 / widthSafe;
+    var lut = colourTable(map);
 
     for (var i = 0, n = values.length; i < n; i++) {
       var v = values[i];
@@ -1416,7 +1512,12 @@
       if (invert) g = 255 - g;
 
       var idx = i * 4;
-      data[idx] = data[idx + 1] = data[idx + 2] = g;
+      if (lut) {
+        var e = (g & 255) * 3;
+        data[idx] = lut[e]; data[idx + 1] = lut[e + 1]; data[idx + 2] = lut[e + 2];
+      } else {
+        data[idx] = data[idx + 1] = data[idx + 2] = g;
+      }
       data[idx + 3] = 255;
     }
 
@@ -2499,7 +2600,8 @@
     var slab = getPlaneData(cell.plane, index, vol, cellSeriesUid(cell));
     var win = cellWindow(cell);
     var img = windowToCanvas(
-      slab.data, slab.width, slab.height, win.ww, win.wc, state.invert, false
+      slab.data, slab.width, slab.height, win.ww, win.wc, state.invert, false,
+      state.colourMap
     );
 
     var t = planeTransform(cell, slab, cw, ch);
@@ -2517,6 +2619,10 @@
     rec.geom = {
       t: t, cw: cw, ch: ch, slab: slab, index: index, plane: cell.plane,
       vol: vol, uid: cellSeriesUid(cell),
+      // Kept so the loupe can redraw this slab at a higher magnification
+      // rather than blowing up the pane's pixels, which would only make the
+      // same screen pixels bigger.
+      img: img,
     };
     updateOverlays(i, slab);
     drawAnnotations(i, rec.geom);
@@ -2575,6 +2681,15 @@
     return { x: x / t.spacingX + t.width / 2, y: y / t.spacingY + t.height / 2 };
   }
 
+  /** Mouse event -> canvas device pixels within a pane. */
+  function eventToCanvas(i, clientX, clientY) {
+    var rec = cellEls[i];
+    if (!rec) return null;
+    var rect = rec.canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    return { x: (clientX - rect.left) * dpr, y: (clientY - rect.top) * dpr };
+  }
+
   /** Mouse event -> plane coordinates within a pane. */
   function eventToCell(i, clientX, clientY) {
     var rec = cellEls[i];
@@ -2612,7 +2727,11 @@
     if (!geom || !geom.vol) return;
 
     var dpr = window.devicePixelRatio || 1;
-    // Redaction goes down first, so nothing drawn afterwards can be covered
+    // The shutter goes down before anything else: it is the edge of what is
+    // being looked at, and a measurement or a crosshair arm drawn outside it
+    // would be a marker floating in a black field with no image under it.
+    drawShutter(ctx, i, geom);
+    // Redaction goes down next, so nothing drawn afterwards can be covered
     // by it — and so a crosshair arm crossing a redacted box is still
     // visible, which is how you can tell the box is a box and not a hole.
     drawRedactions(ctx, geom, rec, dpr);
@@ -2623,6 +2742,126 @@
       drawScaleBar(ctx, geom, dpr);
     }
     drawMeasurements(ctx, geom, dpr);
+    // The loupe is last, because it is meant to sit on top of everything —
+    // including the markers, which it magnifies nothing of and would
+    // otherwise be drawn over by.
+    drawLoupe(ctx, i, geom, dpr);
+  }
+
+  /* ---------------------------------------------------------------------
+   * Shutter
+   *
+   * Blacks out everything outside a rectangle, which is what a collimator
+   * does on a plain film: it stops light from the parts of the image you are
+   * not reading reaching your eye, and a dark surround makes a low-contrast
+   * lesion easier to see. Here it is display only and per pane — the stored
+   * pixels are untouched, the readout under the cursor still answers outside
+   * the rectangle, and an ROI already drawn still reports the same numbers.
+   *
+   * It is kept in plane coordinates, not pane coordinates, so it stays on
+   * the same anatomy when the pane is zoomed, panned, rotated or flipped.
+   * ------------------------------------------------------------------- */
+  function drawShutter(ctx, i, geom) {
+    var cell = state.cells[i];
+    if (!cell || !cell.shutter || !geom || !geom.t) return;
+    var sh = cell.shutter;
+    var t = geom.t;
+    var corners = [[sh.x0, sh.y0], [sh.x1, sh.y0], [sh.x1, sh.y1], [sh.x0, sh.y1]]
+      .map(function (c) { return planeToCanvas(t, c[0], c[1]); });
+    ctx.save();
+    ctx.beginPath();
+    // Outer path is the whole pane, inner path the shutter: filled together
+    // with the even-odd rule, the inner one is a hole.
+    ctx.rect(0, 0, geom.cw, geom.ch);
+    ctx.moveTo(corners[0].x, corners[0].y);
+    for (var k = 1; k < 4; k++) ctx.lineTo(corners[k].x, corners[k].y);
+    ctx.closePath();
+    ctx.fillStyle = "#000";
+    ctx.fill("evenodd");
+    ctx.restore();
+  }
+
+  /** The shutter rectangle a drag has defined, in plane coordinates. */
+  function setShutter(i, p0, p1) {
+    var cell = state.cells[i];
+    var geom = cellEls[i] && cellEls[i].geom;
+    if (!cell || !geom || !p0 || !p1) return;
+    var w = geom.slab.width, h = geom.slab.height;
+    var clamp = function (v, hi) { return Math.max(0, Math.min(hi, v)); };
+    cell.shutter = {
+      x0: clamp(Math.min(p0.x, p1.x), w), y0: clamp(Math.min(p0.y, p1.y), h),
+      x1: clamp(Math.max(p0.x, p1.x), w), y1: clamp(Math.max(p0.y, p1.y), h),
+    };
+  }
+
+  /** True when any pane is shuttered. */
+  function shutterIsActive() {
+    return state.cells.some(function (c) { return !!c.shutter; });
+  }
+
+  function clearShutters() {
+    state.cells.forEach(function (c) { c.shutter = null; });
+  }
+
+  /* ---------------------------------------------------------------------
+   * Magnifier
+   *
+   * A loupe over the cursor, drawn from the slab rather than from the pane,
+   * so it is a real magnification and not the pane's own pixels enlarged.
+   * The point under the cursor does not move, which is the whole trick: you
+   * put the cursor on a nodule and it grows in place rather than sliding out
+   * from under you.
+   * ------------------------------------------------------------------- */
+  function drawLoupe(ctx, i, geom, dpr) {
+    var l = state.loupe;
+    if (!l || l.cell !== i || !geom || !geom.img || !geom.t) return;
+    var t = geom.t;
+    var f = state.magnifier;
+    var radius = Math.min(120 * dpr, Math.min(geom.cw, geom.ch) * 0.32);
+    if (radius < 24 * dpr) return;            // a pane with no room for one
+
+    // Shift the transform so the plane point under the cursor lands back
+    // under the cursor at f times the scale.
+    var q = planeToCanvas(t, l.p.x, l.p.y);
+    var m = {
+      tx: l.x - (q.x - t.tx) * f, ty: l.y - (q.y - t.ty) * f,
+      rot: t.rot, flipH: t.flipH, flipV: t.flipV,
+      physW: t.physW, physH: t.physH, scale: t.scale * f,
+    };
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(l.x, l.y, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = "#000";
+    ctx.fill();
+    ctx.translate(m.tx, m.ty);
+    ctx.rotate(m.rot);
+    ctx.scale(m.flipH ? -1 : 1, m.flipV ? -1 : 1);
+    var dw = m.physW * m.scale, dh = m.physH * m.scale;
+    // Nearest-neighbour: at this magnification smoothing invents edges that
+    // are not in the data, and a reader judging a margin needs the voxels.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(geom.img, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(216, 240, 255, 0.85)";
+    ctx.lineWidth = Math.max(1, 1.5 * dpr);
+    ctx.beginPath();
+    ctx.arc(l.x, l.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    // A tick at the centre, so the magnified point is identifiable.
+    ctx.beginPath();
+    ctx.moveTo(l.x - 5 * dpr, l.y); ctx.lineTo(l.x + 5 * dpr, l.y);
+    ctx.moveTo(l.x, l.y - 5 * dpr); ctx.lineTo(l.x, l.y + 5 * dpr);
+    ctx.stroke();
+    ctx.font = "bold " + Math.round(11 * dpr) + "px 'Segoe UI', Roboto, sans-serif";
+    ctx.fillStyle = "rgba(216, 240, 255, 0.9)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText("×" + f, l.x, l.y + radius + 4 * dpr);
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------------
@@ -3113,6 +3352,7 @@
       cell.pinned = false;
       cell.offset = 0;
       cell.seriesUid = null;
+      cell.shutter = null;                   // see setCellPlane
     });
     restack();
     rebuildCells();
@@ -4238,6 +4478,19 @@
       status: "Scroll: drag down to go further into the stack, up to come back. " +
               "The wheel still scrolls whatever tool is armed.",
     },
+    magnify: {
+      label: "Magnifier",
+      cursor: "zoom-in",
+      status: "Magnifier: hold the left button for a loupe at the cursor. " +
+              "It enlarges the reconstructed slab, not the screen, so it is " +
+              "sharper than zooming the pane — and it does not move the pane.",
+    },
+    shutter: {
+      label: "Shutter",
+      cursor: "crosshair",
+      status: "Shutter: drag a rectangle to black out everything outside it. " +
+              "Display only, per pane; click once without dragging to clear it.",
+    },
   };
 
   function isViewTool(tool) {
@@ -4253,6 +4506,7 @@
     // Switching tools abandons anything half-drawn rather than finishing it
     // with the wrong shape's rules.
     cancelPending();
+    closeLoupe();
     state.tool = tool;
     state.toolsContext = null;
     if (tool === MEAS.TOOLS.none) {
@@ -4944,6 +5198,11 @@
       "WW " + Math.round(win.ww) + "  WL " + Math.round(win.wc) +
         (cell.wl ? " *" : "") + (state.invert ? "  [inv]" : ""),
       "Zoom " + Math.round(cell.view.zoom * 100) + "%",
+      // A colour map and a shutter both change what the image means at a
+      // glance, so neither is allowed to be silent — least of all in a
+      // screenshot, where the menu that set them is not in the picture.
+      state.colourMap !== "grey" ? colourMapLabel(state.colourMap) : "",
+      cell.shutter ? "shutter" : "",
       activeToolLabel(),
       state.boneCut ? "threshold mask ≥ " + state.boneThreshold + " HU" : "",
     ].filter(Boolean).join("\n");
@@ -5488,6 +5747,15 @@
       if (cropIsActive()) did.push("3D crop");
       resetCrop();
     }
+    if (what === "shutter" || what === "all") {
+      if (shutterIsActive()) did.push("shutter");
+      clearShutters();
+    }
+    if (what === "colour" || what === "all") {
+      if (state.colourMap !== "grey") did.push("colour map");
+      state.colourMap = "grey";
+      syncWindowControls();
+    }
     if (what === "measurements" || what === "all") {
       clearMeasurements();
       did.push("measurements");
@@ -5499,6 +5767,25 @@
                          : "Nothing to reset — that was already at its default.");
   }
 
+  /**
+   * Choose a display colour map.
+   *
+   * Named in the status line as well as the pane, because a reader who
+   * picked it from a menu three minutes ago is the one most likely to
+   * forget it is on.
+   */
+  function setColourMap(name) {
+    if (!Object.prototype.hasOwnProperty.call(COLOUR_MAPS, name)) return false;
+    state.colourMap = name;
+    renderAll();
+    syncWindowControls();
+    setStatus(name === "grey"
+      ? "Greyscale."
+      : colourMapLabel(name) + " colour map — display only. Every measured " +
+        "value is read from the image data, not from the colour.");
+    return true;
+  }
+
   /** Window/level back to what the study itself asks for. */
   function resetWindowToStudy() {
     var group = getCurrentGroup();
@@ -5506,6 +5793,7 @@
     state.windowWidth = inst ? wwOf(inst) : 400;
     state.windowCenter = inst ? wcOf(inst) : 40;
     state.invert = false;
+    state.colourMap = "grey";
     state.cells.forEach(function (cell) { cell.wl = null; });
     syncWindowControls();
     updateWLInputs();
@@ -5773,6 +6061,12 @@
       var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
       if (b) b.disabled = !state.focusPoint;
     });
+    // A tool armed from a menu has to show as armed in that menu, or the
+    // only way to tell is to drag and see what happens.
+    ["magnify", "shutter"].forEach(function (k) {
+      var b = dom.moreMenu.querySelector('[data-more="' + k + '"]');
+      if (b) b.classList.toggle("on", state.tool === k);
+    });
   }
 
   /** Rebuild the window menu's preset list for the current modality. */
@@ -5796,13 +6090,19 @@
     Array.prototype.forEach.call(dom.windowMenu.querySelectorAll("[data-window]"), function (b) {
       if (b.dataset.window === "invert") b.classList.toggle("on", state.invert);
       else if (b.dataset.window === "reset") b.classList.remove("on");
-      else b.classList.toggle("on", b.dataset.window === active);
+      else if (b.dataset.window.indexOf("map:") === 0) {
+        b.classList.toggle("on", b.dataset.window === "map:" + state.colourMap);
+      } else b.classList.toggle("on", b.dataset.window === active);
     });
     if (dom.windowBtn) {
       var name = active ? PRESETS[active].label : "Custom";
-      dom.windowBtn.textContent = "◐ " + name + (state.invert ? " ⁻" : "") + " ▾";
+      var coloured = state.colourMap !== "grey";
+      dom.windowBtn.textContent = "◐ " + name + (state.invert ? " ⁻" : "") +
+        (coloured ? " ◼" : "") + " ▾";
       dom.windowBtn.title = "Window " + Math.round(state.windowWidth) + " / " +
-        Math.round(state.windowCenter) + (state.invert ? ", inverted" : "") + " — click to change";
+        Math.round(state.windowCenter) + (state.invert ? ", inverted" : "") +
+        (coloured ? ", " + colourMapLabel(state.colourMap) : "") +
+        " — click to change";
     }
   }
 
@@ -6228,6 +6528,7 @@
         cell.seriesUid = null;
         cell.pinned = false;
         cell.offset = 0;
+        cell.shutter = null;
       });
       planeCache = dict(); planeCacheKeys = [];
       vrDirty = true;
@@ -6260,6 +6561,8 @@
         renderAll();
       } else if (what === "reset") {
         resetWindowToStudy();
+      } else if (what.indexOf("map:") === 0) {
+        setColourMap(what.slice(4));
       } else {
         applyPreset(what);
       }
@@ -6438,6 +6741,14 @@
         showToast(state.screenshotIdentity
           ? "Screenshots will carry the patient banner."
           : "Screenshots will not carry patient details.");
+      } else if (what === "zoomFit") {
+        zoomToFit(state.activeCell);
+      } else if (what === "zoomOne") {
+        zoomOneToOne(state.activeCell);
+      } else if (what === "magnify") {
+        toggleViewTool("magnify");
+      } else if (what === "shutter") {
+        toggleViewTool("shutter");
       } else if (what === "crosshairShow") {
         state.crosshair = !state.crosshair;
         if (!state.crosshair && state.tool === "crosshair") setTool(MEAS.TOOLS.none);
@@ -6835,7 +7146,14 @@
           zoom: cell.view.zoom,
           index: cellIndex(cell),
           step: 0,
+          // Where the press landed on the anatomy, for the tools that
+          // define a region rather than a movement.
+          p0: eventToCell(i, e.clientX, e.clientY),
+          moved: false,
         };
+        // The loupe opens on press rather than on the first movement: a
+        // press with no drag is how you look at one spot.
+        if (state.tool === "magnify") moveLoupe(i, e.clientX, e.clientY);
         return;
       }
       // With the crosshair tool armed, dragging anywhere in the pane moves
@@ -7154,6 +7472,22 @@
       return;
     }
 
+    if (drag.mode === "magnify") {
+      moveLoupe(drag.cell, e.clientX, e.clientY);
+      return;
+    }
+
+    if (drag.mode === "shutter") {
+      var p1 = eventToCell(drag.cell, e.clientX, e.clientY);
+      if (!p1 || !drag.p0) return;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+      if (drag.moved) {
+        setShutter(drag.cell, drag.p0, p1);
+        renderCell(drag.cell);
+      }
+      return;
+    }
+
     if (drag.mode === "scroll") {
       // Counted from where the drag began, not from the last event: paging
       // by each event's own delta throws away the fraction every time and
@@ -7174,6 +7508,90 @@
     cellP.view.panY = drag.panY + dy * dpr;
     if (state.linkZoom) { applyLinkedView(drag.cell); renderAll(); }
     else renderCell(drag.cell);
+  }
+
+  /** Put the loupe under the cursor and redraw that pane's overlay. */
+  function moveLoupe(i, clientX, clientY) {
+    var rec = cellEls[i];
+    if (!rec || !rec.geom) return;
+    var c = eventToCanvas(i, clientX, clientY);
+    var p = eventToCell(i, clientX, clientY);
+    if (!c || !p) return;
+    state.loupe = { cell: i, x: c.x, y: c.y, p: p };
+    drawAnnotations(i, rec.geom);
+  }
+
+  function closeLoupe() {
+    if (!state.loupe) return;
+    var i = state.loupe.cell;
+    state.loupe = null;
+    var rec = cellEls[i];
+    if (rec && rec.geom) drawAnnotations(i, rec.geom);
+  }
+
+  /* ---------------------------------------------------------------------
+   * Zoom modes
+   * ------------------------------------------------------------------- */
+
+  /** Back to the zoom that fits the whole image in the pane. */
+  function zoomToFit(i) {
+    var cell = state.cells[i];
+    if (!cell) return false;
+    cell.view.zoom = 1;
+    cell.view.panX = 0;
+    cell.view.panY = 0;
+    if (state.linkZoom) { applyLinkedView(i); renderAll(); } else renderCell(i);
+    setStatus("Fit to pane.");
+    return true;
+  }
+
+  /**
+   * One image pixel per screen pixel.
+   *
+   * The honest caveat: a reformatted plane whose two in-plane spacings
+   * differ has no single answer — one column per pixel and one row per pixel
+   * are different zooms. The horizontal axis is used, and the status line
+   * says which, rather than picking one silently.
+   */
+  function zoomOneToOne(i) {
+    var cell = state.cells[i];
+    var geom = cellEls[i] && cellEls[i].geom;
+    if (!cell || !geom || !geom.t) return false;
+    var t = geom.t;
+    var base = t.scale / (cell.view.zoom || 1);      // the pane's fit scale
+    if (!isFinite(base) || base <= 0) return false;
+    var want = 1 / t.spacingX;                       // device px per mm
+    var zoom = want / base;
+    if (!isFinite(zoom) || zoom <= 0) return false;
+    var clamped = Math.max(MIN_ZOOM_EXACT, Math.min(MAX_ZOOM, zoom));
+    cell.view.zoom = clamped;
+    if (state.linkZoom) { applyLinkedView(i); renderAll(); } else renderCell(i);
+
+    // Then correct against what was actually drawn. The scale was solved
+    // from the last render's transform, and the pane may have changed size
+    // since — a status line that wrapped, a panel that opened — which would
+    // leave 1:1 off by a few per cent while still claiming to be exact.
+    // Scale is exactly proportional to zoom, so one pass settles it.
+    var drawn = cellEls[i] && cellEls[i].geom;
+    if (drawn && drawn.t && clamped === zoom) {
+      var ratio = 1 / (drawn.t.scale * drawn.t.spacingX);
+      if (isFinite(ratio) && ratio > 0 && Math.abs(ratio - 1) > 1e-12) {
+        zoom = clamped * ratio;
+        clamped = Math.max(MIN_ZOOM_EXACT, Math.min(MAX_ZOOM, zoom));
+        cell.view.zoom = clamped;
+        if (state.linkZoom) { applyLinkedView(i); renderAll(); } else renderCell(i);
+      }
+    }
+    var exact = Math.abs(clamped - zoom) < 1e-9;
+    setStatus(exact
+      ? "1:1 — one image pixel per screen pixel, across the pane's width" +
+        (Math.abs(t.spacingX - t.spacingY) > 1e-6
+          ? ". This plane's rows and columns are not the same size, so the " +
+            "vertical axis is not 1:1."
+          : ".")
+      : "1:1 would need " + zoom.toFixed(1) + "× zoom, outside this viewer's " +
+        "range; showing " + clamped.toFixed(1) + "×.");
+    return exact;
   }
 
   /**
@@ -7303,6 +7721,10 @@
         run: function () { toggleViewTool("zoom"); } },
       { keys: ["S"], match: ["s", "S"], what: "Scroll — drag to page through the stack",
         run: function () { toggleViewTool("scroll"); } },
+      { keys: ["L"], match: ["l", "L"], what: "Magnifier — hold for a loupe at the cursor",
+        run: function () { toggleViewTool("magnify"); } },
+      { keys: ["H"], match: ["h", "H"], what: "Shutter — drag a rectangle to black out the rest",
+        run: function () { toggleViewTool("shutter"); } },
       { keys: ["Enter"], match: ["Enter"], stop: true,
         when: function () { return !!state.pendingMeasure; },
         what: "Close the shape being drawn",
@@ -7329,6 +7751,11 @@
       { keys: ["⇧", "R"], match: ["R"], shift: true,
         what: "Reset zoom, pan, rotation and flip",
         run: function () { applyReset("view"); } },
+      { keys: ["0"], match: ["0"], what: "Fit the image to the pane",
+        run: function () { zoomToFit(state.activeCell); } },
+      { keys: ["O"], match: ["o", "O"],
+        what: "1:1 — one image pixel per screen pixel",
+        run: function () { zoomOneToOne(state.activeCell); } },
     ] },
     { group: "The focus point", items: [
       // Shift, because plain F and G are the pane and slice keys every
@@ -8175,6 +8602,18 @@
         updateBoneStatus();
       }
       if (drag && drag.mode === "trace") finishPending();
+      if (drag && drag.mode === "magnify") closeLoupe();
+      // A press with no drag clears the shutter. Dragging a new one replaces
+      // it, so there is no state where the only way back is the Reset menu.
+      if (drag && drag.mode === "shutter" && !drag.moved) {
+        var shutterCell = state.cells[drag.cell];
+        if (shutterCell) {
+          var had = !!shutterCell.shutter;
+          shutterCell.shutter = null;
+          renderCell(drag.cell);
+          showToast(had ? "Shutter cleared." : "Drag to place a shutter.", !had);
+        }
+      }
       // An edited measurement is only worth saving once the drag has ended.
       if (drag && drag.mode === "measure") {
         if (drag.snap && drag.snap !== snapshotMeasurements()) {
@@ -8265,6 +8704,16 @@
     toolContext: toolContext,
     skipSummary: skipSummary,
     renderStudyInfo: renderStudyInfo,
+    setColourMap: setColourMap,
+    colourMapLabel: colourMapLabel,
+    COLOUR_MAPS: COLOUR_MAPS,
+    zoomToFit: zoomToFit,
+    zoomOneToOne: zoomOneToOne,
+    setShutter: setShutter,
+    clearShutters: clearShutters,
+    shutterIsActive: shutterIsActive,
+    moveLoupe: moveLoupe,
+    closeLoupe: closeLoupe,
     scaleBarFor: scaleBarFor,
     paneCalibration: paneCalibration,
     dict: dict,

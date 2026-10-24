@@ -469,7 +469,16 @@
     <div id="windowPresets"></div>
     <div class="menu-head">Greyscale</div>
     <button data-window="invert">Invert<span>display only — measured values do not change</span></button>
-    <button data-window="reset">Back to the study's own W/L<span>from the DICOM header</span></button>
+    <div class="menu-head">Colour map</div>
+    <button data-window="map:grey" class="on">Greyscale<span>report from this one</span></button>
+    <button data-window="map:hot">Hot iron<span>black · red · orange · white</span></button>
+    <button data-window="map:cool">Cool<span>black · blue · cyan · white</span></button>
+    <button data-window="map:rainbow">Rainbow<span>separates a narrow band — and invents contrast</span></button>
+    <div class="menu-note">A colour map is display only. Every value this viewer
+      reports is read from the image data, never from the colour on screen.
+      The pane names the map so a screenshot cannot be mistaken for greyscale.</div>
+    <div class="menu-head">Back to the start</div>
+    <button data-window="reset">Back to the study's own W/L<span>from the DICOM header, greyscale, not inverted</span></button>
   </div>
   <div class="menu" id="moreMenu" hidden>
     <div class="menu-head">Screenshot</div>
@@ -481,6 +490,12 @@
     <button data-more="copyPane">Copy this pane to the clipboard</button>
     <button data-more="shotReport">Attach this pane to the report<span>as a key image</span></button>
     <button data-more="shotIdentity">Include patient details<span>off: no name, ID or date is written into the image</span></button>
+    <div class="menu-head">Zoom</div>
+    <button data-more="zoomFit">Fit to pane<span>the whole image in the window (0)</span></button>
+    <button data-more="zoomOne">1:1<span>one image pixel per screen pixel (O)</span></button>
+    <div class="menu-head">View tools</div>
+    <button data-more="magnify">Magnifier<span>hold for a loupe at the cursor (L)</span></button>
+    <button data-more="shutter">Shutter<span>drag a rectangle; everything outside goes black (H)</span></button>
     <div class="menu-head">Show</div>
     <button data-more="crosshairShow">Crosshair lines<span>where the other planes cut this one</span></button>
     <div class="menu-head">Readout</div>
@@ -558,6 +573,8 @@
     <button data-reset="panes">Reset panes<span>plane, window, stack and pins</span></button>
     <button data-reset="focus">Clear focus point<span>stop pulling the panes to one place</span></button>
     <button data-reset="crop">Reset 3D crop<span>bring back the whole volume</span></button>
+    <button data-reset="shutter">Clear the shutter<span>show the whole pane again</span></button>
+    <button data-reset="colour">Back to greyscale<span>drop any colour map</span></button>
     <button data-reset="measurements">Clear measurements<span>remove every marker and ROI</span></button>
     <button data-reset="all" class="danger">Reset everything<span>all of the above</span></button>
   </div>

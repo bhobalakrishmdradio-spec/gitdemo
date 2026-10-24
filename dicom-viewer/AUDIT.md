@@ -46,7 +46,8 @@ middle-drag pan), scout/localizer navigation, the contextual Tools panel,
 the full set of grids, and the measurement and navigation shortcuts.
 
 Closed since the workstation sprint: the Patient-and-study summary panel, the
-Technique tag group and the scale bar; and on the security side, prototype-safe
+Technique tag group, the scale bar, and the four 2D display tools — display
+colour maps, fit and 1:1 zoom, the magnifier and the 2D shutter; and on the security side, prototype-safe
 dictionaries for everything keyed by a header value, validation of stored
 measurements on the way in, and a stated reason for every file the viewer
 refuses.
@@ -55,11 +56,12 @@ The largest remaining gaps, in priority order:
 
 1. **P1 — Report output is plain text only.** No rich formatting, no PDF, no
    signature, no amendment or version history.
-2. **P2 — No 2D colour map, magnifier, 2D shutter, or fit/1:1 zoom modes.**
-3. **P2 — No hanging protocols or saved layouts.**
-4. **P2 — No automatic growth or delta table across studies.** Two studies
+2. **P2 — No automatic growth or delta table across studies.** Two studies
    can be read side by side with their own measurements, but nothing
    computes the change for you.
+3. **P2 — No sharpen or smooth filter on a 2D pane** (IMG-13). The colour
+   maps and the loupe are in; a convolution over the displayed slab is not.
+4. **P2 — No hanging protocols, saved layouts, or a shortcut editor.**
 5. **P3 — No 3D pan, orientation cube, editable transfer-function curve, or
    surface/mesh rendering.**
 6. **P3 — No curved planar reconstruction or vessel analysis.** Asked for,
@@ -71,8 +73,7 @@ The largest remaining gaps, in priority order:
 7. **P3 — No lesion tracker or RECIST.** Measurements persist per series and
    two studies can be read side by side, but nothing collects a lesion list
    or computes the change.
-8. **P3 — No hanging protocols, saved layouts, or a shortcut editor.**
-9. **Out of scope by design** — PACS retrieval, portals, peer review, AI
+8. **Out of scope by design** — PACS retrieval, portals, peer review, AI
    detection, fusion, anatomical segmentation, de-identification,
    multi-user workflow.
 
@@ -116,12 +117,14 @@ The largest remaining gaps, in priority order:
 | IMG-09 | Rotate cw / ccw | Pass | Orient menu, both directions, plus free rotation. Orientation letters and measurements follow |
 | IMG-10 | Horizontal / vertical flip | Pass | Orient menu; letters update, annotations stay attached |
 | IMG-11 | Invert grayscale | Pass | Verified not to change HU or ROI statistics |
-| IMG-12 | Colour map / LUT | **Missing** for 2D | 3D has transfer functions; 2D is greyscale only |
+| IMG-12 | Colour map / LUT | Pass | Hot iron, Cool and Rainbow beside greyscale, from **◐ Window → Colour map**. Display only: an ROI reads identically under every map, asserted rather than assumed. The pane names the map and the toolbar button marks it, so a screenshot cannot pass as greyscale. `browser-display.js` |
 | IMG-13 | Sharpen / smooth | **Missing** | — |
-| IMG-14 | Shutter / crop | Partial | **3D**: a crop box with independent handles on each anatomical axis, named for the cut they make, plus Reset crop. `browser-crop.js`. **No 2D shutter** |
+| IMG-14 | Shutter / crop | Pass | **3D**: a crop box with independent handles on each anatomical axis, named for the cut they make, plus Reset crop. `browser-crop.js`. **2D**: a per-pane rectangular shutter (`H`), held in plane coordinates so it stays on the anatomy through zoom, pan, rotation and flip; display only, drawn into screenshots, cleared by a click or from Reset. `browser-display.js` |
 | IMG-15 | Orientation labels / scale | Pass | R/L/A/P/H/F derived from Image Orientation and suppressed when no single letter is honest, plus four-corner overlays carrying patient, series, display and acquisition facts, plus a scale bar on every 2D pane — the longest round number of mm fitting a third of the pane, drawn only when Pixel Spacing (and, on a cut that crosses slices, slice spacing) makes the millimetre real. Checked against the distance tool, not against the formula that drew it. `browser-info.js` |
 | IMG-16 | Patient / image overlay toggle | **Missing** | Overlays always shown on large panes, hidden on small ones. Would not anonymise anything regardless |
 | IMG-17 | DICOM tags / metadata | Pass | Searchable by keyword, value or tag number; shows the displayed instance. Grouped Patient / Study / Series / Technique / Image / Pixel Data / Derived; the Technique rows cover CT (kernel, kVp, mA, mAs, CTDIvol, tilt, recon diameter) and MR (TR, TE, TI, flip, field strength, ETL, sequence, variant, options, acquisition type), and an absent tag is dropped rather than shown empty. `browser-info.js` |
+| IMG-19 | Magnifier / loupe | Pass | `L`, then hold: a loupe at the cursor redrawing the slab at 3× the pane's scale, nearest-neighbour. The point under the cursor stays under the cursor and the pane's own zoom and pan are untouched. Verified geometrically against a ×1 control — 92% of sample points against the control's 65%. `browser-display.js` |
+| IMG-20 | Fit and 1:1 zoom | Pass | `0` fits; `O` is one image pixel per screen pixel, solved from the transform and then corrected against what was drawn, so the drawn width of one image pixel is exactly 1.0 device pixels. States the caveat on a plane with rectangular pixels, and says what it settled for when true pixel size is out of range. `browser-display.js` |
 | IMG-18 | Patient / study summary panel | Pass | **⋯ More → Patient and study**: name, ID, age and sex; description, date, accession, institution, referrer; manufacturer and model, station, protocol, patient position. The contents line counts what is actually loaded (`2 series · 77 images loaded`) and says so. No row is invented — no birth date from an age, no acquisition phase. `browser-info.js` |
 
 ## 3. HU, ROI, measurements, and annotations
@@ -286,7 +289,7 @@ The largest remaining gaps, in priority order:
 | Real DICOM input, not a mockup | **Pass** — real Part 10 parsing, including RLE and JPEG Lossless |
 | Patient / study / series / frame associations correct | **Pass** — grouped by Study and Series UID; duplicates by SOP UID rejected; echoes and time points split |
 | Geometry, orientation, spacing, units respected | **Pass** — irregular geometry detected; mm only when Pixel Spacing supports it |
-| Transformations do not change HU or measurements | **Pass** — asserted for window, invert, zoom, rotation and flip |
+| Transformations do not change HU or measurements | **Pass** — asserted for window, invert, zoom, rotation, flip, every display colour map, and the 2D shutter: an ROI in the blacked-out surround still reports the pixels underneath |
 | Unsupported data fails visibly | **Pass** — unsupported transfer syntaxes named with a conversion command |
 | Switching panels or studies does not mix annotations or reports | **Pass** for reports and measurement anchoring |
 | Report drafts recover; finalization controlled | **Partial** — recovery yes; no versions, amendments or signature |

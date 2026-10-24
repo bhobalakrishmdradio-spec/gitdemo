@@ -354,6 +354,90 @@ pane that says *Window/Level* while Pan is armed is worse than one that says
 nothing, so the corners refresh when a tool is armed, not only when the
 image is redrawn.
 
+### 2D display tools
+
+Four things that change how a 2D pane looks and nothing about what it
+reports. That division is the whole design: a reader who turns one of these
+on has to be able to trust that the numbers did not move with it, so every
+value this viewer states — the readout under the cursor, every ROI, every
+measurement — is taken from the reconstructed slab and never from the pixels
+on screen. `browser-display.js` checks it the only way worth checking: it
+measures an ROI, turns each tool on, and measures it again.
+
+#### Fit and 1:1
+
+**`0`** fits the whole image in the pane. **`O`** shows it at 1:1 — one
+image pixel per screen pixel, no interpolation either way — which is the
+only zoom at which you are looking at the data rather than at a resampling
+of it. Both are also under **⋯ More → Zoom**.
+
+1:1 is solved from the pane's transform and then *corrected against what was
+actually drawn*, because the pane can change size between the two (a status
+line that wraps, a panel that opens) and a 1:1 that is three per cent out
+while claiming to be exact is worse than no 1:1 at all. The test asserts the
+drawn width of one image pixel is `1.0` device pixels, not that the zoom
+number looks plausible.
+
+Two honest caveats, both stated on screen rather than buried here:
+
+- A **reformatted plane with rectangular pixels** — 1.2 mm in plane against
+  4 mm between slices, say — has two different answers for 1:1. The
+  horizontal axis is used, and the status line says *"This plane's rows and
+  columns are not the same size, so the vertical axis is not 1:1."*
+- On a small matrix in a large pane, **true pixel size is well below the
+  zoom that fits**: a 128² image at 1:1 is a postage stamp. A drag may not
+  shrink the image that far, because a slip of the hand that loses the image
+  is a bad outcome, but an explicit 1:1 may — otherwise the mode would be a
+  lie. If even that is not enough the status line says what zoom 1:1 would
+  have needed and what it settled for.
+
+#### The magnifier
+
+**`L`**, then hold the left button: a loupe opens at the cursor and follows
+it. It redraws the slab at three times the pane's scale with no smoothing,
+so it is a real magnification rather than the pane's own pixels made bigger,
+and nearest-neighbour because at that scale interpolation invents edges a
+reader would then judge a margin from.
+
+Whatever is under the cursor stays under the cursor — the image grows in
+place instead of sliding out from under you — and the pane's own zoom and
+pan are never touched, so letting go leaves you exactly where you were. The
+test measures that geometrically: a point *d* pixels from the cursor inside
+the loupe must show what the pane shows *d*/3 from the cursor, over 172
+sample points, and the same comparison run at ×1 is the control. It scores
+92% against the control's 65%, so the check has teeth.
+
+#### The shutter
+
+**`H`**, then drag a rectangle: everything outside it goes black. This is
+what a collimator does on a plain film — stopping light from the parts of
+the image you are not reading from reaching your eye makes a low-contrast
+lesion easier to see.
+
+It is kept in plane coordinates, not pane coordinates, so it stays on the
+same anatomy when you zoom, pan, rotate or flip. It is display only: an ROI
+drawn in the blacked-out surround still reports the pixels underneath, and
+the readout under the cursor still answers there. A click without a drag
+clears it, and so does **⤾ Reset → Clear the shutter**. It is drawn into
+screenshots, because an image you send out that is not the image you were
+looking at is a different problem.
+
+#### Colour maps
+
+**◐ Window → Colour map** offers Hot iron, Cool and Rainbow beside
+greyscale. Greyscale is the default and is what a CT or MR should be
+reported from: the eye reads shades of grey as one ordered scale, and a
+colour ramp does not preserve that order — two adjacent hues can look
+further apart than two distant greys, which invents contrast that is not in
+the data. A ramp earns its place anyway, because it separates a narrow band
+of values the eye cannot split in grey at all.
+
+The pane names the map whenever it is not greyscale, and the toolbar button
+carries a marker. That is not decoration: someone looking at a screenshot
+cannot see the menu that set it, and a rainbow CT that nobody labelled is a
+picture nobody can calibrate their eye against. Both **⤾ Reset → Back to
+greyscale** and **◐ Window → Back to the study's own W/L** drop it.
+
 ### Hounsfield Units and measurements
 
 - **Live HU readout** — the value of the pixel under the cursor, shown in the
@@ -581,11 +665,13 @@ measurements because the zoom needed straightening is a real cost.
 | Option | What it restores |
 | --- | --- |
 | Reset view | Zoom, pan, rotation, flip, and the 3D camera |
-| Reset window/level | The study's own Window Width/Center from the DICOM header, clearing invert and any per-pane windows |
+| Reset window/level | The study's own Window Width/Center from the DICOM header, clearing invert, any colour map and any per-pane windows |
 | Straighten planes | Removes any oblique tilt |
 | Reset panes | Rebuilds the current layout's panes, dropping per-pane windows, pins and stack offsets |
 | Clear focus point | Stops pulling the panes to one place |
 | Reset 3D crop | Brings back the whole volume in the 3D pane |
+| Clear the shutter | Shows the whole pane again |
+| Back to greyscale | Drops any display colour map |
 | Clear measurements | Removes every marker and ROI |
 | Reset everything | All of the above; the study stays loaded |
 
@@ -695,6 +781,10 @@ reconstructed.
 | `P` | Pan — drag to move the image |
 | `Z` | Zoom — drag up to zoom in |
 | `S` | Scroll — drag to page through the stack |
+| `L` | Magnifier — hold the left button for a loupe at the cursor |
+| `H` | Shutter — drag a rectangle; everything outside it goes black |
+| `0` | Fit the image to the pane |
+| `O` | 1:1 — one image pixel per screen pixel |
 | `Shift`+`R` | Reset the view (zoom, pan, rotation, flip) |
 | `Ctrl`/`⌘`+`Z` | Undo the last annotation change |
 | `Ctrl`/`⌘`+`Shift`+`Z`, `Ctrl`+`Y` | Redo it |
@@ -772,7 +862,7 @@ row and that assertion is what caught it.
 | **📂 Open ▾** | Open files, open a folder, clear the loaded series |
 | **▦ 2×2 ▾** | Every layout: 1×1 · 1×2 · 2×1 · 1×3 · 3×1 · 2×2 · 2×3 · 3×3 · MPR · 3D |
 | **Ax · Cor · Sag · Seq · Mix** | Which plane fills the grid, or one sequence per pane — separate buttons, because it is a thing you do while reading |
-| **◐ Window ▾** | Window presets for the modality, invert, back to the study's own W/L |
+| **◐ Window ▾** | Window presets for the modality, invert, the display colour maps, back to the study's own W/L |
 | **✥** / **📏 Measure ▾** | Navigate, undo and redo, and every measurement, ROI and annotation tool |
 | **✋ 🔍 ⇅** | Pan · Zoom · Scroll — each arms a plain left-drag for that one thing |
 | **✛ 🎯 ▶** | Crosshair tool · focus point · cine |
@@ -780,7 +870,7 @@ row and that assertion is what caught it.
 | **⇄ Compare** | This patient's prior scan, beside the current one. Right-click to choose which |
 | **⇕ Stack ▾** / **🔗 Sync ▾** | Slices between repeated panes; and what is linked across panes bound to different series. Two separate controls: they do unrelated jobs |
 | **⟳ ▾** | Rotate and flip the active pane |
-| **⋯ More ▾** | Value readout, show/hide markers, go to focus, PNG export, patient and study data, the DICOM tags, the shortcut list |
+| **⋯ More ▾** | Fit and 1:1 zoom, the magnifier and the shutter, value readout, show/hide markers, go to focus, PNG export, patient and study data, the DICOM tags, the shortcut list |
 | **⤾ Reset ▾** | The reset options below |
 
 Each button names what it is holding — the layout button reads `▦ 2×2`, the

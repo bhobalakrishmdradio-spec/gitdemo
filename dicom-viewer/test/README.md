@@ -41,7 +41,11 @@ node test/run.js wl annot       # just the suites whose names match
 - **Node** with `playwright` reachable (`NODE_PATH` may need to point at a
   global install), and a Chromium it can launch. The suites take an explicit
   `executablePath`; change it if yours lives elsewhere.
-- **Python** with `numpy` and `pydicom` for the fixtures.
+- **Python** with `numpy` and `pydicom` for the fixtures. If `python3` on
+  your machine is not the interpreter those are installed for, name the one
+  that is — the generators run under any 3.x
+  (`python3.13 test/fixtures/make_phantom.py`). Every generator failing at
+  once, with `ModuleNotFoundError`, is this and not a broken fixture.
 - `make_codec_fixtures.py` additionally needs `pylibjpeg-libjpeg`, and
   `codec-test.js` will not run without it. It writes the JPEG-lossless and
   RLE bitstreams that suite decodes, and validates this repo's hand-written
@@ -102,6 +106,7 @@ Each is built so that a wrong answer looks wrong, rather than plausible.
 | `browser-undo.js` | Undo and redo restore a measurement's numbers; the shortcut list matches the keys |
 | `browser-crop.js` | 3D cropping removes the voxels it says it does, one side at a time, and resets |
 | `browser-security.js` | Hostile DICOM text, untrusted stored reports and measurements, UIDs that are prototype property names, the reason given for a file it cannot read, and no network or eval anywhere |
+| `browser-display.js` | The 2D display tools — colour maps, 1:1 and fit, the shutter, the loupe — and that not one of them moves a number the viewer reports |
 | `browser-info.js` | The Patient-and-study panel; that the Technique tags shown are the ones the file carries — CT parameters on a CT, MR parameters on an MR, nothing invented for either; and the scale bar, measured off the overlay canvas and cross-checked with the distance tool |
 | `browser-sweep.js` | Presses every control there is and fails on any error |
 | `probe-bar.js` | The toolbar stays one row and nothing is out of reach |

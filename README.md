@@ -7,6 +7,9 @@ backend, no account, nothing leaves your browser.
   repo) — a personal finance tracker.
 - **[CT Console](dicom-viewer/README.md)** (`dicom-viewer/`) — a personal
   DICOM viewer for reviewing your own CT scans.
+- **[SlideCast](slide-video/README.md)** (`slide-video/`) — upload slides or
+  images and get a narrated explainer video (uses a small Python server and
+  the Claude API, so unlike the other apps it is not client-side only).
 
 ## MyFinances — Personal Finance Tracker
 

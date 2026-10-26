@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlideCast</title>
+<style>
+  :root {
+    --bg: #0f1226; --panel: #181c38; --panel2: #20254a; --text: #eef0ff; --muted: #9aa0c8;
+    --accent: #ffc43d; --accent-ink: #1a1a26; --border: #2c3263; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at 20% 0%, #2a1f55, var(--bg) 55%); color: var(--text); min-height: 100vh;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0; font-size: 2rem; }
+  h1 span { color: var(--accent); }
+  .lead { color: var(--muted); margin: 6px 0 28px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 14px; padding: 36px 16px; text-align: center;
+    cursor: pointer; transition: .15s; background: var(--panel2);
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: #2a2f5c; }
+  .drop strong { display: block; font-size: 1.1rem; }
+  .drop small { color: var(--muted); }
+  .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-top: 16px; }
+  .thumb { position: relative; background: var(--panel2); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  .thumb img { width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block; background: #fff; }
+  .thumb .doc { aspect-ratio: 16/10; display: grid; place-items: center; font-weight: 700; font-size: 1.4rem; color: var(--accent); }
+  .thumb .name { font-size: .75rem; padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+  .thumb .n { position: absolute; top: 6px; left: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: .75rem; border-radius: 99px; padding: 1px 8px; }
+  .thumb .ctl { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
+  .thumb .ctl button { border: 0; border-radius: 6px; background: #000a; color: #fff; width: 26px; height: 26px; cursor: pointer; }
+  .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+  select, textarea {
+    width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; font: inherit;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 12px; padding: 12px 22px;
+    font: 600 1rem system-ui, sans-serif; background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none;
+  }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+  .bar { height: 10px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin: 12px 0 6px; }
+  .bar div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #ff7a59); transition: width .4s; }
+  .msg { color: var(--muted); font-size: .9rem; }
+  .error { color: var(--danger); }
+  video { width: 100%; border-radius: 12px; background: #000; display: block; }
+  .note { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--accent); }
+  .script h3 { margin: 16px 0 4px; font-size: 1rem; }
+  .script p { margin: 2px 0; color: var(--muted); font-size: .92rem; }
+  .script p.f::before { content: "◎ "; color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Slide<span>Cast</span></h1>
+  <p class="lead">Upload slides or images. Claude reads each one, explains it out loud, and builds a video
+    that zooms in and pops out each part as it is explained.</p>
+
+  <section class="card" id="uploadCard">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose files">
+      <strong>Drop images, a PDF or a PowerPoint here</strong>
+      <small>or click to choose · PNG, JPG, WEBP, PDF, PPTX · slides play in this order</small>
+    </div>
+    <input type="file" id="fileInput" multiple hidden
+           accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.tif,.tiff,.pdf,.pptx,.ppt,.odp,.key">
+    <div class="thumbs" id="thumbs"></div>
+  </section>
+
+  <section class="card">
+    <div class="opts">
+      <div>
+        <label for="voice">Narrator voice</label>
+        <select id="voice"></select>
+      </div>
+      <div>
+        <label for="length">Explanation depth</label>
+        <select id="length">
+          <option value="short">Short — quick overview</option>
+          <option value="medium" selected>Medium — explain each part</option>
+          <option value="long">Long — detailed lecture</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <label for="instructions">Instructions for the narrator (optional)</label>
+      <textarea id="instructions" placeholder="e.g. Explain for first-year medical students; mention clinical relevance; keep it friendly."></textarea>
+    </div>
+    <div class="row">
+      <button class="btn" id="go" disabled>🎬 Generate video</button>
+      <span class="msg" id="count">No files yet</span>
+    </div>
+  </section>
+
+  <section class="card" id="progressCard" hidden>
+    <strong id="stage">Starting…</strong>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="msg" id="pct">0%</div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <video id="player" controls playsinline></video>
+    <div class="row">
+      <a class="btn" id="download" download="explainer.mp4">⬇ Download MP4</a>
+      <button class="btn ghost" id="again">Make another</button>
+    </div>
+    <p class="note" id="info"></p>
+    <details>
+      <summary>Show narration script</summary>
+      <div class="script" id="script"></div>
+    </details>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let files = [];
+let thumbUrls = [];
+
+fetch("/api/voices").then(r => r.json()).then(({ default: def, voices }) => {
+  for (const [id, label] of Object.entries(voices)) {
+    const o = new Option(label, id, id === def, id === def);
+    $("voice").add(o);
+  }
+});
+
+function renderThumbs() {
+  thumbUrls.forEach(URL.revokeObjectURL);
+  thumbUrls = [];
+  const box = $("thumbs");
+  box.replaceChildren();
+  files.forEach((f, i) => {
+    const t = document.createElement("div");
+    t.className = "thumb";
+    if (f.type.startsWith("image/")) {
+      const img = document.createElement("img");
+      const url = URL.createObjectURL(f);
+      thumbUrls.push(url);
+      img.src = url;
+      img.alt = f.name;
+      t.append(img);
+    } else {
+      const d = document.createElement("div");
+      d.className = "doc";
+      d.textContent = f.name.split(".").pop().toUpperCase();
+      t.append(d);
+    }
+    const n = document.createElement("span");
+    n.className = "n"; n.textContent = i + 1;
+    const name = document.createElement("div");
+    name.className = "name"; name.textContent = f.name;
+    const ctl = document.createElement("div");
+    ctl.className = "ctl";
+    const mk = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.textContent = label; b.title = title;
+      b.onclick = (e) => { e.stopPropagation(); fn(); renderThumbs(); };
+      return b;
+    };
+    if (i > 0) ctl.append(mk("◀", "Move earlier", () => { [files[i - 1], files[i]] = [files[i], files[i - 1]]; }));
+    if (i < files.length - 1) ctl.append(mk("▶", "Move later", () => { [files[i + 1], files[i]] = [files[i], files[i + 1]]; }));
+    ctl.append(mk("✕", "Remove", () => files.splice(i, 1)));
+    t.append(n, ctl, name);
+    box.append(t);
+  });
+  $("go").disabled = files.length === 0;
+  $("count").textContent = files.length ? `${files.length} file${files.length > 1 ? "s" : ""} ready` : "No files yet";
+}
+
+function addFiles(list) {
+  files.push(...[...list]);
+  renderThumbs();
+}
+
+const drop = $("drop");
+drop.onclick = () => $("fileInput").click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") $("fileInput").click(); };
+$("fileInput").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); };
+
+function setProgress(frac, msg) {
+  $("barFill").style.width = `${Math.round(frac * 100)}%`;
+  $("pct").textContent = `${Math.round(frac * 100)}%`;
+  $("stage").textContent = msg;
+}
+
+$("go").onclick = async () => {
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f, f.name));
+  fd.append("voice", $("voice").value);
+  fd.append("length", $("length").value);
+  fd.append("instructions", $("instructions").value);
+  $("go").disabled = true;
+  $("resultCard").hidden = true;
+  $("progressCard").hidden = false;
+  $("stage").classList.remove("error");
+  setProgress(0, "Uploading…");
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", body: fd });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.detail || "Upload failed");
+    poll(body.id);
+  } catch (e) {
+    fail(e.message);
+  }
+};
+
+function fail(msg) {
+  $("stage").textContent = msg;
+  $("stage").classList.add("error");
+  $("go").disabled = files.length === 0;
+}
+
+async function poll(id) {
+  let job;
+  try {
+    job = await (await fetch(`/api/jobs/${id}`)).json();
+  } catch {
+    return setTimeout(() => poll(id), 2000);
+  }
+  if (job.status === "error") return fail(job.message);
+  setProgress(job.progress, job.message);
+  if (job.status !== "done") return setTimeout(() => poll(id), 1000);
+
+  $("progressCard").hidden = true;
+  $("resultCard").hidden = false;
+  $("player").src = `/api/jobs/${id}/video`;
+  $("download").href = `/api/jobs/${id}/video?download=true`;
+  const voiceNote = {
+    edge: "", espeak: " Neural voice unavailable (no internet?), used the offline espeak voice.",
+    silent: " No speech engine was available, so the video has captions only.",
+  }[job.tts_engine] || "";
+  $("info").textContent = `${job.slides} slide(s) · ${Math.round(job.duration)} seconds.${voiceNote}`;
+  const s = $("script");
+  s.replaceChildren();
+  job.scripts.forEach((sl, i) => {
+    const h = document.createElement("h3");
+    h.textContent = `${i + 1}. ${sl.title}`;
+    s.append(h);
+    sl.segments.forEach(seg => {
+      const p = document.createElement("p");
+      p.textContent = seg.text;
+      if (seg.focus) { p.className = "f"; p.title = "Zooms into a region of the slide"; }
+      s.append(p);
+    });
+  });
+  $("go").disabled = false;
+}
+
+$("again").onclick = () => {
+  files = [];
+  renderThumbs();
+  $("resultCard").hidden = true;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+</script>
+</body>
+</html>

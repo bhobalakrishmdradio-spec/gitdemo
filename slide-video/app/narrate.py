@@ -3,12 +3,16 @@
 The script is split into short segments. Each segment may point at a region
 of the slide ("focus"), which the renderer zooms into and spotlights while
 that segment is spoken -- that's the "pop" effect in the video.
+
+A second, text-only call writes the deck-level extras: a title and intro,
+key takeaways, and quiz questions.
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 from pathlib import Path
 
@@ -19,6 +23,11 @@ from pydantic import BaseModel, Field
 MODEL = os.environ.get("SLIDECAST_MODEL", "claude-opus-5-5")
 # Long edge of the image we send to Claude (keeps token cost predictable).
 VISION_EDGE = 1568
+# If a safety classifier declines, let the API retry on a fallback model.
+FALLBACK = {
+    "extra_headers": {"anthropic-beta": "server-side-fallback-2026-07-01"},
+    "extra_body": {"fallbacks": "default"},
+}
 
 
 class Box(BaseModel):
@@ -40,12 +49,33 @@ class SlideScript(BaseModel):
     segments: list[Segment]
 
 
+class Takeaway(BaseModel):
+    bullet: str = Field(description="The takeaway as a short on-screen bullet, at most 10 words.")
+    spoken: str = Field(description="One spoken sentence explaining this takeaway.")
+
+
+class QuizItem(BaseModel):
+    question: str = Field(description="A short question testing understanding, not trivia.")
+    answer: str = Field(description="The answer as one or two spoken sentences.")
+
+
+class DeckExtras(BaseModel):
+    deck_title: str = Field(description="Title for the whole video, at most 8 words.")
+    intro: str = Field(description="One or two spoken sentences welcoming the viewer and saying what they will learn.")
+    takeaways_heading: str = Field(description='The heading "Key takeaways", in the narration language.')
+    takeaways: list[Takeaway]
+    takeaways_outro: str = Field(description="One short spoken closing sentence after the takeaways.")
+    quiz_heading: str = Field(description='The heading "Quick quiz", in the narration language.')
+    quiz_intro: str = Field(description="One short spoken sentence inviting the viewer to test themselves.")
+    quiz: list[QuizItem]
+
+
 SYSTEM = """You are a warm, clear teacher narrating an explainer video built from slides or images.
 For each image you receive, explain it to the viewer as if presenting it: read out and explain the
 important text, describe diagrams, charts, tables and photos, and say why they matter. Don't just read
 the slide verbatim; teach it.
 
-Write the narration as short spoken segments (one or two sentences each, plain spoken English, no
+Write the narration as short spoken segments (one or two sentences each, plain spoken {language}, no
 markdown, no bullet symbols, no emojis). The first segment introduces the slide as a whole and has a
 null focus. For later segments, when you talk about a specific part of the image (a heading, a
 bullet, a chart, a label, a region of a photo), set `focus` to the pixel bounding box of that part,
@@ -53,13 +83,26 @@ in the coordinates of the image you were given, tight around it. Use null when t
 the whole image. Keep the order of segments in a natural reading order.
 
 Aim for roughly {length}. Continue naturally from the previous slides instead of re-introducing the
-whole topic on every slide."""
+whole topic on every slide.{language_note}"""
+
+EXTRAS_SYSTEM = """You are a warm, clear teacher finishing an explainer video. You are given the
+narration already written for each slide. Write, in {language}: a title for the whole video, a short
+spoken intro, {n_takeaways} key takeaways that capture what matters most, and {n_quiz} quiz questions
+that check understanding of the material (with answers). Everything is spoken aloud, so use plain
+sentences with no markdown, symbols or emojis.{language_note}"""
 
 LENGTHS = {
     "short": "2-4 segments, about 20-40 seconds of speech",
     "medium": "4-7 segments, about 40-80 seconds of speech",
     "long": "6-10 segments, about 1-2 minutes of speech",
 }
+
+
+def _language_note(language: str) -> str:
+    if language == "English":
+        return ""
+    return (f"\n\nWrite everything in {language}, in its native script. Keep widely used technical "
+            "terms, abbreviations and names in English where speakers of the language would.")
 
 
 def _encode(path: Path) -> tuple[str, int, int]:
@@ -100,6 +143,7 @@ def narrate_slide(
     previous_titles: list[str],
     length: str = "medium",
     instructions: str = "",
+    language: str = "English",
 ) -> dict:
     data, w, h = _encode(image)
     context = f"This is slide {index + 1} of {total}. The image is {w}x{h} pixels."
@@ -111,7 +155,10 @@ def narrate_slide(
     response = client.messages.parse(
         model=MODEL,
         max_tokens=16000,
-        system=SYSTEM.format(length=LENGTHS.get(length, LENGTHS["medium"])),
+        system=SYSTEM.format(
+            length=LENGTHS.get(length, LENGTHS["medium"]),
+            language=language, language_note=_language_note(language),
+        ),
         messages=[{
             "role": "user",
             "content": [
@@ -120,9 +167,7 @@ def narrate_slide(
             ],
         }],
         output_format=SlideScript,
-        # If a safety classifier declines, let the API retry on a fallback model.
-        extra_headers={"anthropic-beta": "server-side-fallback-2026-07-01"},
-        extra_body={"fallbacks": "default"},
+        **FALLBACK,
     )
     if response.stop_reason == "refusal" or response.parsed_output is None:
         return fallback_script(index)
@@ -139,7 +184,9 @@ def fallback_script(index: int) -> dict:
     }
 
 
-def narrate_all(images: list[Path], length: str, instructions: str, progress=None) -> list[dict]:
+def narrate_all(
+    images: list[Path], length: str, instructions: str, language: str = "English", progress=None
+) -> list[dict]:
     """Narrate every slide in order. Uses a canned script when SLIDECAST_FAKE_AI=1 (for testing)."""
     scripts: list[dict] = []
     fake = os.environ.get("SLIDECAST_FAKE_AI") == "1"
@@ -151,8 +198,34 @@ def narrate_all(images: list[Path], length: str, instructions: str, progress=Non
             scripts.append(_fake_script(i))
         else:
             titles = [s["title"] for s in scripts]
-            scripts.append(narrate_slide(client, img, i, len(images), titles, length, instructions))
+            scripts.append(narrate_slide(client, img, i, len(images), titles, length, instructions, language))
     return scripts
+
+
+def deck_extras(scripts: list[dict], instructions: str, language: str, quiz: bool) -> dict | None:
+    """Deck title, intro, takeaways and quiz. Returns None if Claude declines."""
+    if os.environ.get("SLIDECAST_FAKE_AI") == "1":
+        return _fake_extras()
+    n_slides = len(scripts)
+    n_takeaways = "3" if n_slides <= 2 else "4 to 6"
+    n_quiz = ("2" if n_slides <= 2 else "3") if quiz else "0"
+    deck = [{"slide": i + 1, "title": s["title"], "narration": " ".join(x["text"] for x in s["segments"])}
+            for i, s in enumerate(scripts)]
+    prompt = "Slide narration:\n" + json.dumps(deck, ensure_ascii=False, indent=1)
+    if instructions.strip():
+        prompt += f"\n\nPresenter instructions: {instructions.strip()}"
+    response = anthropic.Anthropic().messages.parse(
+        model=MODEL,
+        max_tokens=16000,
+        system=EXTRAS_SYSTEM.format(language=language, n_takeaways=n_takeaways, n_quiz=n_quiz,
+                                    language_note=_language_note(language)),
+        messages=[{"role": "user", "content": prompt}],
+        output_format=DeckExtras,
+        **FALLBACK,
+    )
+    if response.stop_reason == "refusal" or response.parsed_output is None:
+        return None
+    return response.parsed_output.model_dump()
 
 
 def _fake_script(i: int) -> dict:
@@ -162,5 +235,25 @@ def _fake_script(i: int) -> dict:
             {"text": f"This is slide number {i + 1}, shown as a whole.", "focus": None},
             {"text": "Now we zoom into the top left part of the slide.", "focus": [0.05, 0.05, 0.5, 0.4]},
             {"text": "And here is the bottom right area, which pops into view.", "focus": [0.5, 0.55, 0.95, 0.95]},
+        ],
+    }
+
+
+def _fake_extras() -> dict:
+    return {
+        "deck_title": "Demo deck: how the heart works",
+        "intro": "Welcome! In this short video we walk through the demo slides.",
+        "takeaways_heading": "Key takeaways",
+        "takeaways": [
+            {"bullet": "The heart has four chambers", "spoken": "First, the heart has four chambers."},
+            {"bullet": "Valves keep blood moving one way", "spoken": "Second, valves keep blood flowing in one direction."},
+            {"bullet": "The ECG records electrical activity", "spoken": "Finally, the ECG records the heart's electrical activity."},
+        ],
+        "takeaways_outro": "That's the big picture.",
+        "quiz_heading": "Quick quiz",
+        "quiz_intro": "Let's test what you remember.",
+        "quiz": [
+            {"question": "How many chambers does the heart have?", "answer": "Four: two atria and two ventricles."},
+            {"question": "What do the heart valves do?", "answer": "They keep blood flowing in one direction."},
         ],
     }

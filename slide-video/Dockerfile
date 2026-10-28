@@ -1,7 +1,7 @@
 FROM python:3.12-slim
-# ffmpeg: video encoding · espeak-ng: offline voice fallback · libreoffice: PPTX support
+# ffmpeg: video encoding · espeak-ng: offline voice fallback · noto: Indic caption fonts · libreoffice: PPTX support
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg espeak-ng fonts-dejavu-core libreoffice-impress \
+        ffmpeg espeak-ng fonts-dejavu-core fonts-noto-core libreoffice-impress \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .

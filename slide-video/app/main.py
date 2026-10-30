@@ -2,12 +2,17 @@
 
 Run:  uvicorn app.main:app --reload   (from the slide-video/ folder)
 
+Everything except the login page needs SLIDECAST_PASSWORD (see app/auth.py).
+Finished videos are saved under SLIDECAST_DATA and kept SLIDECAST_KEEP_DAYS days.
+
 Job states: preparing -> review (if requested) -> rendering -> done | error
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shutil
 import threading
 import time
@@ -15,11 +20,12 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import auth
 from .ingest import SUPPORTED_EXTS, IngestError
 from .languages import DEFAULT_LANGUAGE, LANGUAGES
 from .pipeline import Options, prepare, render_project
@@ -29,15 +35,41 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidecast")
 
 ROOT = Path(__file__).resolve().parent.parent
-JOBS_DIR = ROOT / "jobs"
-JOBS_DIR.mkdir(exist_ok=True)
-MAX_UPLOAD_MB = 100
-JOB_TTL_SECONDS = 6 * 3600
+JOBS_DIR = Path(os.environ.get("SLIDECAST_DATA") or ROOT / "jobs").expanduser()
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+MAX_UPLOAD_MB = 200
+JOB_TTL_SECONDS = float(os.environ.get("SLIDECAST_KEEP_DAYS", "30")) * 86400
 MAX_SEGMENT_CHARS = 1500
 
-app = FastAPI(title="SlideCast")
+app = FastAPI(title="SlideCast", docs_url=None, redoc_url=None, openapi_url=None)
+app.middleware("http")(auth.middleware)
 jobs: dict[str, dict] = {}
 lock = threading.Lock()
+
+
+def _save(job: dict) -> None:
+    """Persist a job so the library survives server restarts."""
+    data = {k: v for k, v in job.items() if k != "options"}
+    data["options"] = asdict(job["options"])
+    (JOBS_DIR / job["id"] / "job.json").write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _load_jobs() -> None:
+    for f in JOBS_DIR.glob("*/job.json"):
+        try:
+            data = json.loads(f.read_text())
+            data["options"] = Options(**data["options"])
+        except Exception:  # noqa: BLE001 - skip unreadable leftovers
+            log.warning("skipping unreadable job %s", f.parent.name)
+            continue
+        if data["status"] in ("preparing", "rendering"):
+            data.update(status="error", message="Interrupted because the server restarted.")
+        jobs[data["id"]] = data
+
+
+def _title(job: dict) -> str:
+    slides = job.get("project", {}).get("slides") or [{}]
+    return slides[0].get("title") or "Untitled"
 
 
 def _cleanup_old_jobs() -> None:
@@ -70,21 +102,66 @@ def _guarded(job_id: str, fn) -> None:
     except Exception as e:  # noqa: BLE001 - report any failure to the UI
         log.exception("job %s failed", job_id)
         job.update(status="error", message=f"Something went wrong: {e}")
+    _save(job)
 
 
 def _render(job: dict) -> None:
     job.update(status="rendering", progress=0.0, message="Starting render")
     result = render_project(job["project"], JOBS_DIR / job["id"], job["options"], _progress(job))
     job.update(status="done", progress=1.0, message="Your video is ready", tts_engine=result["tts_engine"],
-               duration=result["duration"], slide_count=result["slides"])
+               duration=result["duration"], slide_count=result["slides"], finished=time.time())
 
 
 def _prepare_then_maybe_render(job: dict, files: list[Path], review: bool) -> None:
     job["project"] = prepare(files, JOBS_DIR / job["id"], job["options"], _progress(job))
     if review:
         job.update(status="review", progress=1.0, message="Review the script, then render")
+        _save(job)
     else:
         _render(job)
+
+
+_load_jobs()
+
+
+class Login(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(request: Request, body: Login):
+    return auth.check_password(request, body.password)
+
+
+@app.post("/api/logout")
+def logout():
+    return auth.logout()
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    return FileResponse(ROOT / "static" / "login.html")
+
+
+@app.get("/api/library")
+def library() -> list[dict]:
+    """Recent jobs, newest first, for the "My videos" list."""
+    _cleanup_old_jobs()
+    items = [{"id": j["id"], "status": j["status"], "title": _title(j), "created": j["created"],
+              "duration": j.get("duration"), "format": j["options"].format, "message": j.get("message", "")}
+             for j in jobs.values()]
+    return sorted(items, key=lambda x: x["created"], reverse=True)
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str) -> dict:
+    job = _get(job_id)
+    if job["status"] in ("preparing", "rendering"):
+        raise HTTPException(409, "Wait for this video to finish first")
+    with lock:
+        jobs.pop(job_id, None)
+        shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
+    return {"ok": True}
 
 
 @app.get("/api/options")
@@ -145,7 +222,8 @@ async def create_job(
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = _get(job_id)
-    out = {k: v for k, v in job.items() if k not in ("created", "options", "project")}
+    out = {k: v for k, v in job.items() if k not in ("created", "options", "project", "original_slides")}
+    out["title"] = _title(job)
     out["options"] = asdict(job["options"])
     if "project" in job:
         out["script"] = [

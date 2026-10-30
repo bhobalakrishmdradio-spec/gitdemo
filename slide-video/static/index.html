@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SlideCast</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SlideCast">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1226">
 <style>
   :root {
     --bg: #0f1226; --panel: #181c38; --panel2: #20254a; --text: #eef0ff; --muted: #9aa0c8;
@@ -14,7 +22,14 @@
     margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     background: radial-gradient(circle at 20% 0%, #2a1f55, var(--bg) 55%); color: var(--text); min-height: 100vh;
   }
-  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  main {
+    max-width: 960px; margin: 0 auto;
+    padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(64px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  header { display: flex; align-items: center; gap: 12px; }
+  header img { width: 44px; height: 44px; border-radius: 11px; }
+  header .spacer { flex: 1; }
   h1 { margin: 0; font-size: 2rem; }
   h1 span { color: var(--accent); }
   h2 { font-size: 1.1rem; margin: 0 0 14px; }
@@ -34,7 +49,13 @@
   .thumb .name { font-size: .75rem; padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
   .thumb .n { position: absolute; top: 6px; left: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: .75rem; border-radius: 99px; padding: 1px 8px; }
   .thumb .ctl { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
-  .thumb .ctl button, .iconbtn { border: 0; border-radius: 6px; background: #000a; color: #fff; width: 26px; height: 26px; cursor: pointer; flex: none; }
+  .thumb .ctl button, .iconbtn { border: 0; border-radius: 6px; background: #000a; color: #fff; width: 30px; height: 30px; cursor: pointer; flex: none; }
+  .lib { display: flex; flex-direction: column; gap: 8px; }
+  .libitem { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--panel2); border-radius: 12px; cursor: pointer; }
+  .libitem .t { flex: 1; min-width: 0; }
+  .libitem .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .libitem small { color: var(--muted); }
+  .link { background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; padding: 8px; }
   .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
   label.f { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
   select, textarea, input[type=text] {
@@ -79,17 +100,22 @@
 </head>
 <body>
 <main>
-  <h1>Slide<span>Cast</span></h1>
+  <header>
+    <img src="/icons/icon-180.png" alt="">
+    <h1>Slide<span>Cast</span></h1>
+    <span class="spacer"></span>
+    <button class="link" id="logout">Sign out</button>
+  </header>
   <p class="lead">Upload slides or images. Claude reads each one, explains it out loud, and builds a video
     that zooms in and pops out each part as it is explained.</p>
 
   <section class="card">
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose files">
       <strong>Drop images, a PDF or a PowerPoint here</strong>
-      <small>or click to choose · PNG, JPG, WEBP, PDF, PPTX · slides play in this order</small>
+      <small>or tap to choose photos or files · PNG, JPG, HEIC, PDF, PPTX · slides play in this order</small>
     </div>
     <input type="file" id="fileInput" multiple hidden
-           accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.tif,.tiff,.pdf,.pptx,.ppt,.odp,.key">
+           accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif,.bmp,.gif,.tif,.tiff,.pdf,.pptx,.ppt,.odp,.key">
     <div class="thumbs" id="thumbs"></div>
   </section>
 
@@ -159,12 +185,18 @@
   <section class="card" id="resultCard" hidden>
     <video id="player" controls playsinline></video>
     <div class="row">
+      <button class="btn" id="share" hidden>⤴ Save / Share</button>
       <a class="btn" id="download" download="explainer.mp4">⬇ Download MP4</a>
       <a class="btn ghost" id="srt" download="explainer.srt">⬇ Subtitles (.srt)</a>
       <button class="btn ghost" id="edit">✎ Edit script &amp; re-render</button>
       <button class="btn ghost" id="again">Make another</button>
     </div>
     <p class="note" id="info"></p>
+  </section>
+
+  <section class="card" id="libraryCard" hidden>
+    <h2>My videos</h2>
+    <div class="lib" id="library"></div>
   </section>
 </main>
 
@@ -174,6 +206,15 @@ let files = [];
 let thumbUrls = [];
 let languages = {};
 let job = null;   // latest job status from the server
+let videoBlob = null;
+
+// Every API call goes through here; an expired session sends you to sign in.
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (r.status === 401) { location.replace("/login"); throw new Error("Please sign in"); }
+  return r;
+}
+function remember(id) { try { id ? localStorage.setItem("slidecast_job", id) : localStorage.removeItem("slidecast_job"); } catch {} }
 
 function el(tag, props = {}, ...children) {
   const e = Object.assign(document.createElement(tag), props);
@@ -183,7 +224,7 @@ function el(tag, props = {}, ...children) {
 
 // ---------------------------------------------------------------- options
 
-fetch("/api/options").then(r => r.json()).then((o) => {
+api("/api/options").then(r => r.json()).then((o) => {
   languages = o.languages;
   for (const [code, l] of Object.entries(languages)) $("language").add(new Option(l.name, code));
   $("language").value = o.default_language;
@@ -270,12 +311,14 @@ $("go").onclick = async () => {
   for (const id of ["captions", "intro", "takeaways", "quiz", "review"]) fd.append(id, $(id).checked);
   $("go").disabled = true;
   show("progressCard");
+  $("progressCard").scrollIntoView({ behavior: "smooth" });
   $("stage").classList.remove("error");
   setProgress(0, "Uploading…");
   try {
-    const r = await fetch("/api/jobs", { method: "POST", body: fd });
+    const r = await api("/api/jobs", { method: "POST", body: fd });
     const body = await r.json();
     if (!r.ok) throw new Error(body.detail || "Upload failed");
+    remember(body.id);
     poll(body.id);
   } catch (e) {
     fail(e.message);
@@ -284,13 +327,16 @@ $("go").onclick = async () => {
 
 async function poll(id) {
   try {
-    job = await (await fetch(`/api/jobs/${id}`)).json();
+    const r = await api(`/api/jobs/${id}`);
+    if (r.status === 404) { remember(null); return; }
+    job = await r.json();
   } catch {
     return setTimeout(() => poll(id), 2000);
   }
-  if (job.status === "error") return fail(job.message);
+  if (job.status === "error") { remember(null); loadLibrary(); return fail(job.message); }
   if (job.status === "review") return showReview();
   if (job.status === "done") return showResult();
+  if ($("progressCard").hidden) show("progressCard");
   setProgress(job.progress, job.message);
   setTimeout(() => poll(id), 1000);
 }
@@ -338,7 +384,7 @@ $("renderBtn").onclick = async () => {
   const slides = [...$("reviewList").children].map(r => r._get());
   $("renderBtn").disabled = true;
   try {
-    const r = await fetch(`/api/jobs/${job.id}/render`, {
+    const r = await api(`/api/jobs/${job.id}/render`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slides }),
     });
     const body = await r.json();
@@ -346,6 +392,7 @@ $("renderBtn").onclick = async () => {
     show("progressCard");
     $("stage").classList.remove("error");
     setProgress(0, "Starting render");
+    remember(job.id);
     poll(job.id);
   } catch (e) {
     alert(e.message);
@@ -357,6 +404,7 @@ $("renderBtn").onclick = async () => {
 
 function showResult() {
   show("resultCard");
+  $("resultCard").scrollIntoView({ behavior: "smooth" });
   // Cache-bust so a re-render shows the new video.
   const v = Date.now();
   $("player").src = `/api/jobs/${job.id}/video?v=${v}`;
@@ -366,15 +414,82 @@ function showResult() {
     espeak: " The neural voice wasn't reachable (no internet?), so the offline espeak voice was used.",
     silent: " No speech engine was available, so the video has captions only.",
   }[job.tts_engine] || "";
-  $("info").textContent = `${job.slide_count} slide(s) · ${Math.round(job.duration)} seconds.${voiceNote}`;
+  $("info").textContent = `${job.title} · ${job.slide_count} slide(s) · ${Math.round(job.duration)} seconds.${voiceNote}`;
   $("go").disabled = files.length === 0;
+  remember(null);
+  loadLibrary();
+  // On iPhone/iPad, "Save / Share" opens the share sheet (Save Video puts it in Photos).
+  // Fetch the file now: the share sheet must open straight from the tap.
+  videoBlob = null;
+  $("share").hidden = true;
+  if (navigator.canShare && navigator.canShare({ files: [new File([""], "x.mp4", { type: "video/mp4" })] })) {
+    const id = job.id;
+    api(`/api/jobs/${id}/video?v=${v}`).then(r => r.blob()).then(b => {
+      if (job && job.id === id) { videoBlob = b; $("share").hidden = false; }
+    }).catch(() => {});
+  }
 }
+
+$("share").onclick = async () => {
+  if (!videoBlob) return;
+  const name = (job.title || "explainer").replace(/[^\p{L}\p{N} _-]+/gu, "").trim().slice(0, 60) || "explainer";
+  try {
+    await navigator.share({ files: [new File([videoBlob], `${name}.mp4`, { type: "video/mp4" })], title: job.title });
+  } catch {}
+};
+
+// ---------------------------------------------------------------- library
+
+function fmtTime(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
+
+async function loadLibrary() {
+  let items;
+  try { items = await (await api("/api/library")).json(); } catch { return; }
+  const box = $("library");
+  box.replaceChildren();
+  $("libraryCard").hidden = items.length === 0;
+  const STATUS = { preparing: "Reading slides…", rendering: "Rendering…", review: "Waiting for your review", error: "Failed" };
+  for (const it of items) {
+    const when = new Date(it.created * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    const sub = it.status === "done" ? `${fmtTime(it.duration)} · ${it.format} · ${when}` : `${STATUS[it.status]} · ${when}`;
+    const del = el("button", { className: "iconbtn", textContent: "🗑", title: "Delete" });
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete “${it.title}”?`)) return;
+      const r = await api(`/api/jobs/${it.id}`, { method: "DELETE" });
+      if (!r.ok) alert((await r.json()).detail || "Could not delete");
+      loadLibrary();
+    };
+    const row = el("div", { className: "libitem" },
+      el("span", { textContent: it.status === "done" ? "▶" : it.status === "error" ? "⚠" : "⏳" }),
+      el("div", { className: "t" }, el("div", { textContent: it.title }), el("small", { textContent: sub })));
+    if (!["preparing", "rendering"].includes(it.status)) row.append(del);
+    row.onclick = () => {
+      if (it.status === "error") return alert(it.message || "This video failed.");
+      $("stage").classList.remove("error");
+      poll(it.id);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    box.append(row);
+  }
+}
+
+$("logout").onclick = async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location.replace("/login");
+};
+
+// Pick up where you left off (e.g. iOS closed the app while a video was rendering).
+loadLibrary();
+try { const saved = localStorage.getItem("slidecast_job"); if (saved) poll(saved); } catch {}
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 $("edit").onclick = () => { $("player").pause(); showReview(); };
 $("again").onclick = () => {
   files = [];
   renderThumbs();
   show(null);
+  $("player").removeAttribute("src");
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 </script>

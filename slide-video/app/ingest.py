@@ -8,7 +8,14 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+try:  # iPhone photos are HEIC; pillow-heif teaches Pillow to open them.
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:
+    pass
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".heif"}
 PDF_EXTS = {".pdf"}
 OFFICE_EXTS = {".pptx", ".ppt", ".odp", ".key"}
 SUPPORTED_EXTS = IMAGE_EXTS | PDF_EXTS | OFFICE_EXTS

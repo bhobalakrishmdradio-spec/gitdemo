@@ -8,12 +8,15 @@ draw each run with its own font on a shared baseline.
 
 from __future__ import annotations
 
+import glob
+import os
 from functools import lru_cache
 
 from PIL import ImageDraw, ImageFont
 
 _DIRS = ("", "/usr/share/fonts/truetype/dejavu/", "/usr/share/fonts/truetype/noto/",
-         "/Library/Fonts/", "C:/Windows/Fonts/")
+         os.path.expanduser("~/Library/Fonts/"), "/Library/Fonts/", "/System/Library/Fonts/Supplemental/",
+         "C:/Windows/Fonts/")
 
 
 @lru_cache(maxsize=64)
@@ -24,6 +27,31 @@ def _load(names: tuple[str, ...], size: int) -> ImageFont.FreeTypeFont | None:
                 return ImageFont.truetype(base + name, size)
             except OSError:
                 continue
+    return None
+
+
+@lru_cache(maxsize=32)
+def _load_script(script: str, bold: bool, size: int) -> ImageFont.FreeTypeFont | None:
+    """Noto font for a script: static files (NotoSansTamil-Bold.ttf) or a variable font
+    (NotoSansTamil[wdth,wght].ttf, as Homebrew installs on macOS)."""
+    weight = "Bold" if bold else "Regular"
+    font = _load((f"NotoSans{script}-{weight}.ttf", f"NotoSans{script}-Regular.ttf"), size)
+    if font:
+        return font
+    for base in _DIRS[1:]:
+        for path in sorted(glob.glob(glob.escape(base) + f"NotoSans{script}*.ttf")):
+            if "UI" in os.path.basename(path):
+                continue
+            try:
+                font = ImageFont.truetype(path, size)
+            except OSError:
+                continue
+            if "[" in path:
+                try:
+                    font.set_variation_by_name(weight)
+                except (OSError, ValueError):
+                    pass
+            return font
     return None
 
 
@@ -43,8 +71,7 @@ class MixedFont:
     def __init__(self, size: int, script: str = "", bold: bool = False):
         self.size = size
         self.latin = _latin(size, bold)
-        weight = "Bold" if bold else "Regular"
-        self.other = _load((f"NotoSans{script}-{weight}.ttf", f"NotoSans{script}-Regular.ttf"), size) if script else None
+        self.other = _load_script(script, bold, size) if script else None
         fonts = [self.latin] + ([self.other] if self.other else [])
         self.ascent = max(f.getmetrics()[0] for f in fonts)
         self.descent = max(f.getmetrics()[1] for f in fonts)
